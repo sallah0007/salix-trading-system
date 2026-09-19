@@ -4,6 +4,7 @@ import unittest
 
 from tracker_identity import (
     CanonicalEraBoundary, CanonicalIdentityStore, FeatureIdentity,
+    FeatureDefinitionCatalogue, FeatureDefinitionRecord,
     IdentityImportManifest, ImportSourceRef, NormalizerSpec, SearchPolicy,
     SourceUniverseAuthority, import_identity_content,
 )
@@ -52,12 +53,17 @@ def manifest(ref_era="ERA_1",manifest_era="ERA_1",rows=1):
         (ImportSourceRef("era1:catalogue:neutral-core","neutral","CURRENT_FEATURE_DEFINITION_CATALOGUE",True,rows,ref_era),)
     )
 
+def catalogue(era="ERA_1"):
+    d=FeatureDefinitionRecord("salix.neutral.identity_anchor","1","Instrument-neutral identity anchor whose deterministic transform is identity(x)=x.","identity(x)=x",(),era,"","",None,None,"OWNER_APPROVED_ERA1_START_DIRECTION__BASELINE_CANDIDATE_UNFROZEN","TYPE_1_IDENTITY_BASELINE_CONFORMANCE")
+    d=FeatureDefinitionRecord(d.feature_id,d.feature_version,d.semantic_definition,d.formula,d.dependencies,d.era_id,d.computed_definition_hash(),d.computed_graph_hash(),d.instrument,d.timeframe,d.authority,d.purpose)
+    return FeatureDefinitionCatalogue("SALIX-ERA1-FEATURE-CATALOGUE",era,(d,))
+
 def row(era="ERA_1"):
     return FeatureIdentity(
         feature_id="salix.neutral.identity_anchor",feature_version="1",
-        definition_hash="6a2bdd7079418b2ba1de8645281633716d447d3955cb6cdb228c3af37fd505b7",
-        graph_hash="4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        lifecycle_state="CURRENT",is_current=True,scope="validation",era_id=era,
+        definition_hash=catalogue(era).definitions[0].definition_hash,
+        graph_hash=catalogue(era).definitions[0].graph_hash,
+        lifecycle_state="VALIDATION_ONLY",is_current=True,scope="validation",era_id=era,
         import_source_id="era1:catalogue:neutral-core",
         import_source_authority_class="CURRENT_FEATURE_DEFINITION_CATALOGUE",
     )
@@ -67,7 +73,7 @@ def do_import(rows=None, store=None, man=None, uni=None, bd=None):
     store=store or CanonicalIdentityStore()
     result=import_identity_content(
         target_store=store,rows=rows,manifest=man or manifest(rows=len(rows)),
-        source_universe=uni or universe(),era_boundary=bd or boundary(),
+        source_universe=uni or universe(),era_boundary=bd or boundary(),catalogue=catalogue(),
         search_policy=policy(),normalizer=normalizer(),
     )
     return store,result
