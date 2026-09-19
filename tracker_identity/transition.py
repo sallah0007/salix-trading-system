@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Optional, Tuple
 
 from .models import FeatureIdentity
+from .lifecycle import KNOWN_LIFECYCLES, lifecycle_currentness
 
 
 class TransitionClass(str, Enum):
@@ -124,6 +125,8 @@ def transition_authority_state(
         errors.append("TRANSITION_CLASS_INVALID")
     if from_state == to_state:
         errors.append("NO_OP_TRANSITION_PROHIBITED")
+    if str(to_state).upper() not in KNOWN_LIFECYCLES:
+        errors.append("UNKNOWN_TO_STATE")
     if transition_class == TransitionClass.OTHER_GOVERNED and not str(reason_ref or "").strip():
         errors.append("OTHER_GOVERNED_GOVERNED_REASON_REF_REQUIRED")
 
@@ -176,7 +179,7 @@ def transition_authority_state(
             prior_transition_id=expected_prior,
         )
 
-        new_is_current = to_state.upper() == "CURRENT"
+        new_is_current = lifecycle_currentness(to_state)
         updated = replace(current, lifecycle_state=to_state, is_current=new_is_current)
 
         # Atomic in this reference store: validation occurs before either mutation,
