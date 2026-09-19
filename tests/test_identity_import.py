@@ -41,7 +41,7 @@ def ref(source_id="s",authority="CANONICAL",rows=1,era="ERA_1",searched=True):
     return ImportSourceRef(source_id,"source",authority,searched,rows,era)
 
 def catalogue(fid="f1", version="1", era="ERA_1"):
-    d=FeatureDefinitionRecord(fid,version,"definition","x","()",era,"","")
+    d=FeatureDefinitionRecord(fid,version,"definition","x",(),era,"","")
     d=FeatureDefinitionRecord(fid,version,"definition","x",(),era,d.computed_definition_hash(),d.computed_graph_hash())
     return FeatureDefinitionCatalogue("CAT",era,(d,))
 
