@@ -58,6 +58,8 @@ def identity_lookup(
         errors.append("LOOKUP_ERA_SCOPE_INVALID")
     if lookup_era_scope == "ALL_ERAS":
         errors.append("ALL_ERAS_COVERAGE_INCOMPLETE")
+    if lookup_era_scope == "ERA_1_ONLY" and store.active_era_id != "ERA_1":
+        errors.append("STORE_ACTIVE_ERA_NOT_ERA1")
 
     active_era_id=store.active_era_id if lookup_era_scope=="ERA_1_ONLY" else None
 
