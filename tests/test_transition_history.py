@@ -162,6 +162,21 @@ class GovernedTransitionTests(unittest.TestCase):
         self.assertFalse(sweep.clean)
         self.assertTrue(any(x.startswith("STATE_HISTORY_MISMATCH") for x in sweep.defects))
 
+    def test_unknown_to_state_rejected_before_write(self):
+        store=tracked_store()
+        result=transition(store,to_state="ACTIVE")
+        self.assertFalse(result.accepted)
+        self.assertIn("UNKNOWN_TO_STATE",result.errors)
+        self.assertEqual(store.all()[0].lifecycle_state,"CURRENT")
+        self.assertEqual(store.all_transitions(),())
+
+    def test_unknown_existing_lifecycle_fails_sweep(self):
+        store=tracked_store()
+        store.records[0]=replace(store.records[0],lifecycle_state="ACTIVE",is_current=False)
+        sweep=stale_state_sweep(store=store,search_policy=policy(),normalizer=normalizer())
+        self.assertFalse(sweep.clean)
+        self.assertTrue(any(x.startswith("UNKNOWN_LIFECYCLE_STATE:") for x in sweep.defects))
+
     def test_forked_history_is_detected(self):
         store=tracked_store()
         common=dict(
