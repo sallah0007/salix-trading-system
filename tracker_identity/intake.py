@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 from .importer import CanonicalEraBoundary
+from .catalogue import FeatureDefinitionRecord
 from .models import FeatureIdentity, LookupOutcome, NormalizerSpec, SearchPolicy
 from .stale_sweep import StaleSweepResult, stale_state_sweep
 from .store import CanonicalIdentityStore
@@ -14,6 +15,8 @@ class BuiltIdentityCandidate:
     feature_version: str
     definition_hash: str
     graph_hash: str
+    semantic_definition: str
+    formula: str
     lifecycle_state: str
     is_current: bool
     scope: str
@@ -30,6 +33,7 @@ class SafeIntakeResult:
     accepted: bool
     assigned_era_id: Optional[str]
     identity: Optional[FeatureIdentity]
+    definition: Optional[FeatureDefinitionRecord]
     stale_sweep: StaleSweepResult
     errors: Tuple[str, ...]
 
@@ -61,10 +65,30 @@ def safe_intake_built_identity(
 
     if errors:
         sweep=stale_state_sweep(store=target_store,search_policy=search_policy,normalizer=normalizer)
-        return SafeIntakeResult(False,None,None,sweep,tuple(errors))
+        return SafeIntakeResult(False,None,None,None,sweep,tuple(errors))
 
     # Era is deliberately not accepted from Composer/build output. Tracker assigns it
-    # solely from the verified active CanonicalEraBoundary.
+    # solely from the verified active CanonicalEraBoundary, then recomputes the
+    # definition and dependency graph bindings under that era before registry mutation.
+    definition=FeatureDefinitionRecord(
+        feature_id=candidate.feature_id,
+        feature_version=candidate.feature_version,
+        semantic_definition=candidate.semantic_definition,
+        formula=candidate.formula,
+        dependencies=candidate.dependencies,
+        era_id=era_boundary.era_id,
+        definition_hash=candidate.definition_hash,
+        graph_hash=candidate.graph_hash,
+        instrument=candidate.instrument,
+        timeframe=candidate.timeframe,
+        authority="SAFE_INTAKE_BUILD_OUTPUT",
+        purpose="TRACKER_SAFE_INTAKE",
+    )
+    definition_errors=definition.completeness_errors()
+    if definition_errors:
+        sweep=stale_state_sweep(store=target_store,search_policy=search_policy,normalizer=normalizer)
+        return SafeIntakeResult(False,era_boundary.era_id,None,None,sweep,definition_errors)
+
     identity=FeatureIdentity(
         feature_id=candidate.feature_id,
         feature_version=candidate.feature_version,
@@ -90,10 +114,10 @@ def safe_intake_built_identity(
     )
     sweep=stale_state_sweep(store=staged,search_policy=search_policy,normalizer=normalizer)
     if not sweep.clean:
-        return SafeIntakeResult(False,era_boundary.era_id,None,sweep,("STALE_STATE_SWEEP_FAILED",))
+        return SafeIntakeResult(False,era_boundary.era_id,None,None,sweep,("STALE_STATE_SWEEP_FAILED",))
 
     target_store.add(identity)
-    return SafeIntakeResult(True,era_boundary.era_id,identity,sweep,())
+    return SafeIntakeResult(True,era_boundary.era_id,identity,definition,sweep,())
 
 def composer_boundary_outcome(outcome: LookupOutcome) -> LookupOutcome:
     """Map Tracker era-qualified lookup semantics to the frozen Composer boundary.
