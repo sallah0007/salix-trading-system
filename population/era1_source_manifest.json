@@ -1,0 +1,16 @@
+{
+  "manifest_id": "SALIX-ERA1-IDENTITY-CONTENT-001",
+  "version": "1",
+  "era_id": "ERA_1",
+  "source_refs": [
+    {
+      "source_id": "era1:catalogue:neutral-core",
+      "title": "SALIX Era 1 Neutral Core Definition Source",
+      "authority_class": "CURRENT_FEATURE_DEFINITION_CATALOGUE",
+      "searched": true,
+      "importable_identity_rows": 1,
+      "era_id": "ERA_1",
+      "notes": "First instrument-neutral Era 1 canonical definition."
+    }
+  ]
+}
