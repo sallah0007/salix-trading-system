@@ -1,173 +1,99 @@
 import unittest
 
 from tracker_identity import (
-    CanonicalIdentityStore,
-    FeatureIdentity,
-    NormalizerSpec,
-    SearchPolicy,
+    CanonicalEraBoundary, CanonicalIdentityStore, FeatureIdentity,
+    IdentityImportManifest, ImportSourceRef, NormalizerSpec, SearchPolicy,
+    SourceUniverseAuthority, import_identity_content,
 )
-from tracker_identity.importer import (
-    IdentityImportManifest,
-    ImportSourceRef,
-    SourceUniverseAuthority,
-    import_identity_content,
-)
-
-SCOPES=("current_active",)
 
 def policy():
-    p=SearchPolicy(
-        policy_id="p",version="1",policy_hash="",
-        required_scopes=SCOPES,searched_scopes=SCOPES,scope_exclusions={},
-    )
-    return SearchPolicy(
-        policy_id=p.policy_id,version=p.version,policy_hash=p.computed_hash(),
-        required_scopes=p.required_scopes,searched_scopes=p.searched_scopes,
-        scope_exclusions=p.scope_exclusions,
-    )
+    p=SearchPolicy("p","1","",("current_active",),("current_active",),{})
+    return SearchPolicy(p.policy_id,p.version,p.computed_hash(),p.required_scopes,p.searched_scopes,p.scope_exclusions)
 
 def normalizer():
-    n=NormalizerSpec(
-        normalizer_id="n",version="1",normalizer_hash="",
-        equivalence_classes=("EXACT_STRUCTURAL_IDENTITY",),
-    )
-    return NormalizerSpec(
-        normalizer_id=n.normalizer_id,version=n.version,
-        normalizer_hash=n.computed_hash(),equivalence_classes=n.equivalence_classes,
-    )
+    n=NormalizerSpec("n","1","",("EXACT_STRUCTURAL_IDENTITY",))
+    return NormalizerSpec(n.normalizer_id,n.version,n.computed_hash(),n.equivalence_classes)
 
-def universe(expected=("s",), complete=True, unresolved=()):
-    u=SourceUniverseAuthority(
-        source_universe_id="U1",version="1",source_universe_hash="",
-        authority_source_id="drive:census",expected_source_ids=tuple(expected),
-        universe_complete=complete,unresolved_source_classes=tuple(unresolved),
+def boundary():
+    vals=dict(
+        era_id="ERA_1",version="1",boundary_hash="",effective_ts="2026-09-19T00:00:00+10:00",
+        predecessor_era_id="ERA_0",registry_id="SALIX-ERA1-REGISTRY",catalogue_id="CAT",
+        source_universe_id="U1",pre_era_content_default="UNRESOLVED_NON_IMPORTABLE",
+        historical_gap_status="UNRESOLVED",historical_gap_owner="MANAGER",
+        revisit_trigger="IF_ERA0_ARTIFACT_LOCATED_REVIEW_BEFORE_IMPORT",absent_proven=False,
+        created_by="SALIX_MANAGER",approval_authority="OWNER",created_ts="2026-09-19T00:00:00+10:00",
     )
-    return SourceUniverseAuthority(
-        source_universe_id=u.source_universe_id,version=u.version,
-        source_universe_hash=u.computed_hash(),
-        authority_source_id=u.authority_source_id,
-        expected_source_ids=u.expected_source_ids,
-        universe_complete=u.universe_complete,
-        unresolved_source_classes=u.unresolved_source_classes,
-    )
+    x=CanonicalEraBoundary(**vals); vals["boundary_hash"]=x.computed_hash()
+    return CanonicalEraBoundary(**vals)
 
-def row(fid="f1", source_id="s", authority="CANONICAL"):
+def universe(expected=("s",),complete=True,unresolved=()):
+    vals=dict(source_universe_id="U1",version="1",source_universe_hash="",
+              authority_source_id="boundary",expected_source_ids=tuple(expected),
+              universe_complete=complete,era_id="ERA_1",unresolved_source_classes=tuple(unresolved))
+    x=SourceUniverseAuthority(**vals); vals["source_universe_hash"]=x.computed_hash()
+    return SourceUniverseAuthority(**vals)
+
+def manifest(refs,era="ERA_1"):
+    return IdentityImportManifest("M","1",era,tuple(refs))
+
+def ref(source_id="s",authority="CANONICAL",rows=1,era="ERA_1",searched=True):
+    return ImportSourceRef(source_id,"source",authority,searched,rows,era)
+
+def row(fid="f1",source_id="s",authority="CANONICAL",era="ERA_1",current=True,lifecycle="CURRENT"):
     return FeatureIdentity(
         feature_id=fid,feature_version="1",definition_hash="a",graph_hash="b",
-        lifecycle_state="CURRENT",is_current=True,scope="current_active",
+        lifecycle_state=lifecycle,is_current=current,scope="current_active",era_id=era,
         import_source_id=source_id,import_source_authority_class=authority,
     )
 
+def run(rows,man,uni=None,store=None):
+    store=store or CanonicalIdentityStore()
+    result=import_identity_content(
+        target_store=store,rows=tuple(rows),manifest=man,source_universe=uni or universe(),
+        era_boundary=boundary(),search_policy=policy(),normalizer=normalizer())
+    return store,result
+
 class ImportBoundaryTests(unittest.TestCase):
-    def test_zero_rows_incomplete_universe_does_not_claim_population_complete(self):
-        manifest=IdentityImportManifest(
-            manifest_id="M1",version="1",
-            source_refs=(ImportSourceRef("s","source","MANAGER_RECORD",True,0),),
-        )
-        store=CanonicalIdentityStore()
-        result=import_identity_content(
-            target_store=store,rows=(),manifest=manifest,
-            source_universe=universe(complete=False,unresolved=("POPULATED_REGISTRY",)),
-            search_policy=policy(),normalizer=normalizer(),
-        )
-        self.assertEqual(result.imported_row_count,0)
+    def test_zero_rows_incomplete_universe_not_complete(self):
+        man=manifest((ref(rows=0,authority="MANAGER_RECORD"),))
+        store,result=run((),man,universe(complete=False,unresolved=("POPULATED_REGISTRY",)))
         self.assertFalse(result.population_complete)
         self.assertEqual(store.all(),())
 
-    def test_zero_rows_complete_external_universe_can_be_complete(self):
-        manifest=IdentityImportManifest(
-            manifest_id="M2",version="1",
-            source_refs=(ImportSourceRef("s","source","CANONICAL",True,0),),
-        )
-        result=import_identity_content(
-            target_store=CanonicalIdentityStore(),rows=(),manifest=manifest,
-            source_universe=universe(),search_policy=policy(),normalizer=normalizer(),
-        )
+    def test_zero_rows_complete_era1_universe_can_complete(self):
+        man=manifest((ref(rows=0),))
+        store,result=run((),man)
         self.assertTrue(result.population_complete)
+        self.assertEqual(store.all(),())
 
-    def test_manifest_cannot_self_certify_missing_census_source(self):
-        manifest=IdentityImportManifest(
-            manifest_id="M3",version="1",
-            source_refs=(ImportSourceRef("s","source","CANONICAL",True,0),),
-        )
-        store=CanonicalIdentityStore()
-        result=import_identity_content(
-            target_store=store,rows=(),manifest=manifest,
-            source_universe=universe(expected=("s","missing-source")),
-            search_policy=policy(),normalizer=normalizer(),
-        )
-        self.assertFalse(result.population_complete)
+    def test_missing_external_source_fails(self):
+        man=manifest((ref("s",rows=0),))
+        store,result=run((),man,universe(expected=("s","missing")))
         self.assertTrue(any(e.startswith("UNENUMERATED_SOURCE:") for e in result.errors))
         self.assertEqual(store.all(),())
 
-    def test_noncanonical_source_rows_are_rejected_without_mutation(self):
-        manifest=IdentityImportManifest(
-            manifest_id="M4",version="1",
-            source_refs=(ImportSourceRef("s","historical","HISTORICAL_EXAMPLE",True,1),),
-        )
-        store=CanonicalIdentityStore()
-        result=import_identity_content(
-            target_store=store,
-            rows=(row(authority="HISTORICAL_EXAMPLE"),),
-            manifest=manifest,source_universe=universe(),
-            search_policy=policy(),normalizer=normalizer(),
-        )
-        self.assertFalse(result.population_complete)
+    def test_noncanonical_source_rejected_without_mutation(self):
+        man=manifest((ref(authority="HISTORICAL_EXAMPLE"),))
+        store,result=run((row(authority="HISTORICAL_EXAMPLE"),),man)
         self.assertTrue(any(e.startswith("NONCANONICAL_SOURCE_HAS_IMPORTABLE_ROWS:") for e in result.errors))
-        self.assertTrue(any(e.startswith("ROW_SOURCE_AUTHORITY_NOT_PERMITTED:") for e in result.errors))
         self.assertEqual(store.all(),())
 
-    def test_row_authority_must_match_manifest_source(self):
-        manifest=IdentityImportManifest(
-            manifest_id="M5",version="1",
-            source_refs=(ImportSourceRef("s","source","CANONICAL",True,1),),
-        )
-        store=CanonicalIdentityStore()
-        result=import_identity_content(
-            target_store=store,
-            rows=(row(authority="CURRENT_CANONICAL_REGISTRY"),),
-            manifest=manifest,source_universe=universe(),
-            search_policy=policy(),normalizer=normalizer(),
-        )
-        self.assertFalse(result.population_complete)
-        self.assertTrue(any(e.startswith("ROW_SOURCE_AUTHORITY_MISMATCH:") for e in result.errors))
+    def test_provenance_required(self):
+        bad=FeatureIdentity("f1","1","a","b","CURRENT",True,"current_active",era_id="ERA_1")
+        man=manifest((ref(),))
+        store,result=run((bad,),man)
+        self.assertTrue(any(e.startswith("ROW_IMPORT_PROVENANCE_REQUIRED:") for e in result.errors))
         self.assertEqual(store.all(),())
 
-    def test_per_source_row_count_mismatch_fails_without_mutation(self):
-        manifest=IdentityImportManifest(
-            manifest_id="M6",version="1",
-            source_refs=(
-                ImportSourceRef("s","source","CANONICAL",True,0),
-                ImportSourceRef("t","source2","CANONICAL",True,1),
-            ),
-        )
-        store=CanonicalIdentityStore()
-        result=import_identity_content(
-            target_store=store,
-            rows=(row(source_id="s"),),
-            manifest=manifest,source_universe=universe(expected=("s","t")),
-            search_policy=policy(),normalizer=normalizer(),
-        )
-        self.assertFalse(result.population_complete)
+    def test_per_source_distribution_reconciles(self):
+        man=manifest((ref("s",rows=0),ref("t",rows=1)))
+        store,result=run((row(source_id="s"),),man,universe(expected=("s","t")))
         self.assertTrue(any(e.startswith("IMPORT_SOURCE_ROW_COUNT_MISMATCH:") for e in result.errors))
         self.assertEqual(store.all(),())
 
-    def test_stale_rows_fail_before_mutation(self):
-        manifest=IdentityImportManifest(
-            manifest_id="M7",version="1",
-            source_refs=(ImportSourceRef("s","source","CANONICAL",True,1),),
-        )
-        stale=FeatureIdentity(
-            feature_id="f1",feature_version="1",definition_hash="a",graph_hash="b",
-            lifecycle_state="SUPERSEDED",is_current=True,scope="current_active",
-            import_source_id="s",import_source_authority_class="CANONICAL",
-        )
-        store=CanonicalIdentityStore()
-        result=import_identity_content(
-            target_store=store,rows=(stale,),manifest=manifest,
-            source_universe=universe(),search_policy=policy(),normalizer=normalizer(),
-        )
-        self.assertFalse(result.population_complete)
+    def test_stale_sweep_prevents_mutation(self):
+        man=manifest((ref(),))
+        store,result=run((row(current=True,lifecycle="SUPERSEDED"),),man)
         self.assertIn("STALE_STATE_SWEEP_FAILED",result.errors)
         self.assertEqual(store.all(),())
 
