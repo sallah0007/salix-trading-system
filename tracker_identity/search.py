@@ -12,6 +12,7 @@ from .models import (
     LookupOutcome,
     NormalizerSpec,
     SearchPolicy,
+    LOOKUP_ERA_SCOPES,
 )
 from .normalizer import normalize_subject
 from .store import CanonicalIdentityStore
@@ -52,9 +53,15 @@ def identity_lookup(
     errors=list(search_policy.completeness_errors())
     errors.extend(normalizer.completeness_errors())
 
-    # D1 fence: a policy cannot self-certify completeness while the canonical
-    # store contains a scope it failed to enumerate.
-    store_scopes=set(store.enumerate_scopes())
+    lookup_era_scope=str(subject.get("lookup_era_scope","ALL_ERAS")).strip().upper() or "ALL_ERAS"
+    if lookup_era_scope not in LOOKUP_ERA_SCOPES:
+        errors.append("LOOKUP_ERA_SCOPE_INVALID")
+    if lookup_era_scope == "ALL_ERAS":
+        errors.append("ALL_ERAS_COVERAGE_INCOMPLETE")
+
+    active_era_id=store.active_era_id if lookup_era_scope=="ERA_1_ONLY" else None
+
+    store_scopes=set(store.enumerate_scopes(active_era_id))
     required_scopes=set(search_policy.required_scopes)
     unenumerated_store_scopes=sorted(store_scopes-required_scopes)
     if unenumerated_store_scopes:
@@ -77,14 +84,13 @@ def identity_lookup(
     searched_records=[]
     if not errors:
         for scope in search_policy.searched_scopes:
-            searched_records.extend(store.list_scope(scope))
+            searched_records.extend(store.list_scope(scope,active_era_id))
 
     subject_key=_subject_key(normalized)
     exact_all=[r for r in searched_records if r.canonical_key==subject_key]
     exact_current=[r for r in exact_all if r.is_current]
     exact_noncurrent=[r for r in exact_all if not r.is_current]
 
-    # D2 fence: only current identities can resolve EXACT.
     if len(exact_current)>1:
         errors.append("AMBIGUOUS_CURRENT_EXACT_CANONICAL_IDENTITY")
 
@@ -100,7 +106,6 @@ def identity_lookup(
         and r.feature_id==normalized["feature_id"]
         and r.canonical_key!=subject_key
     ]
-    # Preserve non-current exact identities as review evidence, never exact binding.
     near.extend(r for r in exact_noncurrent if r not in near)
 
     lookup_complete=not errors
@@ -143,6 +148,9 @@ def identity_lookup(
     evidence={
         "request_id":request_id,
         "normalized_subject":normalized,
+        "lookup_era_scope":lookup_era_scope,
+        "active_era_id":active_era_id,
+        "store_registry_id":store.registry_id,
         "store_scopes":sorted(store_scopes),
         "required_scopes":list(search_policy.required_scopes),
         "searched_scopes":list(search_policy.searched_scopes),
@@ -155,10 +163,10 @@ def identity_lookup(
         "normalizer_hash":normalizer.normalizer_hash,
         "normalizer_equivalence_classes":list(normalizer.equivalence_classes),
         "scanned_identity_keys":[
-            list(r.canonical_key)
+            [r.era_id,*list(r.canonical_key)]
             for r in sorted(
                 searched_records,
-                key=lambda x:(x.feature_id,x.feature_version,x.definition_hash,x.graph_hash,x.instrument or "",x.timeframe or ""),
+                key=lambda x:(x.era_id,x.feature_id,x.feature_version,x.definition_hash,x.graph_hash,x.instrument or "",x.timeframe or ""),
             )
         ],
         "outcome":outcome.value,
@@ -187,5 +195,7 @@ def identity_lookup(
         absent_claim_token=absent_token,
         lookup_evidence_hash=_evidence_hash(evidence),
         verdict_ts=now.isoformat(),
+        lookup_era_scope=lookup_era_scope,
+        active_era_id=active_era_id,
         errors=tuple(errors),
     )
