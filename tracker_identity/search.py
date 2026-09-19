@@ -16,22 +16,26 @@ from .models import (
 from .normalizer import normalize_subject
 from .store import CanonicalIdentityStore
 
-
 def _evidence_hash(payload: Mapping[str, Any]) -> str:
-    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    raw=json.dumps(payload,sort_keys=True,separators=(",",":"),default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
 
 def _subject_key(n: Mapping[str, Any]) -> tuple:
     return (
-        n["feature_id"],
-        n["feature_version"],
-        n["definition_hash"],
-        n["graph_hash"],
-        n["instrument"],
-        n["timeframe"],
+        n["feature_id"],n["feature_version"],n["definition_hash"],
+        n["graph_hash"],n["instrument"],n["timeframe"],
     )
 
+def _resolve_current_survivor(noncurrent_matches, searched_records):
+    survivor_ids={r.canonical_survivor for r in noncurrent_matches if r.canonical_survivor}
+    if not survivor_ids:
+        return (), ()
+    candidates=tuple(
+        r for r in searched_records
+        if r.is_current and r.feature_id in survivor_ids
+    )
+    unresolved=tuple(sorted(s for s in survivor_ids if not any(r.feature_id==s for r in candidates)))
+    return candidates, unresolved
 
 def identity_lookup(
     *,
@@ -43,89 +47,123 @@ def identity_lookup(
     owner: str = "TRACKER",
     now: datetime | None = None,
 ) -> IdentityLookupResult:
-    now = now or datetime.now(timezone.utc)
+    now=now or datetime.now(timezone.utc)
 
-    errors = list(search_policy.completeness_errors())
+    errors=list(search_policy.completeness_errors())
     errors.extend(normalizer.completeness_errors())
 
-    normalized, subject_hash = normalize_subject(subject, normalizer)
-    for required in ("feature_id", "feature_version", "definition_hash", "graph_hash"):
+    # D1 fence: a policy cannot self-certify completeness while the canonical
+    # store contains a scope it failed to enumerate.
+    store_scopes=set(store.enumerate_scopes())
+    required_scopes=set(search_policy.required_scopes)
+    unenumerated_store_scopes=sorted(store_scopes-required_scopes)
+    if unenumerated_store_scopes:
+        errors.append("UNENUMERATED_STORE_SCOPE:"+",".join(unenumerated_store_scopes))
+
+    try:
+        normalized,subject_hash=normalize_subject(subject,normalizer)
+    except ValueError as exc:
+        normalized={
+            "feature_id":"","feature_version":"","definition_hash":"",
+            "graph_hash":"","instrument":None,"timeframe":None,
+        }
+        subject_hash=""
+        errors.append("NORMALIZER_APPLICATION_ERROR:"+str(exc))
+
+    for required in ("feature_id","feature_version","definition_hash","graph_hash"):
         if not normalized[required]:
             errors.append(f"LOOKUP_SUBJECT_{required.upper()}_REQUIRED")
 
-    searched_records = []
+    searched_records=[]
     if not errors:
         for scope in search_policy.searched_scopes:
             searched_records.extend(store.list_scope(scope))
 
-    exact = [r for r in searched_records if r.canonical_key == _subject_key(normalized)]
-    near = [
+    subject_key=_subject_key(normalized)
+    exact_all=[r for r in searched_records if r.canonical_key==subject_key]
+    exact_current=[r for r in exact_all if r.is_current]
+    exact_noncurrent=[r for r in exact_all if not r.is_current]
+
+    # D2 fence: only current identities can resolve EXACT.
+    if len(exact_current)>1:
+        errors.append("AMBIGUOUS_CURRENT_EXACT_CANONICAL_IDENTITY")
+
+    survivor_candidates,survivor_unresolved=_resolve_current_survivor(exact_noncurrent,searched_records)
+    if len(survivor_candidates)>1:
+        errors.append("AMBIGUOUS_CANONICAL_SURVIVOR")
+    if survivor_unresolved:
+        errors.append("UNRESOLVED_CANONICAL_SURVIVOR:"+",".join(survivor_unresolved))
+
+    near=[
         r for r in searched_records
         if normalized["feature_id"]
-        and r.feature_id == normalized["feature_id"]
-        and r.canonical_key != _subject_key(normalized)
+        and r.feature_id==normalized["feature_id"]
+        and r.canonical_key!=subject_key
     ]
+    # Preserve non-current exact identities as review evidence, never exact binding.
+    near.extend(r for r in exact_noncurrent if r not in near)
 
-    if len(exact) > 1:
-        errors.append("AMBIGUOUS_EXACT_CANONICAL_IDENTITY")
-
-    lookup_complete = not errors
+    lookup_complete=not errors
 
     if errors:
-        outcome = LookupOutcome.INCOMPLETE_LOOKUP
-        exact_match = None
-        near_matches = ()
-        absent_token = None
-        collision = "UNRESOLVED"
-    elif len(exact) == 1:
-        outcome = LookupOutcome.EXACT_CANONICAL_IDENTITY
-        exact_match = exact[0]
-        near_matches = ()
-        absent_token = None
-        collision = "CLEAR"
+        outcome=LookupOutcome.INCOMPLETE_LOOKUP
+        exact_match=None
+        near_matches=()
+        absent_token=None
+        collision="UNRESOLVED"
+    elif len(exact_current)==1:
+        outcome=LookupOutcome.EXACT_CANONICAL_IDENTITY
+        exact_match=exact_current[0]
+        near_matches=()
+        absent_token=None
+        collision="CLEAR"
+    elif len(survivor_candidates)==1:
+        outcome=LookupOutcome.NEAR_MATCH
+        exact_match=None
+        near_matches=tuple(dict.fromkeys((*near,*survivor_candidates)))
+        absent_token=None
+        collision="CANONICAL_SURVIVOR_REVIEW_REQUIRED"
     elif near:
-        outcome = LookupOutcome.NEAR_MATCH
-        exact_match = None
-        near_matches = tuple(near)
-        absent_token = None
-        collision = "REVIEW_REQUIRED"
+        outcome=LookupOutcome.NEAR_MATCH
+        exact_match=None
+        near_matches=tuple(dict.fromkeys(near))
+        absent_token=None
+        collision="REVIEW_REQUIRED"
     else:
-        # Empty store is valid. Completeness is about governed enumerable scope,
-        # not the number of identities present.
-        outcome = LookupOutcome.ABSENT
-        exact_match = None
-        near_matches = ()
-        absent_token = AbsentClaimToken(
+        outcome=LookupOutcome.ABSENT
+        exact_match=None
+        near_matches=()
+        absent_token=AbsentClaimToken(
             claim_id=f"type1-{uuid.uuid4()}",
             owner=owner,
             bound_request_id=request_id,
         )
-        collision = "CLEAR"
+        collision="CLEAR"
 
-    evidence = {
-        "request_id": request_id,
-        "normalized_subject": normalized,
-        "searched_scopes": list(search_policy.searched_scopes),
-        "scope_exclusions": dict(search_policy.scope_exclusions),
-        "search_policy_id": search_policy.policy_id,
-        "search_policy_version": search_policy.version,
-        "search_policy_hash": search_policy.policy_hash,
-        "normalizer_id": normalizer.normalizer_id,
-        "normalizer_version": normalizer.version,
-        "normalizer_hash": normalizer.normalizer_hash,
-        "scanned_identity_keys": [
+    evidence={
+        "request_id":request_id,
+        "normalized_subject":normalized,
+        "store_scopes":sorted(store_scopes),
+        "required_scopes":list(search_policy.required_scopes),
+        "searched_scopes":list(search_policy.searched_scopes),
+        "scope_exclusions":dict(search_policy.scope_exclusions),
+        "search_policy_id":search_policy.policy_id,
+        "search_policy_version":search_policy.version,
+        "search_policy_hash":search_policy.policy_hash,
+        "normalizer_id":normalizer.normalizer_id,
+        "normalizer_version":normalizer.version,
+        "normalizer_hash":normalizer.normalizer_hash,
+        "normalizer_equivalence_classes":list(normalizer.equivalence_classes),
+        "scanned_identity_keys":[
             list(r.canonical_key)
             for r in sorted(
                 searched_records,
-                key=lambda x: (
-                    x.feature_id, x.feature_version, x.definition_hash,
-                    x.graph_hash, x.instrument or "", x.timeframe or ""
-                ),
+                key=lambda x:(x.feature_id,x.feature_version,x.definition_hash,x.graph_hash,x.instrument or "",x.timeframe or ""),
             )
         ],
-        "outcome": outcome.value,
-        "lookup_complete": lookup_complete,
-        "errors": errors,
+        "outcome":outcome.value,
+        "lookup_complete":lookup_complete,
+        "errors":errors,
     }
 
     return IdentityLookupResult(
