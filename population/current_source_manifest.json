@@ -1,0 +1,52 @@
+{
+  "manifest_id": "SALIX-TYPE1-IDENTITY-CONTENT-20260919-01",
+  "version": "1",
+  "declared_source_universe_complete": false,
+  "unresolved_source_classes": [
+    "POPULATED_TRACKER_REGISTRY",
+    "CANONICAL_FEATURE_DEFINITION_CATALOGUE",
+    "HISTORICAL_GOLD_FEATURE_MANIFEST"
+  ],
+  "source_refs": [
+    {
+      "source_id": "drive:1UjBfRONTPe-WhljFyNYw1cb3nlX3S6OkeBg3bpqjJ-k",
+      "title": "SALIX EURUSD — FEATURE DEFINITION IDENTITY LOOKUP ATTEMPT — MANAGER RECORD — 2026-09-19",
+      "authority_class": "MANAGER_LOOKUP_RECORD",
+      "searched": true,
+      "importable_identity_rows": 0,
+      "notes": "Explicitly records that no populated canonical feature-definition catalogue or concrete EURUSD governed feature identities were located; LOOKUP_COMPLETE=FALSE."
+    },
+    {
+      "source_id": "drive:15mPi14mG5MAOerZTnhbWfWXwcOIpzWsA",
+      "title": "SALIX TRACKER MASTER ARCHITECTURE FROZEN — 2026-09-16",
+      "authority_class": "FROZEN_ARCHITECTURE",
+      "searched": true,
+      "importable_identity_rows": 0,
+      "notes": "Defines canonical identity requirements and registry architecture; not a populated identity catalogue."
+    },
+    {
+      "source_id": "drive:1aMYAmh5i7ogdQ0vIInPKki3lCSV4Nwotx48zllZhfVw",
+      "title": "TRACKER COMPOSER",
+      "authority_class": "OWNER_FROZEN_ARCHITECTURE",
+      "searched": true,
+      "importable_identity_rows": 0,
+      "notes": "Defines IDENTITY_LOOKUP_RESULT and construction/identity rules; does not provide populated feature rows."
+    },
+    {
+      "source_id": "drive:1U2v6Q-nzQ1UXS_8t7YcMIkY4iEGsXGiZRk3krfKVwu0",
+      "title": "SALIX TRACKER↔FW↔ML V0.34 — CONNECTED CONTRACT MASTER",
+      "authority_class": "CURRENT_CONNECTED_CONTRACT",
+      "searched": true,
+      "importable_identity_rows": 0,
+      "notes": "Defines cross-system identity/lineage contracts; not a populated feature catalogue."
+    },
+    {
+      "source_id": "drive:1y7mqE-i_Q9AX9Fv1pMqthP-kTgyfZ9VAAddJ08RdJgw",
+      "title": "SALIX TRACKER↔FW V0.23 — SHARED FEATURE IDENTITY + ML/FW INDEPENDENCE HARDENING",
+      "authority_class": "HISTORICAL_SUPPORTING_CONTRACT",
+      "searched": true,
+      "importable_identity_rows": 0,
+      "notes": "Provides feature identity rules and examples; not current populated registry evidence."
+    }
+  ]
+}
