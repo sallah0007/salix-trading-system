@@ -33,12 +33,17 @@ def boundary(**changes):
 def candidate(**changes):
     vals=dict(
         feature_id="gold.example.future_feature",feature_version="1",
-        definition_hash="d"*64,graph_hash="g"*64,lifecycle_state="CURRENT",
+        definition_hash="",graph_hash="",semantic_definition="future feature",formula="x",lifecycle_state="CURRENT",
         is_current=True,scope="current_active",aliases=(),dependencies=(),
         canonical_survivor=None,instrument="XAUUSD",timeframe="H1",
         source_provider="COMPOSER",lineage_ref="build:future",
     )
     vals.update(changes)
+    probe=BuiltIdentityCandidate(**vals)
+    from tracker_identity import FeatureDefinitionRecord
+    d=FeatureDefinitionRecord(probe.feature_id,probe.feature_version,probe.semantic_definition,probe.formula,probe.dependencies,"ERA_1","","",probe.instrument,probe.timeframe)
+    if not vals["definition_hash"]: vals["definition_hash"]=d.computed_definition_hash()
+    if not vals["graph_hash"]: vals["graph_hash"]=d.computed_graph_hash()
     return BuiltIdentityCandidate(**vals)
 
 class SafeIntakeEraTests(unittest.TestCase):
@@ -89,6 +94,26 @@ class SafeIntakeEraTests(unittest.TestCase):
             search_policy=policy(),normalizer=normalizer(),
         )
         self.assertEqual(result.identity.era_id,boundary().era_id)
+
+    def test_safe_intake_rejects_tampered_definition_hash(self):
+        store=CanonicalIdentityStore()
+        result=safe_intake_built_identity(
+            target_store=store,candidate=candidate(definition_hash="0"*64),era_boundary=boundary(),
+            search_policy=policy(),normalizer=normalizer(),
+        )
+        self.assertFalse(result.accepted)
+        self.assertTrue(any(x.startswith("CATALOGUE_DEFINITION_HASH_MISMATCH") for x in result.errors))
+        self.assertEqual(store.all(),())
+
+    def test_safe_intake_rejects_tampered_graph_hash(self):
+        store=CanonicalIdentityStore()
+        result=safe_intake_built_identity(
+            target_store=store,candidate=candidate(graph_hash="0"*64),era_boundary=boundary(),
+            search_policy=policy(),normalizer=normalizer(),
+        )
+        self.assertFalse(result.accepted)
+        self.assertTrue(any(x.startswith("CATALOGUE_GRAPH_HASH_MISMATCH") for x in result.errors))
+        self.assertEqual(store.all(),())
 
     def test_stale_failure_does_not_mutate_store(self):
         existing=candidate(feature_id="same",feature_version="1")
