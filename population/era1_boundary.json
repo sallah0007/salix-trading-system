@@ -1,0 +1,18 @@
+{
+  "era_id": "ERA_1",
+  "version": "1",
+  "boundary_hash": "819bcf2b49bc1a304864e09cff176f72ce74882992317503c3a066ab6c6d720c",
+  "effective_ts": "2026-09-19T00:00:00+10:00",
+  "predecessor_era_id": "ERA_0",
+  "registry_id": "SALIX-ERA1-REGISTRY",
+  "catalogue_id": "SALIX-ERA1-FEATURE-CATALOGUE",
+  "source_universe_id": "SALIX-ERA1-SOURCE-UNIVERSE-001",
+  "pre_era_content_default": "UNRESOLVED_NON_IMPORTABLE",
+  "historical_gap_status": "UNRESOLVED",
+  "historical_gap_owner": "MANAGER",
+  "revisit_trigger": "IF_ANY_CANDIDATE_POPULATED_ERA0_REGISTRY_CATALOGUE_OR_MANIFEST_IS_LOCATED_THEN_AUTHORITY_CLASSIFY_AND_PROVENANCE_CHECK_BEFORE_REUSE_OR_IMPORT",
+  "absent_proven": false,
+  "created_by": "SALIX_MANAGER",
+  "approval_authority": "OWNER",
+  "created_ts": "2026-09-19T00:00:00+10:00"
+}
