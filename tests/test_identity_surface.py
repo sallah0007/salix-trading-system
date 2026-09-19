@@ -204,6 +204,51 @@ class IdentitySurfaceTests(unittest.TestCase):
         )
         self.assertEqual(result.outcome,LookupOutcome.NEAR_MATCH)
 
+    def test_validation_only_record_is_hidden_from_ordinary_lookup(self):
+        validation=FeatureIdentity(
+            feature_id="returns.1bar",feature_version="1",definition_hash="abc",graph_hash="def",
+            lifecycle_state="VALIDATION_ONLY",is_current=True,scope="validation",era_id="ERA_1",
+            instrument="EURUSD",timeframe="H1",
+        )
+        result=identity_lookup(
+            store=CanonicalIdentityStore([validation]),subject=subject(),request_id="REQ-VALID-HIDDEN",
+            search_policy=complete_policy(),normalizer=normalizer(),
+        )
+        self.assertEqual(result.outcome,LookupOutcome.ABSENT_IN_ERA_1)
+
+    def test_validation_only_record_requires_explicit_validation_access(self):
+        validation=FeatureIdentity(
+            feature_id="returns.1bar",feature_version="1",definition_hash="abc",graph_hash="def",
+            lifecycle_state="VALIDATION_ONLY",is_current=True,scope="validation",era_id="ERA_1",
+            instrument="EURUSD",timeframe="H1",
+        )
+        s=subject(); s["include_validation_only"]=True
+        result=identity_lookup(
+            store=CanonicalIdentityStore([validation]),subject=s,request_id="REQ-VALID-EXPLICIT",
+            search_policy=complete_policy(),normalizer=normalizer(),
+        )
+        self.assertEqual(result.outcome,LookupOutcome.EXACT_CANONICAL_IDENTITY)
+
+    def test_v1_to_v2_successor_preserves_version_history(self):
+        v1=FeatureIdentity(
+            feature_id="returns.1bar",feature_version="1",definition_hash="abc",graph_hash="def",
+            lifecycle_state="SUPERSEDED",is_current=False,scope="historical_prior_version",era_id="ERA_1",
+            canonical_survivor="returns.1bar",instrument="EURUSD",timeframe="H1",
+        )
+        v2=FeatureIdentity(
+            feature_id="returns.1bar",feature_version="2",definition_hash="xyz",graph_hash="uvw",
+            lifecycle_state="CURRENT",is_current=True,scope="current_active",era_id="ERA_1",
+            instrument="EURUSD",timeframe="H1",
+        )
+        store=CanonicalIdentityStore([v1,v2])
+        sweep=stale_state_sweep(store=store,search_policy=complete_policy(),normalizer=normalizer())
+        self.assertTrue(sweep.clean)
+        old=identity_lookup(store=store,subject=subject(version="1"),request_id="REQ-V1",search_policy=complete_policy(),normalizer=normalizer())
+        new_subject={"feature_id":"returns.1bar","feature_version":"2","definition_hash":"xyz","graph_hash":"uvw","instrument":"EURUSD","timeframe":"H1","lookup_era_scope":"ERA_1_ONLY"}
+        new=identity_lookup(store=store,subject=new_subject,request_id="REQ-V2",search_policy=complete_policy(),normalizer=normalizer())
+        self.assertEqual(old.outcome,LookupOutcome.NEAR_MATCH)
+        self.assertEqual(new.outcome,LookupOutcome.EXACT_CANONICAL_IDENTITY)
+
     def test_stale_superseded_current_fails_sweep(self):
         sweep=stale_state_sweep(
             store=CanonicalIdentityStore([record(current=True,lifecycle="SUPERSEDED")]),
