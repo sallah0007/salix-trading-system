@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Iterable, Tuple
 
 from .models import FeatureIdentity, NormalizerSpec, SearchPolicy
+from .catalogue import FeatureDefinitionCatalogue
 from .stale_sweep import StaleSweepResult, stale_state_sweep
 from .store import CanonicalIdentityStore
 
@@ -213,14 +214,20 @@ def import_identity_content(
     manifest: IdentityImportManifest,
     source_universe: SourceUniverseAuthority,
     era_boundary: CanonicalEraBoundary,
+    catalogue: FeatureDefinitionCatalogue,
     search_policy: SearchPolicy,
     normalizer: NormalizerSpec,
 ) -> IdentityImportResult:
     errors = list(era_boundary.completeness_errors())
     errors.extend(manifest.completeness_errors(source_universe))
+    errors.extend(catalogue.completeness_errors())
     incoming = tuple(rows)
     refs={ref.source_id:ref for ref in manifest.source_refs}
 
+    if catalogue.catalogue_id != era_boundary.catalogue_id:
+        errors.append("ERA_BOUNDARY_CATALOGUE_ID_MISMATCH")
+    if catalogue.era_id != era_boundary.era_id:
+        errors.append("CATALOGUE_BOUNDARY_ERA_MISMATCH")
     if target_store.registry_id != era_boundary.registry_id:
         errors.append("ERA_BOUNDARY_REGISTRY_ID_MISMATCH")
     if target_store.active_era_id != era_boundary.era_id:
@@ -246,6 +253,20 @@ def import_identity_content(
             )
 
     for row in incoming:
+        definition=catalogue.find(row.feature_id,row.feature_version)
+        if definition is None:
+            errors.append("ROW_DEFINITION_NOT_IN_CATALOGUE:"+row.feature_id+":"+row.feature_version)
+        else:
+            if row.definition_hash != definition.definition_hash:
+                errors.append("ROW_DEFINITION_HASH_MISMATCH:"+row.feature_id)
+            if row.graph_hash != definition.graph_hash:
+                errors.append("ROW_GRAPH_HASH_MISMATCH:"+row.feature_id)
+            if tuple(row.dependencies) != tuple(definition.dependencies):
+                errors.append("ROW_DEPENDENCY_GRAPH_MISMATCH:"+row.feature_id)
+            if row.instrument != definition.instrument:
+                errors.append("ROW_CATALOGUE_INSTRUMENT_MISMATCH:"+row.feature_id)
+            if row.timeframe != definition.timeframe:
+                errors.append("ROW_CATALOGUE_TIMEFRAME_MISMATCH:"+row.feature_id)
         if row.era_id != era_boundary.era_id:
             errors.append("ROW_ERA_MISMATCH:"+row.feature_id)
         if not row.import_source_id or not row.import_source_authority_class:
