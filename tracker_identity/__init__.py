@@ -14,5 +14,6 @@ from .importer import (
     IdentityImportManifest,
     IdentityImportResult,
     ImportSourceRef,
+    SourceUniverseAuthority,
     import_identity_content,
 )
