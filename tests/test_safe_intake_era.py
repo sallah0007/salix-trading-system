@@ -115,6 +115,28 @@ class SafeIntakeEraTests(unittest.TestCase):
         self.assertTrue(any(x.startswith("CATALOGUE_GRAPH_HASH_MISMATCH") for x in result.errors))
         self.assertEqual(store.all(),())
 
+    def test_validation_scope_requires_current_lifecycle(self):
+        bad=candidate(scope="validation",lifecycle_state="VALIDATION_ONLY")
+        store=CanonicalIdentityStore()
+        result=safe_intake_built_identity(
+            target_store=store,candidate=bad,era_boundary=boundary(),
+            search_policy=policy(),normalizer=normalizer(),
+        )
+        self.assertFalse(result.accepted)
+        self.assertIn("VALIDATION_SCOPE_REQUIRES_CURRENT_LIFECYCLE",result.errors)
+        self.assertEqual(store.all(),())
+
+    def test_validation_scope_requires_current_identity(self):
+        bad=candidate(scope="validation",lifecycle_state="CURRENT",is_current=False)
+        store=CanonicalIdentityStore()
+        result=safe_intake_built_identity(
+            target_store=store,candidate=bad,era_boundary=boundary(),
+            search_policy=policy(),normalizer=normalizer(),
+        )
+        self.assertFalse(result.accepted)
+        self.assertIn("VALIDATION_SCOPE_REQUIRES_CURRENT_IDENTITY",result.errors)
+        self.assertEqual(store.all(),())
+
     def test_stale_failure_does_not_mutate_store(self):
         existing=candidate(feature_id="same",feature_version="1")
         first=safe_intake_built_identity(
