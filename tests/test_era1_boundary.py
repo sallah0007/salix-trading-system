@@ -68,12 +68,12 @@ def row(era="ERA_1"):
         import_source_authority_class="CURRENT_FEATURE_DEFINITION_CATALOGUE",
     )
 
-def do_import(rows=None, store=None, man=None, uni=None, bd=None):
+def do_import(rows=None, store=None, man=None, uni=None, bd=None, cat=None):
     rows=(row(),) if rows is None else tuple(rows)
     store=store or CanonicalIdentityStore()
     result=import_identity_content(
         target_store=store,rows=rows,manifest=man or manifest(rows=len(rows)),
-        source_universe=uni or universe(),era_boundary=bd or boundary(),catalogue=catalogue(),
+        source_universe=uni or universe(),era_boundary=bd or boundary(),catalogue=cat or catalogue(),
         search_policy=policy(),normalizer=normalizer(),
     )
     return store,result
@@ -120,6 +120,36 @@ class Era1BoundaryTests(unittest.TestCase):
     def test_boundary_cannot_claim_historical_absence(self):
         store,result=do_import(bd=boundary(absent_proven=True))
         self.assertIn("HISTORICAL_ABSENT_MUST_REMAIN_UNPROVEN",result.errors)
+        self.assertEqual(store.all(),())
+
+    def test_deliberate_wrong_definition_hash_fails_without_mutation(self):
+        bad=FeatureIdentity(**{**row().__dict__,"definition_hash":"0"*64})
+        store,result=do_import(rows=(bad,))
+        self.assertTrue(any(x.startswith("ROW_DEFINITION_HASH_MISMATCH") for x in result.errors))
+        self.assertEqual(store.all(),())
+
+    def test_deliberate_broken_dependency_graph_fails_without_mutation(self):
+        bad=FeatureIdentity(**{**row().__dict__,"dependencies":("missing.feature",)})
+        store,result=do_import(rows=(bad,))
+        self.assertTrue(any(x.startswith("ROW_DEPENDENCY_GRAPH_MISMATCH") for x in result.errors))
+        self.assertEqual(store.all(),())
+
+    def test_deliberate_unapproved_source_fails_without_mutation(self):
+        badrow=FeatureIdentity(**{**row().__dict__,"import_source_authority_class":"HISTORICAL_EXAMPLE"})
+        badman=IdentityImportManifest("M","1","ERA_1",(ImportSourceRef("era1:catalogue:neutral-core","neutral","HISTORICAL_EXAMPLE",True,1,"ERA_1"),))
+        store,result=do_import(rows=(badrow,),man=badman)
+        self.assertTrue(any("NONCANONICAL_SOURCE_HAS_IMPORTABLE_ROWS" in x or "ROW_SOURCE_AUTHORITY_NOT_PERMITTED" in x for x in result.errors))
+        self.assertEqual(store.all(),())
+
+    def test_deliberate_catalogue_tamper_fails_without_mutation(self):
+        good=catalogue().definitions[0]
+        tampered=FeatureDefinitionRecord(
+            good.feature_id,good.feature_version,good.semantic_definition+" tampered",good.formula,
+            good.dependencies,good.era_id,good.definition_hash,good.graph_hash,good.instrument,good.timeframe,
+            good.authority,good.purpose,
+        )
+        store,result=do_import(cat=FeatureDefinitionCatalogue("SALIX-ERA1-FEATURE-CATALOGUE","ERA_1",(tampered,)))
+        self.assertTrue(any(x.startswith("CATALOGUE_DEFINITION_HASH_MISMATCH") for x in result.errors))
         self.assertEqual(store.all(),())
 
     def test_checked_in_boundary_and_universe_hashes(self):
