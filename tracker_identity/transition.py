@@ -120,6 +120,10 @@ def transition_authority_state(
     ):
         _required(value, code, errors)
 
+    if not isinstance(transition_class, TransitionClass):
+        errors.append("TRANSITION_CLASS_INVALID")
+    if from_state == to_state:
+        errors.append("NO_OP_TRANSITION_PROHIBITED")
     if transition_class == TransitionClass.OTHER_GOVERNED and not str(reason_ref or "").strip():
         errors.append("OTHER_GOVERNED_GOVERNED_REASON_REF_REQUIRED")
 
@@ -172,8 +176,6 @@ def transition_authority_state(
             prior_transition_id=expected_prior,
         )
 
-        # Type-1 lifecycle/currentness consistency follows the already-frozen rule:
-        # CURRENT is current; known non-current authority states are not.
         new_is_current = to_state.upper() == "CURRENT"
         updated = replace(current, lifecycle_state=to_state, is_current=new_is_current)
 
