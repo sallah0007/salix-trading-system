@@ -40,7 +40,7 @@ def subject(version="1",instrument="EURUSD"):
     return {
         "feature_id":"returns.1bar","feature_version":version,
         "definition_hash":"abc","graph_hash":"def",
-        "instrument":instrument,"timeframe":"H1",
+        "instrument":instrument,"timeframe":"H1","lookup_era_scope":"ERA_1_ONLY",
     }
 
 def record(version="1",*,current=True,lifecycle="CURRENT",instrument="EURUSD",scope="current_active",survivor=None):
@@ -52,6 +52,20 @@ def record(version="1",*,current=True,lifecycle="CURRENT",instrument="EURUSD",sc
     )
 
 class IdentitySurfaceTests(unittest.TestCase):
+    def test_unspecified_era_scope_defaults_all_eras_and_never_absent(self):
+        s=subject(); s.pop("lookup_era_scope")
+        result=identity_lookup(store=CanonicalIdentityStore(),subject=s,request_id="REQ-ALL-ERAS",search_policy=complete_policy(),normalizer=normalizer())
+        self.assertFalse(result.lookup_complete)
+        self.assertEqual(result.outcome,LookupOutcome.INCOMPLETE_LOOKUP)
+        self.assertTrue(any("ALL_ERAS_COVERAGE_INCOMPLETE" in e for e in result.errors))
+        self.assertIsNone(result.absent_claim_token)
+
+    def test_era1_lookup_ignores_era0_rows(self):
+        legacy=record(); legacy=FeatureIdentity(**{**legacy.__dict__,"era_id":"ERA_0"})
+        result=identity_lookup(store=CanonicalIdentityStore([legacy]),subject=subject(),request_id="REQ-ERA1-ONLY",search_policy=complete_policy(),normalizer=normalizer())
+        self.assertEqual(result.outcome,LookupOutcome.ABSENT)
+        self.assertTrue(result.lookup_complete)
+
     def test_empty_store_complete_lookup_returns_absent(self):
         result=identity_lookup(
             store=CanonicalIdentityStore(),subject=subject(),request_id="REQ-EMPTY",
