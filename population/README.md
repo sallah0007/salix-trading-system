@@ -22,3 +22,11 @@ Three source classes remain unresolved:
 Therefore zero rows cannot become ABSENT / DEFINITION_REQUIRED evidence.
 
 Any future imported identity row must preserve its import source ID and source authority class. Rows from historical, superseded, draft, example, supporting-contract, or otherwise non-permitted authority classes fail closed before store mutation.
+
+
+## Era 1 validation baseline
+The neutral Era 1 anchor is retained only as Tracker validation/conformance evidence.
+It uses lifecycle_state=CURRENT with scope=validation.
+Validation is not a lifecycle vocabulary extension.
+Ordinary lookup excludes validation scope unless include_validation_scope=true is explicitly requested.
+Validation-scope content is not consumer feature content.
