@@ -1,0 +1,21 @@
+[
+  {
+    "feature_id": "salix.neutral.identity_anchor",
+    "feature_version": "1",
+    "definition_hash": "6a2bdd7079418b2ba1de8645281633716d447d3955cb6cdb228c3af37fd505b7",
+    "graph_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "lifecycle_state": "CURRENT",
+    "is_current": true,
+    "scope": "validation",
+    "era_id": "ERA_1",
+    "aliases": [],
+    "dependencies": [],
+    "canonical_survivor": null,
+    "instrument": null,
+    "timeframe": null,
+    "source_provider": "SALIX_INTERNAL",
+    "lineage_ref": "era1:catalogue:neutral-core",
+    "import_source_id": "era1:catalogue:neutral-core",
+    "import_source_authority_class": "CURRENT_FEATURE_DEFINITION_CATALOGUE"
+  }
+]
