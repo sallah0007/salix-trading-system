@@ -5,12 +5,20 @@ This directory is the reproducible population input for the currently located SA
 Current result:
 
 - importable governed identity rows: **0**
-- source universe complete: **NO**
+- externally governed source universe complete: **NO**
 - population complete: **NO**
 - absence proven: **NO**
 
+The source manifest no longer certifies its own coverage. It is reconciled against `current_source_universe.json`, which binds the current Drive census as a separate versioned/hashed source-universe authority.
+
 The package is intentionally empty because no concrete governed FEATURE_ID/FEATURE_VERSION rows with sufficient identity fields were located in the current authority corpus.
 
-This is not an empty canonical truth claim. It is a bounded evidence package stating that the currently located sources contribute zero importable rows while three source classes remain unresolved.
+Three source classes remain unresolved:
 
-Do not convert this package into ABSENT / DEFINITION_REQUIRED evidence until the source universe is separately proven complete.
+- populated Tracker registry
+- canonical feature-definition catalogue
+- historical Gold feature manifest
+
+Therefore zero rows cannot become ABSENT / DEFINITION_REQUIRED evidence.
+
+Any future imported identity row must preserve its import source ID and source authority class. Rows from historical, superseded, draft, example, supporting-contract, or otherwise non-permitted authority classes fail closed before store mutation.
