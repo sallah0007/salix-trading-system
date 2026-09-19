@@ -6,15 +6,8 @@ from typing import Tuple
 
 from .models import NormalizerSpec, SearchPolicy
 from .store import CanonicalIdentityStore
+from .lifecycle import CURRENT_LIFECYCLES, NON_CURRENT_LIFECYCLES, KNOWN_LIFECYCLES
 
-
-NON_CURRENT_LIFECYCLES = {
-    "DEPRECATED",
-    "SUPERSEDED",
-    "RETIRED",
-    "REJECTED_INVALID",
-    "QUARANTINED",
-}
 LIVE_SCOPES = {"current_active", "active_on_demand"}
 TEST_MARKERS = ("test", "fixture", "tmp", "temp", "migration")
 
@@ -136,7 +129,12 @@ def _transition_history_defects(store: CanonicalIdentityStore):
                 f"STATE_HISTORY_MISMATCH:{current.feature_id}:{current.feature_version}:"
                 f"{current.lifecycle_state}!={expected_state}"
             )
-        expected_current=expected_state.upper()=="CURRENT"
+        normalized_expected_state=expected_state.upper()
+        if normalized_expected_state not in KNOWN_LIFECYCLES:
+            defects.append(f"UNKNOWN_LIFECYCLE_STATE_IN_HISTORY:{current.feature_id}:{current.feature_version}:{expected_state}")
+            expected_current=False
+        else:
+            expected_current=normalized_expected_state in CURRENT_LIFECYCLES
         if current.is_current!=expected_current:
             defects.append(
                 f"CURRENTNESS_HISTORY_MISMATCH:{current.feature_id}:{current.feature_version}:"
@@ -167,7 +165,11 @@ def stale_state_sweep(
         if r.era_id != store.active_era_id:
             defects.append(f"CROSS_ERA_ROW_IN_ACTIVE_STORE:{r.feature_id}:{r.era_id}->{store.active_era_id}")
 
-        if r.scope == "validation" and r.lifecycle_state.upper() != "CURRENT":
+        normalized_lifecycle=r.lifecycle_state.upper()
+        if normalized_lifecycle not in KNOWN_LIFECYCLES:
+            defects.append(f"UNKNOWN_LIFECYCLE_STATE:{r.feature_id}:{r.feature_version}:{r.lifecycle_state}")
+
+        if r.scope == "validation" and normalized_lifecycle not in CURRENT_LIFECYCLES:
             defects.append(f"VALIDATION_SCOPE_NONCURRENT_LIFECYCLE:{r.feature_id}:{r.feature_version}:{r.lifecycle_state}")
         if r.scope == "validation" and not r.is_current:
             defects.append(f"VALIDATION_SCOPE_NONCURRENT_IDENTITY:{r.feature_id}:{r.feature_version}")
@@ -175,10 +177,10 @@ def stale_state_sweep(
         if r.is_current:
             current_by_feature[r.feature_id].append(r)
 
-        if r.is_current and r.lifecycle_state.upper() in NON_CURRENT_LIFECYCLES:
+        if r.is_current and normalized_lifecycle in NON_CURRENT_LIFECYCLES:
             defects.append(f"NONCURRENT_LIFECYCLE_MARKED_CURRENT:{r.feature_id}:{r.feature_version}")
 
-        if (not r.is_current) and r.lifecycle_state.upper() == "CURRENT":
+        if (not r.is_current) and normalized_lifecycle in CURRENT_LIFECYCLES:
             defects.append(f"CURRENT_LIFECYCLE_MARKED_NONCURRENT:{r.feature_id}:{r.feature_version}")
 
         if r.canonical_survivor and r.canonical_survivor not in known_ids:
