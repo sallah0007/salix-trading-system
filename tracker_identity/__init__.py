@@ -9,3 +9,10 @@ from .models import AbsentClaimToken, FeatureIdentity, IdentityLookupResult, Loo
 from .search import identity_lookup
 from .stale_sweep import stale_state_sweep
 from .store import CanonicalIdentityStore
+
+from .importer import (
+    IdentityImportManifest,
+    IdentityImportResult,
+    ImportSourceRef,
+    import_identity_content,
+)
