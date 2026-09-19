@@ -83,12 +83,12 @@ def identity_lookup(
         if not normalized[required]:
             errors.append(f"LOOKUP_SUBJECT_{required.upper()}_REQUIRED")
 
-    include_validation_only=bool(subject.get("include_validation_only",False))
+    include_validation_scope=bool(subject.get("include_validation_scope",False))
     searched_records=[]
     if not errors:
         for scope in search_policy.searched_scopes:
             scoped=store.list_scope(scope,active_era_id)
-            if not include_validation_only:
+            if not include_validation_scope:
                 scoped=tuple(r for r in scoped if r.scope!="validation")
             searched_records.extend(scoped)
 
