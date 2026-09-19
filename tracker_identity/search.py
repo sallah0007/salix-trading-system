@@ -89,7 +89,7 @@ def identity_lookup(
         for scope in search_policy.searched_scopes:
             scoped=store.list_scope(scope,active_era_id)
             if not include_validation_only:
-                scoped=tuple(r for r in scoped if r.lifecycle_state.upper()!="VALIDATION_ONLY")
+                scoped=tuple(r for r in scoped if r.scope!="validation")
             searched_records.extend(scoped)
 
     subject_key=_subject_key(normalized)
