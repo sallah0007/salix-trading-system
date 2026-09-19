@@ -7,6 +7,7 @@ or production trading authority is implemented here.
 
 from .models import AbsentClaimToken, FeatureIdentity, IdentityLookupResult, LookupOutcome, NormalizerSpec, SearchPolicy
 from .search import identity_lookup
+from .catalogue import FeatureDefinitionCatalogue, FeatureDefinitionRecord
 from .stale_sweep import stale_state_sweep
 from .store import CanonicalIdentityStore
 
