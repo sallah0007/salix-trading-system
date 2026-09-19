@@ -8,6 +8,7 @@ from .catalogue import FeatureDefinitionRecord
 from .models import FeatureIdentity, LookupOutcome, NormalizerSpec, SearchPolicy
 from .stale_sweep import StaleSweepResult, stale_state_sweep
 from .store import CanonicalIdentityStore
+from .transition import CreationProvenanceRecord
 
 @dataclass(frozen=True)
 class BuiltIdentityCandidate:
@@ -27,6 +28,10 @@ class BuiltIdentityCandidate:
     timeframe: Optional[str] = None
     source_provider: Optional[str] = None
     lineage_ref: Optional[str] = None
+    creation_reason_ref: Optional[str] = None
+    created_by: Optional[str] = None
+    authority_ref: Optional[str] = None
+    creation_evidence_ref: Optional[str] = None
 
 @dataclass(frozen=True)
 class SafeIntakeResult:
@@ -60,6 +65,12 @@ def safe_intake_built_identity(
         errors.append("BUILT_IDENTITY_ID_VERSION_REQUIRED")
     if not candidate.definition_hash or not candidate.graph_hash:
         errors.append("BUILT_IDENTITY_HASHES_REQUIRED")
+    if not str(candidate.creation_reason_ref or "").strip():
+        errors.append("CREATION_REASON_REF_REQUIRED")
+    if not str(candidate.created_by or "").strip():
+        errors.append("CREATED_BY_REQUIRED")
+    if not str(candidate.authority_ref or "").strip():
+        errors.append("CREATION_AUTHORITY_REF_REQUIRED")
     if candidate.scope == "validation" and candidate.lifecycle_state.upper() != "CURRENT":
         errors.append("VALIDATION_SCOPE_REQUIRES_CURRENT_LIFECYCLE")
     if candidate.scope == "validation" and not candidate.is_current:
@@ -108,17 +119,36 @@ def safe_intake_built_identity(
         source_provider=candidate.source_provider,
         lineage_ref=candidate.lineage_ref,
     )
+    creation=CreationProvenanceRecord(
+        creation_record_id=f"creation:{era_boundary.era_id}:{candidate.feature_id}:{candidate.feature_version}",
+        segment_id="TRACKER",
+        object_id=candidate.feature_id,
+        object_version=candidate.feature_version,
+        era_id=era_boundary.era_id,
+        initial_state=candidate.lifecycle_state,
+        creation_reason_ref=str(candidate.creation_reason_ref),
+        created_ts=era_boundary.created_ts,
+        created_by=str(candidate.created_by),
+        authority_ref=str(candidate.authority_ref),
+        evidence_ref=candidate.creation_evidence_ref,
+    )
 
     staged=CanonicalIdentityStore(
         list(target_store.all())+[identity],
         registry_id=target_store.registry_id,
         active_era_id=target_store.active_era_id,
+        creation_records=list(target_store.all_creation_records())+[creation],
+        transitions=list(target_store.all_transitions()),
     )
     sweep=stale_state_sweep(store=staged,search_policy=search_policy,normalizer=normalizer)
     if not sweep.clean:
         return SafeIntakeResult(False,era_boundary.era_id,None,None,sweep,("STALE_STATE_SWEEP_FAILED",))
 
-    target_store.add(identity)
+    # Birth event is one governed mutation: identity and creation provenance are
+    # appended together. No synthetic NULL->CURRENT transition is invented.
+    with target_store._transition_lock:
+        target_store.records.append(identity)
+        target_store.creation_records.append(creation)
     return SafeIntakeResult(True,era_boundary.era_id,identity,definition,sweep,())
 
 def composer_boundary_outcome(outcome: LookupOutcome) -> LookupOutcome:

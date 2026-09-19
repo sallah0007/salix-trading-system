@@ -37,6 +37,9 @@ def candidate(**changes):
         is_current=True,scope="current_active",aliases=(),dependencies=(),
         canonical_survivor=None,instrument="XAUUSD",timeframe="H1",
         source_provider="COMPOSER",lineage_ref="build:future",
+        creation_reason_ref="decision:approved-definition",
+        created_by="SALIX_MANAGER",authority_ref="owner:era1-intake",
+        creation_evidence_ref="evidence:definition-review",
     )
     vals.update(changes)
     probe=BuiltIdentityCandidate(**vals)
@@ -56,6 +59,31 @@ class SafeIntakeEraTests(unittest.TestCase):
         self.assertTrue(result.accepted)
         self.assertEqual(result.assigned_era_id,"ERA_1")
         self.assertEqual(store.all()[0].era_id,"ERA_1")
+        self.assertEqual(len(store.all_creation_records()),1)
+        creation=store.all_creation_records()[0]
+        self.assertEqual(creation.initial_state,"CURRENT")
+        self.assertEqual(creation.creation_reason_ref,"decision:approved-definition")
+
+    def test_safe_intake_requires_initial_state_justification(self):
+        store=CanonicalIdentityStore()
+        result=safe_intake_built_identity(
+            target_store=store,candidate=candidate(creation_reason_ref=None),era_boundary=boundary(),
+            search_policy=policy(),normalizer=normalizer(),
+        )
+        self.assertFalse(result.accepted)
+        self.assertIn("CREATION_REASON_REF_REQUIRED",result.errors)
+        self.assertEqual(store.all(),())
+        self.assertEqual(store.all_creation_records(),())
+
+    def test_safe_intake_requires_creation_actor_and_authority(self):
+        store=CanonicalIdentityStore()
+        result=safe_intake_built_identity(
+            target_store=store,candidate=candidate(created_by=None,authority_ref=None),era_boundary=boundary(),
+            search_policy=policy(),normalizer=normalizer(),
+        )
+        self.assertFalse(result.accepted)
+        self.assertIn("CREATED_BY_REQUIRED",result.errors)
+        self.assertIn("CREATION_AUTHORITY_REF_REQUIRED",result.errors)
 
     def test_safe_intake_fails_without_active_boundary(self):
         store=CanonicalIdentityStore()
@@ -138,19 +166,19 @@ class SafeIntakeEraTests(unittest.TestCase):
         self.assertEqual(store.all(),())
 
     def test_stale_failure_does_not_mutate_store(self):
-        existing=candidate(feature_id="same",feature_version="1")
+        store=CanonicalIdentityStore()
         first=safe_intake_built_identity(
-            target_store=CanonicalIdentityStore(),candidate=existing,era_boundary=boundary(),
+            target_store=store,candidate=candidate(feature_id="same",feature_version="1"),era_boundary=boundary(),
             search_policy=policy(),normalizer=normalizer(),
         )
         self.assertTrue(first.accepted)
-        store=CanonicalIdentityStore([first.identity])
         second=safe_intake_built_identity(
             target_store=store,candidate=candidate(feature_id="same",feature_version="2"),
             era_boundary=boundary(),search_policy=policy(),normalizer=normalizer(),
         )
         self.assertFalse(second.accepted)
         self.assertEqual(len(store.all()),1)
+        self.assertEqual(len(store.all_creation_records()),1)
 
     def test_composer_boundary_never_receives_era1_absent_as_global_absent(self):
         self.assertEqual(
