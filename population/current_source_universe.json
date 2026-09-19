@@ -1,0 +1,19 @@
+{
+  "source_universe_id": "SALIX-TYPE1-SOURCE-UNIVERSE-20260919-01",
+  "version": "1",
+  "source_universe_hash": "529a1ac50534fb0df388e7830691c328a3f5fa2e10b9e106f0991994432853fe",
+  "authority_source_id": "drive:1CVHtkYeMJ9GUBUxfuNkElok_iptCOiAxa7gDP9O2CjU",
+  "expected_source_ids": [
+    "drive:1UjBfRONTPe-WhljFyNYw1cb3nlX3S6OkeBg3bpqjJ-k",
+    "drive:15mPi14mG5MAOerZTnhbWfWXwcOIpzWsA",
+    "drive:1aMYAmh5i7ogdQ0vIInPKki3lCSV4Nwotx48zllZhfVw",
+    "drive:1U2v6Q-nzQ1UXS_8t7YcMIkY4iEGsXGiZRk3krfKVwu0",
+    "drive:1y7mqE-i_Q9AX9Fv1pMqthP-kTgyfZ9VAAddJ08RdJgw"
+  ],
+  "universe_complete": false,
+  "unresolved_source_classes": [
+    "POPULATED_TRACKER_REGISTRY",
+    "CANONICAL_FEATURE_DEFINITION_CATALOGUE",
+    "HISTORICAL_GOLD_FEATURE_MANIFEST"
+  ]
+}
