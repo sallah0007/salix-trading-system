@@ -63,7 +63,7 @@ class IdentitySurfaceTests(unittest.TestCase):
     def test_era1_lookup_ignores_era0_rows(self):
         legacy=record(); legacy=FeatureIdentity(**{**legacy.__dict__,"era_id":"ERA_0"})
         result=identity_lookup(store=CanonicalIdentityStore([legacy]),subject=subject(),request_id="REQ-ERA1-ONLY",search_policy=complete_policy(),normalizer=normalizer())
-        self.assertEqual(result.outcome,LookupOutcome.ABSENT)
+        self.assertEqual(result.outcome,LookupOutcome.ABSENT_IN_ERA_1)
         self.assertTrue(result.lookup_complete)
 
     def test_empty_store_complete_lookup_returns_absent(self):
@@ -73,7 +73,7 @@ class IdentitySurfaceTests(unittest.TestCase):
             now=datetime(2026,9,19,tzinfo=timezone.utc),
         )
         self.assertTrue(result.lookup_complete)
-        self.assertEqual(result.outcome,LookupOutcome.ABSENT)
+        self.assertEqual(result.outcome,LookupOutcome.ABSENT_IN_ERA_1)
         self.assertIsNotNone(result.absent_claim_token)
         self.assertFalse(result.absent_claim_token.authorizes_construction)
 
