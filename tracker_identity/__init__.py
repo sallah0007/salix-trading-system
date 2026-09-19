@@ -11,6 +11,7 @@ from .stale_sweep import stale_state_sweep
 from .store import CanonicalIdentityStore
 
 from .importer import (
+    CanonicalEraBoundary,
     IdentityImportManifest,
     IdentityImportResult,
     ImportSourceRef,
