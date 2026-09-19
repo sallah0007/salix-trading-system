@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Tuple
 
@@ -25,6 +25,127 @@ class StaleSweepResult:
     defects: Tuple[str, ...]
 
 
+def _key_from_identity(r):
+    return (r.feature_id, r.feature_version, r.era_id)
+
+
+def _key_from_history(r):
+    return (r.object_id, r.object_version, r.era_id)
+
+
+def _transition_history_defects(store: CanonicalIdentityStore):
+    defects=[]
+    creation_by_key=defaultdict(list)
+    transitions_by_key=defaultdict(list)
+
+    creation_ids=Counter()
+    for c in store.all_creation_records():
+        key=_key_from_history(c)
+        creation_by_key[key].append(c)
+        creation_ids[c.creation_record_id]+=1
+        for value, name in (
+            (c.creation_record_id,"CREATION_RECORD_ID"),
+            (c.segment_id,"SEGMENT_ID"),
+            (c.object_id,"OBJECT_ID"),
+            (c.object_version,"OBJECT_VERSION"),
+            (c.era_id,"ERA_ID"),
+            (c.initial_state,"INITIAL_STATE"),
+            (c.creation_reason_ref,"CREATION_REASON_REF"),
+            (c.created_ts,"CREATED_TS"),
+            (c.created_by,"CREATED_BY"),
+            (c.authority_ref,"AUTHORITY_REF"),
+        ):
+            if not str(value or "").strip():
+                defects.append(f"CREATION_{name}_REQUIRED:{key}")
+
+    for cid,count in creation_ids.items():
+        if count>1:
+            defects.append(f"DUPLICATE_CREATION_RECORD_ID:{cid}")
+
+    transition_ids=Counter()
+    for t in store.all_transitions():
+        key=_key_from_history(t)
+        transitions_by_key[key].append(t)
+        transition_ids[t.transition_id]+=1
+        for value,name in (
+            (t.transition_id,"TRANSITION_ID"),
+            (t.segment_id,"SEGMENT_ID"),
+            (t.object_id,"OBJECT_ID"),
+            (t.object_version,"OBJECT_VERSION"),
+            (t.era_id,"ERA_ID"),
+            (t.from_state,"FROM_STATE"),
+            (t.to_state,"TO_STATE"),
+            (t.reason_class,"REASON_CLASS"),
+            (t.reason_ref,"REASON_REF"),
+            (t.changed_ts,"CHANGED_TS"),
+            (t.changed_by,"CHANGED_BY"),
+            (t.authority_ref,"AUTHORITY_REF"),
+            (t.record_version,"RECORD_VERSION"),
+            (t.prior_transition_id,"PRIOR_TRANSITION_ID"),
+        ):
+            if not str(value or "").strip():
+                defects.append(f"TRANSITION_{name}_REQUIRED:{t.transition_id or key}")
+
+    for tid,count in transition_ids.items():
+        if count>1:
+            defects.append(f"DUPLICATE_TRANSITION_ID:{tid}")
+
+    records_by_key=defaultdict(list)
+    for r in store.all():
+        records_by_key[_key_from_identity(r)].append(r)
+
+    tracked_keys=set(creation_by_key)|set(transitions_by_key)
+    for key in tracked_keys:
+        creations=creation_by_key.get(key,[])
+        transitions=transitions_by_key.get(key,[])
+        records=records_by_key.get(key,[])
+
+        if len(creations)!=1:
+            defects.append(f"CREATION_PROVENANCE_CARDINALITY:{key}:{len(creations)}")
+            continue
+        creation=creations[0]
+        if len(records)!=1:
+            defects.append(f"TRACKED_OBJECT_CARDINALITY:{key}:{len(records)}")
+            continue
+
+        current=records[0]
+        cursor=creation.creation_record_id
+        expected_state=creation.initial_state
+        remaining={t.transition_id:t for t in transitions}
+        visited=set()
+
+        while True:
+            children=[t for t in transitions if t.prior_transition_id==cursor and t.transition_id not in visited]
+            if len(children)>1:
+                defects.append(f"TRANSITION_HISTORY_FORK:{key}:{cursor}")
+                break
+            if not children:
+                break
+            t=children[0]
+            if t.from_state!=expected_state:
+                defects.append(f"TRANSITION_FROM_STATE_CHAIN_MISMATCH:{t.transition_id}:{t.from_state}!={expected_state}")
+            expected_state=t.to_state
+            visited.add(t.transition_id)
+            cursor=t.transition_id
+
+        if set(remaining)-visited:
+            defects.append(f"TRANSITION_HISTORY_ORPHAN_OR_CYCLE:{key}")
+
+        if current.lifecycle_state!=expected_state:
+            defects.append(
+                f"STATE_HISTORY_MISMATCH:{current.feature_id}:{current.feature_version}:"
+                f"{current.lifecycle_state}!={expected_state}"
+            )
+        expected_current=expected_state.upper()=="CURRENT"
+        if current.is_current!=expected_current:
+            defects.append(
+                f"CURRENTNESS_HISTORY_MISMATCH:{current.feature_id}:{current.feature_version}:"
+                f"{current.is_current}!={expected_current}"
+            )
+
+    return defects
+
+
 def stale_state_sweep(
     *,
     store: CanonicalIdentityStore,
@@ -36,6 +157,7 @@ def stale_state_sweep(
 
     defects.extend("SEARCH_POLICY:" + x for x in search_policy.completeness_errors())
     defects.extend("NORMALIZER:" + x for x in normalizer.completeness_errors())
+    defects.extend(_transition_history_defects(store))
 
     known_ids = {r.feature_id for r in records}
     current_by_feature = defaultdict(list)
