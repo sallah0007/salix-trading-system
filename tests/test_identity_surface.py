@@ -222,7 +222,7 @@ class IdentitySurfaceTests(unittest.TestCase):
             lifecycle_state="CURRENT",is_current=True,scope="validation",era_id="ERA_1",
             instrument="EURUSD",timeframe="H1",
         )
-        s=subject(); s["include_validation_only"]=True
+        s=subject(); s["include_validation_scope"]=True
         result=identity_lookup(
             store=CanonicalIdentityStore([validation]),subject=s,request_id="REQ-VALID-EXPLICIT",
             search_policy=complete_policy(),normalizer=normalizer(),
