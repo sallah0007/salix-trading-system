@@ -2,9 +2,9 @@
   {
     "feature_id": "salix.neutral.identity_anchor",
     "feature_version": "1",
-    "definition_hash": "6a2bdd7079418b2ba1de8645281633716d447d3955cb6cdb228c3af37fd505b7",
-    "graph_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-    "lifecycle_state": "CURRENT",
+    "definition_hash": "0e1d78dfe3b3c7b3ef63134a4f54a3b913612f018504d00312821965980f8ab4",
+    "graph_hash": "ad0baf0ccc76cb7b05ee4c881e3712a1ed71d6321b2d4e9e745f7ac50d70d792",
+    "lifecycle_state": "VALIDATION_ONLY",
     "is_current": true,
     "scope": "validation",
     "era_id": "ERA_1",
