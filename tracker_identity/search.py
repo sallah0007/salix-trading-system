@@ -137,7 +137,7 @@ def identity_lookup(
         absent_token=None
         collision="REVIEW_REQUIRED"
     else:
-        outcome=LookupOutcome.ABSENT
+        outcome=LookupOutcome.ABSENT_IN_ERA_1
         exact_match=None
         near_matches=()
         absent_token=AbsentClaimToken(
