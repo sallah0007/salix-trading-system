@@ -45,6 +45,11 @@ def stale_state_sweep(
         if r.era_id != store.active_era_id:
             defects.append(f"CROSS_ERA_ROW_IN_ACTIVE_STORE:{r.feature_id}:{r.era_id}->{store.active_era_id}")
 
+        if r.scope == "validation" and r.lifecycle_state.upper() != "CURRENT":
+            defects.append(f"VALIDATION_SCOPE_NONCURRENT_LIFECYCLE:{r.feature_id}:{r.feature_version}:{r.lifecycle_state}")
+        if r.scope == "validation" and not r.is_current:
+            defects.append(f"VALIDATION_SCOPE_NONCURRENT_IDENTITY:{r.feature_id}:{r.feature_version}")
+
         if r.is_current:
             current_by_feature[r.feature_id].append(r)
 
