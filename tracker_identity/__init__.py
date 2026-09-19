@@ -11,6 +11,13 @@ from .catalogue import FeatureDefinitionCatalogue, FeatureDefinitionRecord
 from .intake import BuiltIdentityCandidate, SafeIntakeResult, composer_boundary_outcome, safe_intake_built_identity
 from .stale_sweep import stale_state_sweep
 from .store import CanonicalIdentityStore
+from .transition import (
+    CreationProvenanceRecord,
+    GovernedStateTransitionRecord,
+    TransitionClass,
+    TransitionResult,
+    transition_authority_state,
+)
 
 from .importer import (
     CanonicalEraBoundary,
