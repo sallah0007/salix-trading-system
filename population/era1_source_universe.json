@@ -1,0 +1,10 @@
+{
+  "source_universe_id": "SALIX-ERA1-SOURCE-UNIVERSE-001",
+  "version": "1",
+  "source_universe_hash": "28d474beddfc55874eee2b72932d562f7ba79aacf9b1d65cfe8df3abbd13a545",
+  "authority_source_id": "governance:ERA1_BOUNDARY",
+  "expected_source_ids": ["era1:catalogue:neutral-core"],
+  "universe_complete": true,
+  "era_id": "ERA_1",
+  "unresolved_source_classes": []
+}
