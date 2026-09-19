@@ -1,12 +1,6 @@
 {
-  "manifest_id": "SALIX-TYPE1-IDENTITY-CONTENT-20260919-01",
-  "version": "1",
-  "declared_source_universe_complete": false,
-  "unresolved_source_classes": [
-    "POPULATED_TRACKER_REGISTRY",
-    "CANONICAL_FEATURE_DEFINITION_CATALOGUE",
-    "HISTORICAL_GOLD_FEATURE_MANIFEST"
-  ],
+  "manifest_id": "SALIX-TYPE1-IDENTITY-CONTENT-20260919-02",
+  "version": "2",
   "source_refs": [
     {
       "source_id": "drive:1UjBfRONTPe-WhljFyNYw1cb3nlX3S6OkeBg3bpqjJ-k",
