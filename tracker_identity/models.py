@@ -1,7 +1,16 @@
 from __future__ import annotations
+import hashlib
+import json
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Mapping, Optional, Tuple
+
+NORMALIZER_ALGORITHM_ID = "SALIX_TYPE1_NORMALIZER_V1"
+SUPPORTED_EQUIVALENCE_CLASSES = ("EXACT_STRUCTURAL_IDENTITY",)
+
+def _sha256_json(payload) -> str:
+    raw=json.dumps(payload,sort_keys=True,separators=(",",":"),ensure_ascii=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 class LookupOutcome(str, Enum):
     EXACT_CANONICAL_IDENTITY="EXACT_CANONICAL_IDENTITY"
@@ -40,6 +49,15 @@ class SearchPolicy:
     searched_scopes:Tuple[str,...]
     scope_exclusions:Mapping[str,str]=field(default_factory=dict)
 
+    def computed_hash(self) -> str:
+        return _sha256_json({
+            "policy_id":self.policy_id,
+            "version":self.version,
+            "required_scopes":list(self.required_scopes),
+            "searched_scopes":list(self.searched_scopes),
+            "scope_exclusions":dict(sorted(self.scope_exclusions.items())),
+        })
+
     def completeness_errors(self):
         e=[]
         if not self.policy_id or not self.version or not self.policy_hash:
@@ -51,6 +69,8 @@ class SearchPolicy:
         if searched & excluded: e.append("SCOPE_BOTH_SEARCHED_AND_EXCLUDED:"+",".join(sorted(searched & excluded)))
         if any(not str(v).strip() for v in self.scope_exclusions.values()):
             e.append("EXCLUSION_REASON_CODE_REQUIRED")
+        if self.policy_hash and self.policy_hash != self.computed_hash():
+            e.append("SEARCH_POLICY_HASH_MISMATCH")
         return tuple(e)
 
 @dataclass(frozen=True)
@@ -59,12 +79,26 @@ class NormalizerSpec:
     version:str
     normalizer_hash:str
     equivalence_classes:Tuple[str,...]
+
+    def computed_hash(self) -> str:
+        return _sha256_json({
+            "normalizer_id":self.normalizer_id,
+            "version":self.version,
+            "algorithm_id":NORMALIZER_ALGORITHM_ID,
+            "equivalence_classes":list(self.equivalence_classes),
+        })
+
     def completeness_errors(self):
         e=[]
         if not self.normalizer_id or not self.version or not self.normalizer_hash:
             e.append("NORMALIZER_ID_VERSION_HASH_REQUIRED")
         if not self.equivalence_classes:
             e.append("EQUIVALENCE_CLASSES_REQUIRED")
+        unsupported=sorted(set(self.equivalence_classes)-set(SUPPORTED_EQUIVALENCE_CLASSES))
+        if unsupported:
+            e.append("UNSUPPORTED_EQUIVALENCE_CLASS:"+",".join(unsupported))
+        if self.normalizer_hash and self.normalizer_hash != self.computed_hash():
+            e.append("NORMALIZER_HASH_MISMATCH")
         return tuple(e)
 
 @dataclass(frozen=True)
