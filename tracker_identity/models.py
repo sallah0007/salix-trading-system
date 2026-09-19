@@ -35,6 +35,8 @@ class FeatureIdentity:
     timeframe:Optional[str]=None
     source_provider:Optional[str]=None
     lineage_ref:Optional[str]=None
+    import_source_id:Optional[str]=None
+    import_source_authority_class:Optional[str]=None
 
     @property
     def canonical_key(self):
