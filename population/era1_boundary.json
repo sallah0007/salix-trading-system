@@ -1,8 +1,8 @@
 {
   "era_id": "ERA_1",
   "version": "1",
-  "boundary_hash": "819bcf2b49bc1a304864e09cff176f72ce74882992317503c3a066ab6c6d720c",
-  "effective_ts": "2026-09-19T00:00:00+10:00",
+  "boundary_hash": "ed12f592b3da247fc17522abcf4c3f6e8cc827cbab197afd96ae1224b03afbe0",
+  "effective_ts": "2026-09-19T20:47:37+10:00",
   "predecessor_era_id": "ERA_0",
   "registry_id": "SALIX-ERA1-REGISTRY",
   "catalogue_id": "SALIX-ERA1-FEATURE-CATALOGUE",
@@ -14,5 +14,5 @@
   "absent_proven": false,
   "created_by": "SALIX_MANAGER",
   "approval_authority": "OWNER",
-  "created_ts": "2026-09-19T00:00:00+10:00"
+  "created_ts": "2026-09-19T20:47:37+10:00"
 }
