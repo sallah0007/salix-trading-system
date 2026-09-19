@@ -60,8 +60,10 @@ def safe_intake_built_identity(
         errors.append("BUILT_IDENTITY_ID_VERSION_REQUIRED")
     if not candidate.definition_hash or not candidate.graph_hash:
         errors.append("BUILT_IDENTITY_HASHES_REQUIRED")
-    if candidate.lifecycle_state.upper() == "VALIDATION_ONLY" and candidate.scope != "validation":
-        errors.append("VALIDATION_ONLY_REQUIRES_VALIDATION_SCOPE")
+    if candidate.scope == "validation" and candidate.lifecycle_state.upper() != "CURRENT":
+        errors.append("VALIDATION_SCOPE_REQUIRES_CURRENT_LIFECYCLE")
+    if candidate.scope == "validation" and not candidate.is_current:
+        errors.append("VALIDATION_SCOPE_REQUIRES_CURRENT_IDENTITY")
 
     if errors:
         sweep=stale_state_sweep(store=target_store,search_policy=search_policy,normalizer=normalizer)

@@ -63,7 +63,7 @@ def row(era="ERA_1"):
         feature_id="salix.neutral.identity_anchor",feature_version="1",
         definition_hash=catalogue(era).definitions[0].definition_hash,
         graph_hash=catalogue(era).definitions[0].graph_hash,
-        lifecycle_state="VALIDATION_ONLY",is_current=True,scope="validation",era_id=era,
+        lifecycle_state="CURRENT",is_current=True,scope="validation",era_id=era,
         import_source_id="era1:catalogue:neutral-core",
         import_source_authority_class="CURRENT_FEATURE_DEFINITION_CATALOGUE",
     )

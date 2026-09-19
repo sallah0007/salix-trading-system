@@ -204,10 +204,10 @@ class IdentitySurfaceTests(unittest.TestCase):
         )
         self.assertEqual(result.outcome,LookupOutcome.NEAR_MATCH)
 
-    def test_validation_only_record_is_hidden_from_ordinary_lookup(self):
+    def test_validation_scope_record_is_hidden_from_ordinary_lookup(self):
         validation=FeatureIdentity(
             feature_id="returns.1bar",feature_version="1",definition_hash="abc",graph_hash="def",
-            lifecycle_state="VALIDATION_ONLY",is_current=True,scope="validation",era_id="ERA_1",
+            lifecycle_state="CURRENT",is_current=True,scope="validation",era_id="ERA_1",
             instrument="EURUSD",timeframe="H1",
         )
         result=identity_lookup(
@@ -216,13 +216,13 @@ class IdentitySurfaceTests(unittest.TestCase):
         )
         self.assertEqual(result.outcome,LookupOutcome.ABSENT_IN_ERA_1)
 
-    def test_validation_only_record_requires_explicit_validation_access(self):
+    def test_validation_scope_record_requires_explicit_validation_access(self):
         validation=FeatureIdentity(
             feature_id="returns.1bar",feature_version="1",definition_hash="abc",graph_hash="def",
-            lifecycle_state="VALIDATION_ONLY",is_current=True,scope="validation",era_id="ERA_1",
+            lifecycle_state="CURRENT",is_current=True,scope="validation",era_id="ERA_1",
             instrument="EURUSD",timeframe="H1",
         )
-        s=subject(); s["include_validation_only"]=True
+        s=subject(); s["include_validation_scope"]=True
         result=identity_lookup(
             store=CanonicalIdentityStore([validation]),subject=s,request_id="REQ-VALID-EXPLICIT",
             search_policy=complete_policy(),normalizer=normalizer(),
@@ -248,6 +248,28 @@ class IdentitySurfaceTests(unittest.TestCase):
         new=identity_lookup(store=store,subject=new_subject,request_id="REQ-V2",search_policy=complete_policy(),normalizer=normalizer())
         self.assertEqual(old.outcome,LookupOutcome.NEAR_MATCH)
         self.assertEqual(new.outcome,LookupOutcome.EXACT_CANONICAL_IDENTITY)
+
+    def test_validation_scope_with_unknown_lifecycle_fails_sweep(self):
+        bad=FeatureIdentity(
+            feature_id="validation.bad",feature_version="1",definition_hash="1",graph_hash="1",
+            lifecycle_state="VALIDATION_ONLY",is_current=True,scope="validation",era_id="ERA_1",
+        )
+        sweep=stale_state_sweep(
+            store=CanonicalIdentityStore([bad]),search_policy=complete_policy(),normalizer=normalizer(),
+        )
+        self.assertFalse(sweep.clean)
+        self.assertTrue(any("VALIDATION_SCOPE_NONCURRENT_LIFECYCLE" in d for d in sweep.defects))
+
+    def test_validation_scope_noncurrent_identity_fails_sweep(self):
+        bad=FeatureIdentity(
+            feature_id="validation.bad",feature_version="1",definition_hash="1",graph_hash="1",
+            lifecycle_state="CURRENT",is_current=False,scope="validation",era_id="ERA_1",
+        )
+        sweep=stale_state_sweep(
+            store=CanonicalIdentityStore([bad]),search_policy=complete_policy(),normalizer=normalizer(),
+        )
+        self.assertFalse(sweep.clean)
+        self.assertTrue(any("VALIDATION_SCOPE_NONCURRENT_IDENTITY" in d for d in sweep.defects))
 
     def test_stale_superseded_current_fails_sweep(self):
         sweep=stale_state_sweep(

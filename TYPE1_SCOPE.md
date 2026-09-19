@@ -58,3 +58,12 @@ Completion requires a clean sweep for:
 - incomplete search-policy/normalizer metadata.
 
 Historical/superseded records remain preserved but explicitly non-current.
+
+
+## Validation containment invariant
+- validation is a Tracker scope, not a lifecycle state.
+- validation-scope identities use the normal CURRENT lifecycle while they remain current.
+- stale-state sweep rejects validation-scope rows whose lifecycle is not CURRENT or whose is_current flag is false.
+- ordinary identity lookup excludes scope=validation.
+- explicit include_validation_scope=true is required to inspect validation-scope identities.
+- validation scope is Tracker-internal baseline/conformance content and must not be emitted as ordinary consumer feature content.
