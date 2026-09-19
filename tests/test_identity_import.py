@@ -2,6 +2,7 @@ import unittest
 
 from tracker_identity import (
     CanonicalEraBoundary, CanonicalIdentityStore, FeatureIdentity,
+    FeatureDefinitionCatalogue, FeatureDefinitionRecord,
     IdentityImportManifest, ImportSourceRef, NormalizerSpec, SearchPolicy,
     SourceUniverseAuthority, import_identity_content,
 )
@@ -39,9 +40,14 @@ def manifest(refs,era="ERA_1"):
 def ref(source_id="s",authority="CANONICAL",rows=1,era="ERA_1",searched=True):
     return ImportSourceRef(source_id,"source",authority,searched,rows,era)
 
+def catalogue(fid="f1", version="1", era="ERA_1"):
+    d=FeatureDefinitionRecord(fid,version,"definition","x","()",era,"","")
+    d=FeatureDefinitionRecord(fid,version,"definition","x",(),era,d.computed_definition_hash(),d.computed_graph_hash())
+    return FeatureDefinitionCatalogue("CAT",era,(d,))
+
 def row(fid="f1",source_id="s",authority="CANONICAL",era="ERA_1",current=True,lifecycle="CURRENT"):
     return FeatureIdentity(
-        feature_id=fid,feature_version="1",definition_hash="a",graph_hash="b",
+        feature_id=fid,feature_version="1",definition_hash=catalogue(fid).definitions[0].definition_hash,graph_hash=catalogue(fid).definitions[0].graph_hash,
         lifecycle_state=lifecycle,is_current=current,scope="current_active",era_id=era,
         import_source_id=source_id,import_source_authority_class=authority,
     )
@@ -50,7 +56,7 @@ def run(rows,man,uni=None,store=None):
     store=store or CanonicalIdentityStore()
     result=import_identity_content(
         target_store=store,rows=tuple(rows),manifest=man,source_universe=uni or universe(),
-        era_boundary=boundary(),search_policy=policy(),normalizer=normalizer())
+        era_boundary=boundary(),catalogue=catalogue(rows[0].feature_id if rows else "f1"),search_policy=policy(),normalizer=normalizer())
     return store,result
 
 class ImportBoundaryTests(unittest.TestCase):
