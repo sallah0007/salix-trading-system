@@ -1,0 +1,23 @@
+name: Type1 Tracker Identity Tests
+
+on:
+  pull_request:
+    paths:
+      - "tracker_identity/**"
+      - "tests/**"
+      - "TYPE1_SCOPE.md"
+      - ".github/workflows/type1-tests.yml"
+  push:
+    branches:
+      - "type1/tracker-identity-surface"
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run Type-1 identity tests
+        run: python -m unittest discover -s tests -v
