@@ -3,13 +3,16 @@ import pathlib
 import unittest
 
 from tracker_identity import CanonicalIdentityStore, NormalizerSpec, SearchPolicy
-from tracker_identity.importer import IdentityImportManifest, ImportSourceRef, import_identity_content
+from tracker_identity.importer import (
+    IdentityImportManifest, ImportSourceRef, SourceUniverseAuthority, import_identity_content
+)
 
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 
 class CurrentPopulationPackageTests(unittest.TestCase):
     def test_current_package_cannot_claim_population_complete(self):
         data=json.loads((ROOT/"population"/"current_source_manifest.json").read_text())
+        udata=json.loads((ROOT/"population"/"current_source_universe.json").read_text())
         rows=json.loads((ROOT/"population"/"current_identity_rows.json").read_text())
 
         refs=tuple(ImportSourceRef(**r) for r in data["source_refs"])
@@ -17,8 +20,15 @@ class CurrentPopulationPackageTests(unittest.TestCase):
             manifest_id=data["manifest_id"],
             version=data["version"],
             source_refs=refs,
-            declared_source_universe_complete=data["declared_source_universe_complete"],
-            unresolved_source_classes=tuple(data["unresolved_source_classes"]),
+        )
+        source_universe=SourceUniverseAuthority(
+            source_universe_id=udata["source_universe_id"],
+            version=udata["version"],
+            source_universe_hash=udata["source_universe_hash"],
+            authority_source_id=udata["authority_source_id"],
+            expected_source_ids=tuple(udata["expected_source_ids"]),
+            universe_complete=udata["universe_complete"],
+            unresolved_source_classes=tuple(udata["unresolved_source_classes"]),
         )
 
         p=SearchPolicy(
@@ -44,12 +54,15 @@ class CurrentPopulationPackageTests(unittest.TestCase):
             target_store=CanonicalIdentityStore(),
             rows=tuple(rows),
             manifest=manifest,
+            source_universe=source_universe,
             search_policy=p,
             normalizer=n,
         )
         self.assertEqual(result.imported_row_count,0)
         self.assertFalse(result.population_complete)
-        self.assertTrue(manifest.unresolved_source_classes)
+        self.assertFalse(source_universe.universe_complete)
+        self.assertTrue(source_universe.unresolved_source_classes)
+        self.assertEqual(result.source_universe_hash,udata["source_universe_hash"])
 
 if __name__=="__main__":
     unittest.main()
