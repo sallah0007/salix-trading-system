@@ -7,6 +7,7 @@ from typing import Mapping, Optional, Tuple
 
 NORMALIZER_ALGORITHM_ID = "SALIX_TYPE1_NORMALIZER_V1"
 SUPPORTED_EQUIVALENCE_CLASSES = ("EXACT_STRUCTURAL_IDENTITY",)
+LOOKUP_ERA_SCOPES = ("ERA_1_ONLY","ALL_ERAS")
 
 def _sha256_json(payload) -> str:
     raw=json.dumps(payload,sort_keys=True,separators=(",",":"),ensure_ascii=True)
@@ -16,6 +17,7 @@ class LookupOutcome(str, Enum):
     EXACT_CANONICAL_IDENTITY="EXACT_CANONICAL_IDENTITY"
     NEAR_MATCH="NEAR_MATCH"
     ABSENT="ABSENT"
+    ABSENT_IN_ERA_1="ABSENT_IN_ERA_1"
     INCOMPLETE_LOOKUP="INCOMPLETE_LOOKUP"
     ERROR_UNRESOLVED="ERROR_UNRESOLVED"
 
@@ -28,6 +30,7 @@ class FeatureIdentity:
     lifecycle_state:str
     is_current:bool
     scope:str
+    era_id:str="ERA_1"
     aliases:Tuple[str,...]=()
     dependencies:Tuple[str,...]=()
     canonical_survivor:Optional[str]=None
@@ -133,5 +136,7 @@ class IdentityLookupResult:
     absent_claim_token:Optional[AbsentClaimToken]
     lookup_evidence_hash:str
     verdict_ts:str
+    lookup_era_scope:str="ALL_ERAS"
+    active_era_id:Optional[str]=None
     issuer:str="TRACKER"
     errors:Tuple[str,...]=()

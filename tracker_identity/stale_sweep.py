@@ -42,6 +42,9 @@ def stale_state_sweep(
     current_aliases = defaultdict(list)
 
     for r in records:
+        if r.era_id != store.active_era_id:
+            defects.append(f"CROSS_ERA_ROW_IN_ACTIVE_STORE:{r.feature_id}:{r.era_id}->{store.active_era_id}")
+
         if r.is_current:
             current_by_feature[r.feature_id].append(r)
 

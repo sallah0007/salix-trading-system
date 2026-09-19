@@ -2,67 +2,24 @@ import json
 import pathlib
 import unittest
 
-from tracker_identity import CanonicalIdentityStore, NormalizerSpec, SearchPolicy
-from tracker_identity.importer import (
-    IdentityImportManifest, ImportSourceRef, SourceUniverseAuthority, import_identity_content
-)
-
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 
 class CurrentPopulationPackageTests(unittest.TestCase):
-    def test_current_package_cannot_claim_population_complete(self):
+    def test_legacy_recovery_package_remains_unresolved_and_nonimportable(self):
         data=json.loads((ROOT/"population"/"current_source_manifest.json").read_text())
-        udata=json.loads((ROOT/"population"/"current_source_universe.json").read_text())
+        universe=json.loads((ROOT/"population"/"current_source_universe.json").read_text())
         rows=json.loads((ROOT/"population"/"current_identity_rows.json").read_text())
+        self.assertEqual(rows,[])
+        self.assertFalse(universe["universe_complete"])
+        self.assertTrue(universe["unresolved_source_classes"])
+        self.assertNotIn("era_id",data)
+        self.assertNotIn("era_id",universe)
 
-        refs=tuple(ImportSourceRef(**r) for r in data["source_refs"])
-        manifest=IdentityImportManifest(
-            manifest_id=data["manifest_id"],
-            version=data["version"],
-            source_refs=refs,
-        )
-        source_universe=SourceUniverseAuthority(
-            source_universe_id=udata["source_universe_id"],
-            version=udata["version"],
-            source_universe_hash=udata["source_universe_hash"],
-            authority_source_id=udata["authority_source_id"],
-            expected_source_ids=tuple(udata["expected_source_ids"]),
-            universe_complete=udata["universe_complete"],
-            unresolved_source_classes=tuple(udata["unresolved_source_classes"]),
-        )
-
-        p=SearchPolicy(
-            policy_id="population-validation",version="1",policy_hash="",
-            required_scopes=("current_active",),searched_scopes=("current_active",),
-            scope_exclusions={},
-        )
-        p=SearchPolicy(
-            policy_id=p.policy_id,version=p.version,policy_hash=p.computed_hash(),
-            required_scopes=p.required_scopes,searched_scopes=p.searched_scopes,
-            scope_exclusions=p.scope_exclusions,
-        )
-        n=NormalizerSpec(
-            normalizer_id="population-validation",version="1",normalizer_hash="",
-            equivalence_classes=("EXACT_STRUCTURAL_IDENTITY",),
-        )
-        n=NormalizerSpec(
-            normalizer_id=n.normalizer_id,version=n.version,
-            normalizer_hash=n.computed_hash(),equivalence_classes=n.equivalence_classes,
-        )
-
-        result=import_identity_content(
-            target_store=CanonicalIdentityStore(),
-            rows=tuple(rows),
-            manifest=manifest,
-            source_universe=source_universe,
-            search_policy=p,
-            normalizer=n,
-        )
-        self.assertEqual(result.imported_row_count,0)
-        self.assertFalse(result.population_complete)
-        self.assertFalse(source_universe.universe_complete)
-        self.assertTrue(source_universe.unresolved_source_classes)
-        self.assertEqual(result.source_universe_hash,udata["source_universe_hash"])
+    def test_era1_package_is_separate_from_legacy_recovery_package(self):
+        era1=json.loads((ROOT/"population"/"era1_boundary.json").read_text())
+        self.assertEqual(era1["era_id"],"ERA_1")
+        self.assertEqual(era1["predecessor_era_id"],"ERA_0")
+        self.assertFalse(era1["absent_proven"])
 
 if __name__=="__main__":
     unittest.main()

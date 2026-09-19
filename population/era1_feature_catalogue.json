@@ -1,0 +1,19 @@
+{
+  "catalogue_id": "SALIX-ERA1-FEATURE-CATALOGUE",
+  "era_id": "ERA_1",
+  "definitions": [
+    {
+      "feature_id": "salix.neutral.identity_anchor",
+      "feature_version": "1",
+      "semantic_definition": "Instrument-neutral identity anchor whose deterministic transform is identity(x)=x.",
+      "formula": "identity(x)=x",
+      "definition_hash": "0e1d78dfe3b3c7b3ef63134a4f54a3b913612f018504d00312821965980f8ab4",
+      "dependency_graph": [],
+      "graph_hash": "ad0baf0ccc76cb7b05ee4c881e3712a1ed71d6321b2d4e9e745f7ac50d70d792",
+      "instrument": null,
+      "timeframe": null,
+      "authority": "OWNER_APPROVED_ERA1_START_DIRECTION__BASELINE_CANDIDATE_UNFROZEN",
+      "purpose": "TYPE_1_IDENTITY_BASELINE_CONFORMANCE_AND_FIRST_CLEAN_CANONICAL_CONTENT"
+    }
+  ]
+}
