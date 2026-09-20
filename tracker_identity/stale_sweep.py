@@ -4,6 +4,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Tuple
 
+from .content_identity import CONTENT_KEY_ALGORITHM_ID
 from .models import NormalizerSpec, SearchPolicy
 from .store import CanonicalIdentityStore
 from .lifecycle import CURRENT_LIFECYCLES, NON_CURRENT_LIFECYCLES, KNOWN_LIFECYCLES
@@ -144,11 +145,55 @@ def _transition_history_defects(store: CanonicalIdentityStore):
     return defects
 
 
+def _content_key_defects(store, catalogue=None):
+    """Independently verify every projected content key against its definition.
+
+    A stored key is never evidence on its own. Where the authoritative
+    definition is available the key is RECOMPUTED through the single canonical
+    derivation and compared subkey by subkey. A corrupted composite, a
+    corrupted individual subkey, or an unrecognised algorithm id is a defect.
+    """
+    defects=[]
+    for r in store.all():
+        if r.content_key_algorithm_id and r.content_key_algorithm_id!=CONTENT_KEY_ALGORITHM_ID:
+            defects.append(f"CONTENT_KEY_ALGORITHM_UNRECOGNISED:{r.feature_id}:{r.content_key_algorithm_id}")
+        projected=[x for x in (r.content_key_composite,*r.content_subkeys) if x]
+        if projected and not r.has_content_key:
+            defects.append(f"CONTENT_KEY_PARTIALLY_PROJECTED:{r.feature_id}:{r.feature_version}")
+        if catalogue is None:
+            continue
+        definition=catalogue.find(r.feature_id,r.feature_version)
+        if definition is None:
+            continue
+        key,key_errors=definition.content_identity_key()
+        if key_errors:
+            if r.has_content_key:
+                defects.append(f"CONTENT_KEY_NOT_RECONSTRUCTABLE:{r.feature_id}:{r.feature_version}")
+            continue
+        if not r.has_content_key:
+            # No blanket validation exemption: a reconstructable key that was
+            # never projected is a defect whatever the scope.
+            defects.append(f"CONTENT_KEY_MISSING_BUT_RECONSTRUCTABLE:{r.feature_id}:{r.feature_version}")
+            continue
+        if r.content_key_composite!=key.composite:
+            defects.append(f"CONTENT_KEY_COMPOSITE_MISMATCH:{r.feature_id}:{r.feature_version}")
+        for label,stored,expected in (
+            ("DEFINITION",r.content_key_definition,key.definition_semantics),
+            ("CAUSAL_TIME",r.content_key_causal_time,key.causal_time),
+            ("PROVENANCE",r.content_key_provenance,key.provenance_source),
+            ("SCOPE",r.content_key_scope,key.scope_eligibility),
+            ("FITTED",r.content_key_fitted,key.fitted_learned_state),
+        ):
+            if stored!=expected:
+                defects.append(f"CONTENT_SUBKEY_MISMATCH:{label}:{r.feature_id}:{r.feature_version}")
+    return defects
+
 def stale_state_sweep(
     *,
     store: CanonicalIdentityStore,
     search_policy: SearchPolicy,
     normalizer: NormalizerSpec,
+    catalogue=None,
 ) -> StaleSweepResult:
     defects = []
     records = store.all()
@@ -156,6 +201,7 @@ def stale_state_sweep(
     defects.extend("SEARCH_POLICY:" + x for x in search_policy.completeness_errors())
     defects.extend("NORMALIZER:" + x for x in normalizer.completeness_errors())
     defects.extend(_transition_history_defects(store))
+    defects.extend(_content_key_defects(store,catalogue))
 
     known_ids = {r.feature_id for r in records}
     current_by_feature = defaultdict(list)

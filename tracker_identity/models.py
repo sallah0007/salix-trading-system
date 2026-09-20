@@ -8,6 +8,10 @@ from typing import Mapping, Optional, Tuple
 NORMALIZER_ALGORITHM_ID = "SALIX_TYPE1_NORMALIZER_V1"
 SUPPORTED_EQUIVALENCE_CLASSES = ("EXACT_STRUCTURAL_IDENTITY",)
 LOOKUP_ERA_SCOPES = ("ERA_1_ONLY","ALL_ERAS")
+SUBJECT_MODES = ("CANONICAL_ID","PRE_ID")
+SCOPE_STATUSES = ("LOADED","EMPTY_VERIFIED","UNREACHABLE","UNKNOWN")
+CLAIM_STATES = ("ACTIVE","RELEASED","EXPIRED","ABANDONED")
+DEFAULT_CLAIM_TTL_SECONDS = 900
 
 def _sha256_json(payload) -> str:
     raw=json.dumps(payload,sort_keys=True,separators=(",",":"),ensure_ascii=True)
@@ -18,6 +22,7 @@ class LookupOutcome(str, Enum):
     NEAR_MATCH="NEAR_MATCH"
     ABSENT="ABSENT"
     ABSENT_IN_ERA_1="ABSENT_IN_ERA_1"
+    ABSENT_EXACT_STRUCTURAL_IN_ERA_1="ABSENT_EXACT_STRUCTURAL_IN_ERA_1"
     INCOMPLETE_LOOKUP="INCOMPLETE_LOOKUP"
     ERROR_UNRESOLVED="ERROR_UNRESOLVED"
 
@@ -40,6 +45,27 @@ class FeatureIdentity:
     lineage_ref:Optional[str]=None
     import_source_id:Optional[str]=None
     import_source_authority_class:Optional[str]=None
+    content_key_composite:Optional[str]=None
+    content_key_definition:Optional[str]=None
+    content_key_causal_time:Optional[str]=None
+    content_key_provenance:Optional[str]=None
+    content_key_scope:Optional[str]=None
+    content_key_fitted:Optional[str]=None
+    content_key_algorithm_id:Optional[str]=None
+    definition_record_ref:Optional[str]=None
+    proxy_status:Optional[str]=None
+
+    @property
+    def content_subkeys(self):
+        return (
+            self.content_key_definition,self.content_key_causal_time,
+            self.content_key_provenance,self.content_key_scope,
+            self.content_key_fitted,
+        )
+
+    @property
+    def has_content_key(self)->bool:
+        return bool(self.content_key_composite) and all(self.content_subkeys)
 
     @property
     def canonical_key(self):
@@ -107,6 +133,21 @@ class NormalizerSpec:
         return tuple(e)
 
 @dataclass(frozen=True)
+class ClaimRecord:
+    """A persisted, atomically reserved claim on a CONTENT_IDENTITY_KEY."""
+    claim_id:str
+    content_key_composite:str
+    request_id:str
+    issuer:str
+    issued_ts:str
+    expires_ts:str
+    state:str="ACTIVE"
+    release_reason:Optional[str]=None
+
+    def is_active_at(self,now_iso:str)->bool:
+        return self.state=="ACTIVE" and now_iso < self.expires_ts
+
+@dataclass(frozen=True)
 class AbsentClaimToken:
     claim_id:str
     owner:str
@@ -139,4 +180,9 @@ class IdentityLookupResult:
     lookup_era_scope:str="ALL_ERAS"
     active_era_id:Optional[str]=None
     issuer:str="TRACKER"
+    subject_mode:str="CANONICAL_ID"
+    content_key_composite:str=""
+    content_key_algorithm_id:str=""
+    semantic_uniqueness:str="UNRESOLVED_NOT_CERTIFIED"
+    scope_status:Tuple[Tuple[str,str],...]=()
     errors:Tuple[str,...]=()
