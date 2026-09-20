@@ -6,6 +6,15 @@ or production trading authority is implemented here.
 """
 
 from .models import AbsentClaimToken, ClaimRecord, FeatureIdentity, IdentityLookupResult, LookupOutcome, NormalizerSpec, SearchPolicy
+from .policy_registry import (
+    GOVERNED_SEARCH_POLICIES,
+    MANDATORY_DUPLICATE_CONTROL_SCOPES,
+    SEARCH_POLICY_ID,
+    SEARCH_POLICY_VERSION,
+    GovernedSearchPolicyEntry,
+    governed_search_policy,
+    resolve_governed_search_policy,
+)
 from .search import identity_lookup
 from .catalogue import FeatureDefinitionCatalogue, FeatureDefinitionRecord
 from .content_identity import (

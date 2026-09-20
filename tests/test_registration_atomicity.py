@@ -14,6 +14,7 @@ from tracker_identity import (
     CanonicalEraBoundary,
     CanonicalIdentityStore,
     FeatureDefinitionRecord,
+    FeatureIdentity,
     NormalizerSpec,
     SearchPolicy,
     build_content_identity_key,
@@ -119,10 +120,34 @@ def intake(store, cand):
         search_policy=policy(), normalizer=normalizer())
 
 
-def content_key():
-    key, errors = build_content_identity_key(CONTENT)
+def content_key(**overrides):
+    payload = dict(CONTENT)
+    payload.update(overrides)
+    key, errors = build_content_identity_key(payload)
     assert not errors, errors
     return key
+
+
+def imported_row(key, feature_id="gold.logret.other"):
+    """A content identity introduced by the governed IMPORT path.
+
+    import_identity_content() writes through store.extend(), not through
+    commit_registration(), so it is a legitimate way for an identity to appear
+    between a claim being issued and that claim being presented.
+    """
+    return FeatureIdentity(
+        feature_id=feature_id, feature_version="1",
+        definition_hash="imported-d", graph_hash="imported-g",
+        lifecycle_state="CURRENT", is_current=True, scope="current_active",
+        era_id="ERA_1",
+        content_key_composite=key.composite,
+        content_key_definition=key.definition_semantics,
+        content_key_causal_time=key.causal_time,
+        content_key_provenance=key.provenance_source,
+        content_key_scope=key.scope_eligibility,
+        content_key_fitted=key.fitted_learned_state,
+        content_key_algorithm_id=key.algorithm_id,
+    )
 
 
 class RegistrationAtomicity(unittest.TestCase):
@@ -167,9 +192,10 @@ class RegistrationAtomicity(unittest.TestCase):
         store = CanonicalIdentityStore()
         key = content_key()
         store.reserve_claim(content_key_composite=key.composite, request_id="REQ-STALE")
-        # Another worker registers the same content under a different name.
-        other = intake(store, candidate("gold.logret.other"))
-        self.assertTrue(other.accepted, other.errors)
+        # The same content identity arrives by the governed import path while
+        # this worker holds its claim. It cannot arrive by a second intake:
+        # only one active claim per content key can exist, which is the point.
+        store.add(imported_row(key))
 
         stale = intake(store, candidate("gold.logret.stale", claim_request_id="REQ-STALE"))
         self.assertFalse(stale.accepted)
@@ -256,17 +282,29 @@ class RegistrationAtomicity(unittest.TestCase):
         end-to-end refusal, and the inner check in isolation.
         """
         store = CanonicalIdentityStore()
-        first = intake(store, candidate("gold.logret.dup"))
+        store.reserve_claim(content_key_composite=content_key().composite,
+                            request_id="REQ-DUP1")
+        first = intake(store, candidate("gold.logret.dup", claim_request_id="REQ-DUP1"))
         self.assertTrue(first.accepted, first.errors)
 
-        second = intake(store, candidate("gold.logret.dup", price_basis="ASK"))
+        # Same canonical key, different governed content (ASK vs BID), so it
+        # carries its own content key and its own valid claim. It must still be
+        # refused — on the duplicate canonical key, not on the claim gate.
+        ask_key = content_key(price_basis="ASK")
+        store.reserve_claim(content_key_composite=ask_key.composite,
+                            request_id="REQ-DUP2")
+        second = intake(store, candidate("gold.logret.dup", price_basis="ASK",
+                                         claim_request_id="REQ-DUP2"))
         self.assertFalse(second.accepted)
+        self.assertNotIn("CLAIM_REQUEST_ID_REQUIRED", second.errors)
         self.assertEqual(len(store.all()), 1)
 
-        # Inner check in isolation: same canonical key, no claim presented.
+        # Inner check in isolation: a VALID active claim, but the canonical key
+        # is already registered. The claim gate must not be what stops this —
+        # the canonical-key check itself must.
         ok, error = store.commit_registration(
             identity=first.identity, creation=object(),
-            content_key_composite=None, request_id=None)
+            content_key_composite=ask_key.composite, request_id="REQ-DUP2")
         self.assertFalse(ok)
         self.assertTrue(error.startswith("CANONICAL_KEY_ALREADY_REGISTERED"), error)
 
@@ -277,11 +315,19 @@ class RegistrationAtomicity(unittest.TestCase):
         self.assertFalse(result.accepted)
         self.assertIn("CLAIM_PRESENTED_WITHOUT_CONTENT_KEY", result.errors)
 
-    def test_intake_without_a_claim_still_works(self):
-        """Claim presentation is optional; governed legacy intake is unchanged."""
+    def test_intake_without_a_claim_is_refused(self):
+        """C-1: ordinary canonical registration REQUIRES a valid active claim.
+
+        Replaces test_intake_without_a_claim_still_works, which asserted the
+        defect: claimless intake reached canonical registration and bypassed
+        the lookup/claim gate entirely.
+        """
         store = CanonicalIdentityStore()
         result = intake(store, candidate())
-        self.assertTrue(result.accepted, result.errors)
+        self.assertFalse(result.accepted)
+        self.assertIn("CLAIM_REQUEST_ID_REQUIRED", result.errors)
+        self.assertEqual(store.all(), ())
+        self.assertEqual(store.all_creation_records(), ())
 
     def test_lock_order_is_total_no_claim_lock_then_transition_lock(self):
         """G: lock order proven by inspection — _transition_lock always outer.

@@ -182,13 +182,20 @@ class CanonicalIdentityStore:
         expires, B claims and registers, A resumes and appends on a validation
         that is no longer true.
 
+        A valid active claim is MANDATORY. It is enforced here, not only in
+        safe_intake, because a direct caller must not be able to reach the
+        registry by skipping the lookup/claim gate entirely. No claim means no
+        registration, whatever route the caller took.
+
         Inside a single acquisition of _transition_lock this method:
-          1. re-checks that the presented claim is still ACTIVE and still bound
+          1. requires a non-blank request_id and content key — None, "" and
+             whitespace are the absence of a claim, never a claim;
+          2. re-checks that the presented claim is still ACTIVE and still bound
              to request_id, evaluated at the CURRENT time;
-          2. re-checks that no canonical identity for this content key or
+          3. re-checks that no canonical identity for this content key or
              canonical key appeared since the claim was issued;
-          3. appends identity and creation provenance;
-          4. terminally consumes the claim.
+          4. appends identity and creation provenance;
+          5. terminally consumes the claim.
 
         LOCK ORDER is fixed and total: _transition_lock is ALWAYS acquired
         before _claim_lock, never the reverse. No public method acquires
@@ -197,28 +204,31 @@ class CanonicalIdentityStore:
         Returns (True, None) or (False, error).
         """
         now_iso=self._now_iso()   # NOT caller-controlled
+        request_id=str(request_id or "").strip()
+        content_key_composite=str(content_key_composite or "").strip() or None
         with self._transition_lock:
             with self._claim_lock:
-                if content_key_composite is not None and request_id is not None:
-                    self._expire_due(now_iso)
-                    held=None
-                    for c in self.claims:
-                        if (c.content_key_composite==content_key_composite
-                                and c.request_id==request_id):
-                            held=c
-                            break
-                    if held is None:
-                        return False,"CLAIM_NOT_FOUND"
-                    if not held.is_active_at(now_iso):
-                        return False,"CLAIM_NOT_ACTIVE:"+held.state
-                else:
-                    held=None
+                if not request_id:
+                    return False,"CLAIM_REQUIRED_FOR_REGISTRATION"
+                if content_key_composite is None:
+                    return False,"CONTENT_KEY_REQUIRED_FOR_REGISTRATION"
+
+                self._expire_due(now_iso)
+                held=None
+                for c in self.claims:
+                    if (c.content_key_composite==content_key_composite
+                            and c.request_id==request_id):
+                        held=c
+                        break
+                if held is None:
+                    return False,"CLAIM_NOT_FOUND"
+                if not held.is_active_at(now_iso):
+                    return False,"CLAIM_NOT_ACTIVE:"+held.state
 
                 # A competing worker may have registered while this one paused.
-                if content_key_composite is not None:
-                    for r in self.records:
-                        if r.content_key_composite==content_key_composite and r.is_current:
-                            return False,"IDENTITY_APPEARED_SINCE_CLAIM:"+r.feature_id
+                for r in self.records:
+                    if r.content_key_composite==content_key_composite and r.is_current:
+                        return False,"IDENTITY_APPEARED_SINCE_CLAIM:"+r.feature_id
                 for r in self.records:
                     if r.canonical_key==identity.canonical_key:
                         return False,"CANONICAL_KEY_ALREADY_REGISTERED:"+r.feature_id
@@ -226,12 +236,11 @@ class CanonicalIdentityStore:
                 self.records.append(identity)
                 self.creation_records.append(creation)
 
-                if held is not None:
-                    for i,c in enumerate(self.claims):
-                        if c.claim_id==held.claim_id:
-                            self.claims[i]=ClaimRecord(
-                                c.claim_id,c.content_key_composite,c.request_id,
-                                c.issuer,c.issued_ts,c.expires_ts,
-                                "RELEASED","REGISTRATION_COMPLETED")
-                            break
+                for i,c in enumerate(self.claims):
+                    if c.claim_id==held.claim_id:
+                        self.claims[i]=ClaimRecord(
+                            c.claim_id,c.content_key_composite,c.request_id,
+                            c.issuer,c.issued_ts,c.expires_ts,
+                            "RELEASED","REGISTRATION_COMPLETED")
+                        break
                 return True,None

@@ -134,6 +134,27 @@ def safe_intake_built_identity(
         return SafeIntakeResult(False,era_boundary.era_id,None,None,sweep,
             ("CLAIM_PRESENTED_WITHOUT_CONTENT_KEY",)+tuple(content_key_errors))
 
+    # CANDIDATE-INTEGRITY-FIRST ORDERING.
+    # Everything above this point is the candidate's own integrity: era binding,
+    # required provenance, catalogue definition/graph hashes and content-key
+    # derivation. Registration AUTHORITY is evaluated only now, so requiring a
+    # claim can never mask an independently detectable candidate defect — a
+    # tampered hash still reports the tampered hash, not "no claim".
+    #
+    # A valid candidate with no valid claim still fails HERE, before any
+    # staging, sweep or registry mutation.
+    claim_request_id=str(candidate.claim_request_id or "").strip()
+    if not claim_request_id:
+        # None, "" and whitespace are all the ABSENCE of a claim, never a claim.
+        sweep=stale_state_sweep(store=target_store,search_policy=search_policy,normalizer=normalizer)
+        return SafeIntakeResult(False,era_boundary.era_id,None,None,sweep,
+            ("CLAIM_REQUEST_ID_REQUIRED",))
+    if content_key is None:
+        # Claim-gated registration is only verifiable against a content key.
+        sweep=stale_state_sweep(store=target_store,search_policy=search_policy,normalizer=normalizer)
+        return SafeIntakeResult(False,era_boundary.era_id,None,None,sweep,
+            ("CONTENT_IDENTITY_KEY_REQUIRED_FOR_CLAIM_VALIDATION",)+tuple(content_key_errors))
+
     identity=FeatureIdentity(
         feature_id=candidate.feature_id,
         feature_version=candidate.feature_version,
@@ -191,8 +212,8 @@ def safe_intake_built_identity(
     committed,commit_error=target_store.commit_registration(
         identity=identity,
         creation=creation,
-        content_key_composite=(content_key.composite if content_key else None),
-        request_id=candidate.claim_request_id,
+        content_key_composite=content_key.composite,
+        request_id=claim_request_id,
     )
     if not committed:
         return SafeIntakeResult(False,era_boundary.era_id,None,None,sweep,

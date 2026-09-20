@@ -17,6 +17,7 @@ from .models import (
 )
 from .content_identity import CONTENT_KEY_ALGORITHM_ID, build_content_identity_key
 from .normalizer import normalize_subject
+from .policy_registry import resolve_governed_search_policy
 from .store import CanonicalIdentityStore
 
 def _evidence_hash(payload: Mapping[str, Any]) -> str:
@@ -53,6 +54,12 @@ def identity_lookup(
     now=now or datetime.now(timezone.utc)
 
     errors=list(search_policy.completeness_errors())
+    # Self-consistency is not authority. The presented policy must ALSO bind to
+    # a Tracker-owned governed policy version, so a caller cannot redefine what
+    # duplicate-control completeness means by constructing its own policy and
+    # self-hashing it. Any mismatch lands in `errors`, which forces
+    # INCOMPLETE_LOOKUP below and issues no claim.
+    errors.extend(resolve_governed_search_policy(search_policy))
     errors.extend(normalizer.completeness_errors())
 
     lookup_era_scope=str(subject.get("lookup_era_scope","ALL_ERAS")).strip().upper() or "ALL_ERAS"
