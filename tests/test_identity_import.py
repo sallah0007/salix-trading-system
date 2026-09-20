@@ -40,15 +40,29 @@ def manifest(refs,era="ERA_1"):
 def ref(source_id="s",authority="CANONICAL",rows=1,era="ERA_1",searched=True):
     return ImportSourceRef(source_id,"source",authority,searched,rows,era)
 
+# Governed content dimensions required for CONTENT_IDENTITY_KEY derivation.
+# Fixture updated to the current contract; no assertion was weakened.
+CONTENT_DIMS=dict(
+    declared_normalization="NONE",causal_time_semantics="TS-V1",
+    completion_semantics="LAST_COMPLETED_BEFORE_T",
+    availability_class="RECONSTRUCTED_NOT_OBSERVED",source_provider="P1",
+    price_basis="BID",data_vintage_mode="CURRENT_RECOMPUTED",
+    scope_universe="U/ERA_1",parameters={},fitted_state="NONE",
+)
+
 def catalogue(fid="f1", version="1", era="ERA_1"):
-    d=FeatureDefinitionRecord(fid,version,"definition","x",(),era,"","")
-    d=FeatureDefinitionRecord(fid,version,"definition","x",(),era,d.computed_definition_hash(),d.computed_graph_hash())
+    d=FeatureDefinitionRecord(fid,version,"definition","x",(),era,"","",
+                              instrument="XAUUSD",timeframe="H1",**CONTENT_DIMS)
+    d=FeatureDefinitionRecord(fid,version,"definition","x",(),era,
+                              d.computed_definition_hash(),d.computed_graph_hash(),
+                              instrument="XAUUSD",timeframe="H1",**CONTENT_DIMS)
     return FeatureDefinitionCatalogue("CAT",era,(d,))
 
 def row(fid="f1",source_id="s",authority="CANONICAL",era="ERA_1",current=True,lifecycle="CURRENT"):
     return FeatureIdentity(
         feature_id=fid,feature_version="1",definition_hash=catalogue(fid).definitions[0].definition_hash,graph_hash=catalogue(fid).definitions[0].graph_hash,
         lifecycle_state=lifecycle,is_current=current,scope="current_active",era_id=era,
+        instrument="XAUUSD",timeframe="H1",
         import_source_id=source_id,import_source_authority_class=authority,
     )
 

@@ -13,7 +13,9 @@ from .models import (
     NormalizerSpec,
     SearchPolicy,
     LOOKUP_ERA_SCOPES,
+    SUBJECT_MODES,
 )
+from .content_identity import CONTENT_KEY_ALGORITHM_ID, build_content_identity_key
 from .normalizer import normalize_subject
 from .store import CanonicalIdentityStore
 
@@ -61,6 +63,23 @@ def identity_lookup(
     if lookup_era_scope == "ERA_1_ONLY" and store.active_era_id != "ERA_1":
         errors.append("STORE_ACTIVE_ERA_NOT_ERA1")
 
+    subject_mode=str(subject.get("subject_mode","CANONICAL_ID")).strip().upper() or "CANONICAL_ID"
+    if subject_mode not in SUBJECT_MODES:
+        errors.append("SUBJECT_MODE_INVALID:"+subject_mode)
+        subject_mode="CANONICAL_ID"
+
+    # CONTENT_IDENTITY_KEY is RECOMPUTED here from declared content. A
+    # caller-supplied key is refused: a supplied key could manufacture a match.
+    content_key=None
+    if any(k in subject for k in ("content_key","content_identity_key","content_key_composite")):
+        errors.append("SUPPLIED_CONTENT_KEY_NOT_ACCEPTED_RECOMPUTED_FROM_CONTENT")
+    content_payload=subject.get("candidate_content")
+    if content_payload is not None:
+        content_key,content_errors=build_content_identity_key(content_payload)
+        errors.extend(content_errors)
+    elif subject_mode=="PRE_ID":
+        errors.append("LOOKUP_SUBJECT_CANDIDATE_CONTENT_REQUIRED")
+
     active_era_id=store.active_era_id if lookup_era_scope=="ERA_1_ONLY" else None
 
     store_scopes=set(store.enumerate_scopes(active_era_id))
@@ -68,6 +87,15 @@ def identity_lookup(
     unenumerated_store_scopes=sorted(store_scopes-required_scopes)
     if unenumerated_store_scopes:
         errors.append("UNENUMERATED_STORE_SCOPE:"+",".join(unenumerated_store_scopes))
+
+    # Scope reachability. An empty store is not proof of completeness.
+    # Enforced in PRE_ID; CANONICAL_ID keeps its governed historical behaviour
+    # (implementation invariant 10) and reports status without gating on it.
+    scope_status=store.scope_status_report(search_policy.searched_scopes,active_era_id)
+    if subject_mode=="PRE_ID":
+        unproven=sorted(sc for sc,st in scope_status if st in ("UNREACHABLE","UNKNOWN"))
+        if unproven:
+            errors.append("SCOPE_NOT_PROVEN_REACHABLE:"+",".join(unproven))
 
     try:
         normalized,subject_hash=normalize_subject(subject,normalizer)
@@ -79,9 +107,19 @@ def identity_lookup(
         subject_hash=""
         errors.append("NORMALIZER_APPLICATION_ERROR:"+str(exc))
 
-    for required in ("feature_id","feature_version","definition_hash","graph_hash"):
-        if not normalized[required]:
-            errors.append(f"LOOKUP_SUBJECT_{required.upper()}_REQUIRED")
+    if subject_mode=="CANONICAL_ID":
+        for required in ("feature_id","feature_version","definition_hash","graph_hash"):
+            if not normalized[required]:
+                errors.append(f"LOOKUP_SUBJECT_{required.upper()}_REQUIRED")
+    else:
+        # A PRE_ID subject has no canonical identity authority, and the stored
+        # hashes are ID-contaminated, so they are inadmissible as identity here.
+        if normalized["feature_id"] or normalized["feature_version"]:
+            errors.append("PRE_ID_SUBJECT_MUST_NOT_CARRY_CANONICAL_IDENTITY")
+        if normalized["definition_hash"] or normalized["graph_hash"]:
+            errors.append("PRE_ID_SUBJECT_MUST_NOT_CARRY_ID_CONTAMINATED_HASHES")
+        if content_key is None:
+            errors.append("CONTENT_IDENTITY_KEY_UNRESOLVED")
 
     include_validation_scope=bool(subject.get("include_validation_scope",False))
     searched_records=[]
@@ -93,14 +131,62 @@ def identity_lookup(
             searched_records.extend(scoped)
 
     subject_key=_subject_key(normalized)
-    exact_all=[r for r in searched_records if r.canonical_key==subject_key]
+
+    # ------------------------------------------------------------------
+    # Content-keyed matching. Independent of any proposed feature name.
+    # ------------------------------------------------------------------
+    content_exact=[]; definition_related=[]; proxy_conflict=[]; unkeyed=[]
+    if content_key is not None:
+        subject_proxy=str(subject.get("proxy_status","") or "").strip().upper()
+        for r in searched_records:
+            if not r.has_content_key:
+                # Participation is decided by the ACTUAL searched scope, not by
+                # a static scope name. A row that is being searched but cannot
+                # take part in content comparison cannot be ruled out, so it
+                # must not be silently skipped. include_validation_scope=true
+                # therefore brings validation rows under the same requirement.
+                unkeyed.append(r)
+                continue
+            if r.content_key_composite==content_key.composite:
+                content_exact.append(r)
+                rp=str(r.proxy_status or "").strip().upper()
+                if subject_proxy and rp and rp!=subject_proxy:
+                    proxy_conflict.append(r)
+            elif r.content_key_definition==content_key.definition_semantics:
+                # Same DEFINITION/SEMANTICS, some other governed dimension
+                # differs. Exact equality on part of a structured key — a
+                # review trigger, not a similarity heuristic.
+                definition_related.append(r)
+
+    if subject_mode=="PRE_ID" and unkeyed:
+        errors.append("CONTENT_KEY_UNRESOLVED_ROWS:"+",".join(
+            sorted({r.feature_id for r in unkeyed})))
+
+    content_current=[r for r in content_exact if r.is_current]
+    content_noncurrent=[r for r in content_exact if not r.is_current]
+    if len(content_current)>1:
+        errors.append("AMBIGUOUS_CURRENT_CONTENT_IDENTITY")
+
+    if subject_mode=="CANONICAL_ID":
+        exact_all=[r for r in searched_records if r.canonical_key==subject_key]
+    else:
+        exact_all=[]
     exact_current=[r for r in exact_all if r.is_current]
     exact_noncurrent=[r for r in exact_all if not r.is_current]
-
     if len(exact_current)>1:
         errors.append("AMBIGUOUS_CURRENT_EXACT_CANONICAL_IDENTITY")
 
-    survivor_candidates,survivor_unresolved=_resolve_current_survivor(exact_noncurrent,searched_records)
+    # A name/hash match whose governed content disagrees is not an exact
+    # identity. Contradiction is evaluated BEFORE any exact branch.
+    content_conflict=[
+        r for r in exact_current
+        if content_key is not None and r.has_content_key
+        and r.content_key_composite!=content_key.composite
+    ]
+
+    survivor_candidates,survivor_unresolved=_resolve_current_survivor(
+        [*exact_noncurrent,*content_noncurrent],searched_records
+    )
     if len(survivor_candidates)>1:
         errors.append("AMBIGUOUS_CANONICAL_SURVIVOR")
     if survivor_unresolved:
@@ -112,21 +198,33 @@ def identity_lookup(
         and r.feature_id==normalized["feature_id"]
         and r.canonical_key!=subject_key
     ]
-    near.extend(r for r in exact_noncurrent if r not in near)
+    for extra in (*exact_noncurrent,*content_noncurrent,*definition_related,
+                  *content_conflict,*proxy_conflict):
+        if extra not in near:
+            near.append(extra)
 
     lookup_complete=not errors
+    claim_record=None
 
     if errors:
         outcome=LookupOutcome.INCOMPLETE_LOOKUP
-        exact_match=None
-        near_matches=()
-        absent_token=None
+        exact_match=None; near_matches=(); absent_token=None
         collision="UNRESOLVED"
+    elif content_conflict:
+        outcome=LookupOutcome.NEAR_MATCH
+        exact_match=None; near_matches=tuple(dict.fromkeys(near)); absent_token=None
+        collision="CONTENT_KEY_CONFLICT_REVIEW_REQUIRED"
+    elif len(content_current)==1 and not proxy_conflict:
+        outcome=LookupOutcome.EXACT_CANONICAL_IDENTITY
+        exact_match=content_current[0]; near_matches=(); absent_token=None
+        collision="CLEAR"
+    elif proxy_conflict:
+        outcome=LookupOutcome.NEAR_MATCH
+        exact_match=None; near_matches=tuple(dict.fromkeys(near)); absent_token=None
+        collision="PROXY_STATUS_CONFLICT_REVIEW_REQUIRED"
     elif len(exact_current)==1:
         outcome=LookupOutcome.EXACT_CANONICAL_IDENTITY
-        exact_match=exact_current[0]
-        near_matches=()
-        absent_token=None
+        exact_match=exact_current[0]; near_matches=(); absent_token=None
         collision="CLEAR"
     elif len(survivor_candidates)==1:
         outcome=LookupOutcome.NEAR_MATCH
@@ -134,20 +232,40 @@ def identity_lookup(
         near_matches=tuple(dict.fromkeys((*near,*survivor_candidates)))
         absent_token=None
         collision="CANONICAL_SURVIVOR_REVIEW_REQUIRED"
+    elif definition_related:
+        outcome=LookupOutcome.NEAR_MATCH
+        exact_match=None; near_matches=tuple(dict.fromkeys(near)); absent_token=None
+        collision="RELATED_VERSION_CONTENT_REVIEW_REQUIRED"
     elif near:
         outcome=LookupOutcome.NEAR_MATCH
-        exact_match=None
-        near_matches=tuple(dict.fromkeys(near))
-        absent_token=None
+        exact_match=None; near_matches=tuple(dict.fromkeys(near)); absent_token=None
         collision="REVIEW_REQUIRED"
+    elif subject_mode=="PRE_ID":
+        # Absence is bounded to the certified structural class. Semantic
+        # uniqueness is NOT certified and is never implied by this outcome.
+        claim_record,claim_error=store.reserve_claim(
+            content_key_composite=content_key.composite,
+            request_id=request_id,issuer=owner,
+        )
+        if claim_error:
+            outcome=LookupOutcome.INCOMPLETE_LOOKUP
+            exact_match=None; near_matches=(); absent_token=None
+            collision="UNRESOLVED"
+            errors.append(claim_error)
+            lookup_complete=False
+        else:
+            outcome=LookupOutcome.ABSENT_EXACT_STRUCTURAL_IN_ERA_1
+            exact_match=None; near_matches=()
+            absent_token=AbsentClaimToken(
+                claim_id=claim_record.claim_id,owner=owner,
+                bound_request_id=request_id,
+            )
+            collision="CLEAR"
     else:
         outcome=LookupOutcome.ABSENT_IN_ERA_1
-        exact_match=None
-        near_matches=()
+        exact_match=None; near_matches=()
         absent_token=AbsentClaimToken(
-            claim_id=f"type1-{uuid.uuid4()}",
-            owner=owner,
-            bound_request_id=request_id,
+            claim_id=f"type1-{uuid.uuid4()}",owner=owner,bound_request_id=request_id,
         )
         collision="CLEAR"
 
@@ -175,6 +293,11 @@ def identity_lookup(
                 key=lambda x:(x.era_id,x.feature_id,x.feature_version,x.definition_hash,x.graph_hash,x.instrument or "",x.timeframe or ""),
             )
         ],
+        "subject_mode":subject_mode,
+        "content_key_composite":content_key.composite if content_key else "",
+        "content_subkeys":list(content_key.subkeys()) if content_key else [],
+        "scope_status":[list(x) for x in scope_status],
+        "claim_id":claim_record.claim_id if claim_record else "",
         "outcome":outcome.value,
         "lookup_complete":lookup_complete,
         "errors":errors,
@@ -203,5 +326,10 @@ def identity_lookup(
         verdict_ts=now.isoformat(),
         lookup_era_scope=lookup_era_scope,
         active_era_id=active_era_id,
+        subject_mode=subject_mode,
+        content_key_composite=content_key.composite if content_key else "",
+        content_key_algorithm_id=CONTENT_KEY_ALGORITHM_ID if content_key else "",
+        semantic_uniqueness="UNRESOLVED_NOT_CERTIFIED",
+        scope_status=tuple(scope_status),
         errors=tuple(errors),
     )

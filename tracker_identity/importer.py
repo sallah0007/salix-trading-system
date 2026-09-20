@@ -3,11 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterable, Tuple
 
 from .models import FeatureIdentity, NormalizerSpec, SearchPolicy
 from .catalogue import FeatureDefinitionCatalogue
+from .content_identity import CONTENT_KEY_ALGORITHM_ID
 from .stale_sweep import StaleSweepResult, stale_state_sweep
 from .store import CanonicalIdentityStore
 
@@ -252,11 +253,28 @@ def import_identity_content(
                 f"IMPORT_SOURCE_ROW_COUNT_MISMATCH:{ref.source_id}:expected={ref.importable_identity_rows},actual={actual}"
             )
 
+    derived_keys={}
     for row in incoming:
         definition=catalogue.find(row.feature_id,row.feature_version)
         if definition is None:
             errors.append("ROW_DEFINITION_NOT_IN_CATALOGUE:"+row.feature_id+":"+row.feature_version)
         else:
+            # ONE derivation, shared with safe intake, lookup and stale sweep.
+            # A caller-supplied content key on an incoming row is never trusted:
+            # it is recomputed from the authoritative catalogue definition and
+            # any supplied value that disagrees is a defect, not an override.
+            key,key_errors=definition.content_identity_key()
+            if key_errors:
+                # Participating rows (those PRE_ID must search) MUST have a
+                # reconstructable key. Validation-scope rows are excluded from
+                # ordinary lookup, so they are not participating.
+                if row.scope!="validation":
+                    errors.append("ROW_CONTENT_KEY_UNRESOLVABLE:"+row.feature_id+":"
+                                  +",".join(key_errors))
+            else:
+                derived_keys[(row.feature_id,row.feature_version)]=key
+                if row.content_key_composite and row.content_key_composite!=key.composite:
+                    errors.append("ROW_SUPPLIED_CONTENT_KEY_REJECTED:"+row.feature_id)
             if row.definition_hash != definition.definition_hash:
                 errors.append("ROW_DEFINITION_HASH_MISMATCH:"+row.feature_id)
             if row.graph_hash != definition.graph_hash:
@@ -301,6 +319,24 @@ def import_identity_content(
             errors=tuple(errors),
         )
 
+    def _with_content_key(row):
+        key=derived_keys.get((row.feature_id,row.feature_version))
+        if key is None:
+            return row
+        return replace(
+            row,
+            content_key_composite=key.composite,
+            content_key_definition=key.definition_semantics,
+            content_key_causal_time=key.causal_time,
+            content_key_provenance=key.provenance_source,
+            content_key_scope=key.scope_eligibility,
+            content_key_fitted=key.fitted_learned_state,
+            content_key_algorithm_id=CONTENT_KEY_ALGORITHM_ID,
+            definition_record_ref=f"{row.era_id}:{row.feature_id}:{row.feature_version}",
+        )
+
+    incoming = tuple(_with_content_key(r) for r in incoming)
+
     staged = CanonicalIdentityStore(
         list(target_store.all()) + list(incoming),
         registry_id=target_store.registry_id,
@@ -310,6 +346,7 @@ def import_identity_content(
         store=staged,
         search_policy=search_policy,
         normalizer=normalizer,
+        catalogue=catalogue,
     )
 
     if not sweep.clean:

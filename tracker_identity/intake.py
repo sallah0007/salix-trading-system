@@ -32,6 +32,17 @@ class BuiltIdentityCandidate:
     created_by: Optional[str] = None
     authority_ref: Optional[str] = None
     creation_evidence_ref: Optional[str] = None
+    declared_normalization: Optional[str] = None
+    causal_time_semantics: Optional[str] = None
+    completion_semantics: Optional[str] = None
+    availability_class: Optional[str] = None
+    price_basis: Optional[str] = None
+    data_vintage_mode: Optional[str] = None
+    scope_universe: Optional[str] = None
+    parameters: Optional[dict] = None
+    fitted_state: Optional[object] = None
+    proxy_status: Optional[str] = None
+    claim_request_id: Optional[str] = None
 
 @dataclass(frozen=True)
 class SafeIntakeResult:
@@ -96,11 +107,32 @@ def safe_intake_built_identity(
         timeframe=candidate.timeframe,
         authority="SAFE_INTAKE_BUILD_OUTPUT",
         purpose="TRACKER_SAFE_INTAKE",
+        declared_normalization=candidate.declared_normalization,
+        causal_time_semantics=candidate.causal_time_semantics,
+        completion_semantics=candidate.completion_semantics,
+        availability_class=candidate.availability_class,
+        source_provider=candidate.source_provider,
+        price_basis=candidate.price_basis,
+        data_vintage_mode=candidate.data_vintage_mode,
+        scope_universe=candidate.scope_universe,
+        parameters=candidate.parameters,
+        fitted_state=candidate.fitted_state,
+        proxy_status=candidate.proxy_status,
     )
     definition_errors=definition.completeness_errors()
     if definition_errors:
         sweep=stale_state_sweep(store=target_store,search_policy=search_policy,normalizer=normalizer)
         return SafeIntakeResult(False,era_boundary.era_id,None,None,sweep,definition_errors)
+
+    # One derivation, shared with lookup: the key is recomputed from the
+    # definition record's declared content, never copied in from a caller.
+    content_key,content_key_errors=definition.content_identity_key()
+
+    # A claim presented without a derivable content key cannot be validated.
+    if candidate.claim_request_id is not None and content_key is None:
+        sweep=stale_state_sweep(store=target_store,search_policy=search_policy,normalizer=normalizer)
+        return SafeIntakeResult(False,era_boundary.era_id,None,None,sweep,
+            ("CLAIM_PRESENTED_WITHOUT_CONTENT_KEY",)+tuple(content_key_errors))
 
     identity=FeatureIdentity(
         feature_id=candidate.feature_id,
@@ -118,6 +150,15 @@ def safe_intake_built_identity(
         timeframe=candidate.timeframe,
         source_provider=candidate.source_provider,
         lineage_ref=candidate.lineage_ref,
+        proxy_status=candidate.proxy_status,
+        definition_record_ref=f"{era_boundary.era_id}:{candidate.feature_id}:{candidate.feature_version}",
+        content_key_composite=content_key.composite if content_key else None,
+        content_key_definition=content_key.definition_semantics if content_key else None,
+        content_key_causal_time=content_key.causal_time if content_key else None,
+        content_key_provenance=content_key.provenance_source if content_key else None,
+        content_key_scope=content_key.scope_eligibility if content_key else None,
+        content_key_fitted=content_key.fitted_learned_state if content_key else None,
+        content_key_algorithm_id=(content_key.algorithm_id if content_key else None),
     )
     creation=CreationProvenanceRecord(
         creation_record_id=f"creation:{era_boundary.era_id}:{candidate.feature_id}:{candidate.feature_version}",
@@ -144,11 +185,18 @@ def safe_intake_built_identity(
     if not sweep.clean:
         return SafeIntakeResult(False,era_boundary.era_id,None,None,sweep,("STALE_STATE_SWEEP_FAILED",))
 
-    # Birth event is one governed mutation: identity and creation provenance are
-    # appended together. No synthetic NULL->CURRENT transition is invented.
-    with target_store._transition_lock:
-        target_store.records.append(identity)
-        target_store.creation_records.append(creation)
+    # Birth event is ONE governed atomic transaction: claim re-check, identity
+    # re-check, identity append, creation append and claim consumption happen
+    # together under a fixed lock order. Nothing may interleave between them.
+    committed,commit_error=target_store.commit_registration(
+        identity=identity,
+        creation=creation,
+        content_key_composite=(content_key.composite if content_key else None),
+        request_id=candidate.claim_request_id,
+    )
+    if not committed:
+        return SafeIntakeResult(False,era_boundary.era_id,None,None,sweep,
+            ("REGISTRATION_REFUSED:"+str(commit_error),))
     return SafeIntakeResult(True,era_boundary.era_id,identity,definition,sweep,())
 
 def composer_boundary_outcome(outcome: LookupOutcome) -> LookupOutcome:
@@ -157,6 +205,7 @@ def composer_boundary_outcome(outcome: LookupOutcome) -> LookupOutcome:
     Composer has no era concept. Therefore an ERA_1-scoped absence cannot be
     represented as global ABSENT at that boundary.
     """
-    if outcome == LookupOutcome.ABSENT_IN_ERA_1:
+    if outcome in (LookupOutcome.ABSENT_IN_ERA_1,
+                   LookupOutcome.ABSENT_EXACT_STRUCTURAL_IN_ERA_1):
         return LookupOutcome.INCOMPLETE_LOOKUP
     return outcome

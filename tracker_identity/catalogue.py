@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Any, Mapping, Optional, Tuple
+
+from .content_identity import UNFITTED_TOKEN, build_content_identity_key
 
 def _hash(payload) -> str:
     raw=json.dumps(payload,sort_keys=True,separators=(",",":"),ensure_ascii=True)
@@ -23,6 +25,46 @@ class FeatureDefinitionRecord:
     timeframe: Optional[str] = None
     authority: str = ""
     purpose: str = ""
+    declared_normalization: Optional[str] = None
+    causal_time_semantics: Optional[str] = None
+    completion_semantics: Optional[str] = None
+    availability_class: Optional[str] = None
+    source_provider: Optional[str] = None
+    price_basis: Optional[str] = None
+    data_vintage_mode: Optional[str] = None
+    scope_universe: Optional[str] = None
+    parameters: Optional[Mapping[str, Any]] = None
+    fitted_state: Optional[Any] = None
+    proxy_status: Optional[str] = None
+
+    def declared_content(self) -> dict:
+        """Governed content with NO identity and NO process provenance.
+
+        Dimensions never declared on the record are OMITTED, so an
+        under-populated legacy record yields completeness errors rather than
+        a silently partial key.
+        """
+        declared = {
+            "normalized_definition_graph": self.formula,
+            "dependency_closure": tuple(self.dependencies),
+            "parameters": dict(self.parameters) if self.parameters is not None else None,
+            "declared_normalization": self.declared_normalization,
+            "causal_time_semantics": self.causal_time_semantics,
+            "completion_semantics": self.completion_semantics,
+            "availability_class": self.availability_class,
+            "source_provider": self.source_provider,
+            "price_basis": self.price_basis,
+            "data_vintage_mode": self.data_vintage_mode,
+            "instrument": self.instrument,
+            "timeframe": self.timeframe,
+            "scope_universe": self.scope_universe,
+            "fitted_state": self.fitted_state,
+        }
+        return {k: v for k, v in declared.items() if v is not None}
+
+    def content_identity_key(self):
+        """(ContentIdentityKey | None, errors) — recomputed, never stored-only."""
+        return build_content_identity_key(self.declared_content())
 
     def computed_definition_hash(self) -> str:
         return _hash({
