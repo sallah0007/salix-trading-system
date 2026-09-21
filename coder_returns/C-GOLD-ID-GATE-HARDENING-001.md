@@ -1833,3 +1833,334 @@ DESKTOP_CODER TEST PASS != MANAGER ACCEPTANCE
 REVIEW_CODER FINDING != MANAGER DECISION
 NO_STEP_AUTO_AUTHORIZES_THE_NEXT = TRUE
 DO NOT MERGE.
+
+
+---
+
+# DC-TYPE1-CROSS-INSTRUMENT-CONSTRUCTION-GATE-006R — DESKTOP CODER RETURN
+
+**Documents opened and read in full**
+
+| Document | Drive ID |
+|---|---|
+| Commission | 1WOsB4qu7_3G0lrPbY4gKkIYAClkoCaerdfT_AexKNYI |
+| CR015 | 1TsTnoo9ur7aUFcIDhv2MTNJgqWjesMd52N-l_d5XQEg |
+| Owner Era-1 activation | 13ltUNSo7rXLoNGfrCDO35XghyRzJ-2_Z__0z0skPnco |
+
+The Owner Era-1 activation was re-opened to decide whether production package registration is possible.
+
+**Base check**
+
+- BASE = d9350ee76aac00e7ba88a2681dec0eaa797fd81d.
+- Immediately before commit, after `git fetch`, HEAD and origin/type1/cross-instrument-construction-gate were both at d9350ee.
+- The base is not stale.
+
+## CORRECTION E — CLAIM NARROWING (read first)
+
+- DC-006 V2 fixed only the DIRECT bound-instrument field.
+- It did NOT close instrument leakage through the other identity-bearing fields. DC-006 already qualified its own `INSTRUMENT_BINDING_SPLITS_CANONICAL_IDENTITY_BY_DEFAULT = NO`. Read that claim as "direct field only".
+- This correction addresses the alternate paths in the ways described below. It does not claim generic same-process security.
+- Type-1 in-process authority is integrity-against-accident only.
+- Closure reflection, gc, ctypes and code replacement remain DECLARED OUT OF BOUNDARY.
+
+**Withdrawn:** the DC-006 finding "F-6 equivalent / cannot be caught" was wrong.
+
+- Permitted test instrumentation (mock) reaches that guard.
+- Reaching it exposed a latent defect in my own DC-006 code. When the commit-stage staged guard fired, `commit_import` returned the planner's SUCCESS result (`imported_row_count=1`, `errors=()`) while writing nothing. It now reports `STORE_IS_STAGING_COPY` with 0 rows.
+
+## A — INSTRUMENT-AGNOSTIC IDENTITY LEAKAGE (content_identity.py)
+
+**Mechanism**
+
+| Concept | Carried by | Status |
+|---|---|---|
+| SEMANTIC_APPLICABILITY_SCOPE | the existing `scope_universe` dimension (name kept for catalogue compatibility) | identity content |
+| BOUND_UNIVERSE | the optional `bound_universe` dimension | binding / lineage only; never part of any subkey |
+
+**Leakage guard**
+
+- For INSTRUMENT_AGNOSTIC definitions, every identity-bearing field is scanned by `instrument_token_leaks()`: graph, dependency closure, parameters (keys and values), normalization, causal time, completion, availability, source, price basis, vintage, timeframe and scope.
+- Any leaked token produces `INSTRUMENT_TOKEN_LEAKAGE_REVIEW_REQUIRED:<field>:<token>`.
+- The result is no key, an INCOMPLETE lookup and no claim.
+- Nothing is stripped or rewritten.
+- The guard detects:
+  - the payload's own bound instrument, anywhere in the field;
+  - currency/metal pair symbols: a 6-letter token, the 6-letter prefix of a longer token such as XAUUSDm, or two adjacent code tokens such as XAU/USD;
+  - metal codes;
+  - metal names.
+- Fitted state is exempt from the scan. It is always instrument-qualified (DC-006).
+
+**Time and dependencies**
+
+- Server/feed time semantics are shared when the declared feed clock is identical, e.g. "SALIX-BROKER-SERVER-UTC-TRANSITION-V1".
+- A different feed clock splits.
+- Role references ("BOUND_ROLE:close") do not split across bindings.
+
+**Tests: `AgnosticLeakage006R`**
+
+| Test | What it proves |
+|---|---|
+| L1 | XAUUSD and EURUSD with equivalent semantics give the same composite key |
+| L2 | a bound_universe difference alone does not split, and bound_universe is never hashed |
+| L2b | the semantic applicability scope still splits |
+| L3 | the same feed clock shares identity; a different feed splits |
+| L4 | role dependencies share identity |
+| L5 | INSTRUMENT_SPECIFIC with instrument-named scope, time and dependencies still splits, with no error |
+| L6 | 12 leaky agnostic declarations across scope, time, dependencies, graph, parameters and source fail REVIEW_REQUIRED; an unknown symbology is caught through the bound instrument; a suffixed pair of a different instrument is caught |
+| L6b | a leak is refused, not stripped |
+| L6c | an end-to-end leaky lookup is INCOMPLETE and issues no claim |
+| L7 | the neutral vocabulary produces no false positives |
+| L8 | the ANY scope rules hold |
+
+## B — CANONICAL ROW REPRESENTATION
+
+**Rules**
+
+- The `AGNOSTIC_INSTRUMENT_SCOPE = "ANY"` is the canonical-row instrument scope of an INSTRUMENT_AGNOSTIC, UNFITTED definition.
+- `FeatureDefinitionRecord.completeness_errors` refuses an agnostic unfitted row stamped with a concrete instrument: `AGNOSTIC_DEFINITION_ROW_INSTRUMENT_MUST_BE_ANY`. It is refused, not rewritten.
+- A fitted agnostic row keeps its concrete instrument, because learned state is instrument-qualified.
+- The content key refuses ANY in two cases:
+  - with INSTRUMENT_SPECIFIC applicability (`INSTRUMENT_SCOPE_ANY_REQUIRES_AGNOSTIC_APPLICABILITY`);
+  - with fitted state (`FITTED_STATE_REQUIRES_CONCRETE_INSTRUMENT`).
+- A PRE_ID construction request must be bound to a concrete instrument (`PRE_ID_BOUND_INSTRUMENT_MUST_BE_CONCRETE`).
+- The exact binding stays in `ClaimProvenance.bound_instrument` and `IdentityLookupResult.bound_instrument`.
+- `search._canonical_matches`: an ANY row matches a canonical-ID subject bound to any CONCRETE instrument with identical feature id, version, definition hash, graph hash and timeframe.
+- The subject's binding is reported, never written onto the row.
+
+**Tests: `CanonicalAgnosticRow006R`**
+
+| Test | What it proves |
+|---|---|
+| R1 | when an XAUUSD-bound request registers first, the row is ANY and the claim lineage says XAUUSD |
+| R2 | an agnostic candidate stamped XAUUSD is refused, and nothing is written |
+| R3 | a later EURUSD PRE_ID request is EXACT on the same row: bound=EURUSD, no claim, no new identity |
+| R4 | a later canonical-ID request (EURUSD and XAUUSD, with and without content) is EXACT on the same row. Controls: a different timeframe, an unbound subject, and a concrete XAUUSD row with an EURUSD subject do not match. |
+| R4b | pinned residual (see R-4) |
+| R5 | a PRE_ID request bound to ANY is refused |
+| R6 | a fitted agnostic row stays concrete |
+
+- R1 to R4 register through the construction path only with `_governed_construction_authority` mocked. That is code replacement; the production path is unchanged.
+
+## C — APPROVED_IMPORT_PACKAGE_REGISTRY
+
+This is the new file `tracker_identity/import_package_registry.py`.
+
+**Entry and package identity**
+
+- Each entry pins:
+  - era-boundary hash;
+  - source-universe hash;
+  - import-manifest hash;
+  - catalogue hash;
+  - a governed `approval_ref`.
+- All four hashes are validated as 64-character lowercase hex.
+- Bare role or status words are refused as approval references: OWNER, MANAGER, APPROVED, YES, TRUE, ADMIN, SALIX_MANAGER, SALIX_OWNER, GOVERNED, AUTHORIZED.
+- The package identity is always the COMPUTED hashes, never the declared hash fields.
+  - `FeatureDefinitionCatalogue.computed_hash()` is new.
+  - It hashes every field of every definition, type-tagged and ordered.
+
+**Immutability and checks**
+
+- The registry is a MappingProxyType over a FUNCTION-LOCAL dict. There is no module-level backing container, and `_ENTRIES` is a tuple.
+- Malformed, duplicate or wrong-type entries refuse to load.
+- At use, the resolver re-checks entry type, integrity and key.
+- `_plan_identity_import` requires approval. The store-owned import commit re-runs the plan, so the direct store path is gated too.
+- No admin or bypass path was added.
+- Tests register fixture packages only by `mock.patch` of the registry attribute, which is code replacement.
+
+**Production state: EMPTY**
+
+The Owner Era-1 activation pins only these things:
+
+- the Era-1 freeze;
+- PR4 at d4946d2 and PR5 at d562342;
+- the Era model.
+
+It pins no import-manifest hash, no catalogue hash and no package approval. No entry was invented. Every production import refuses, including the checked-in Era-1 package (test `test_era1_package_is_not_production_approved`).
+
+**Tests**
+
+- `ApprovedImportPackageRegistry006R` C1 to C7:
+  - production empty and closed;
+  - runtime immutable, with no module dict;
+  - an approved package imports, but any single-field catalogue or manifest change refuses;
+  - approval role words are refused;
+  - malformed entries are refused;
+  - integrity is revalidated at use;
+  - copied declared hash strings are not identity.
+- `test_self_consistent_fake_package_cannot_write`: this inverts the DC-006 residual pin.
+- Existing import tests now wrap each import in `approve_package(...)` for exactly the package imported. The negative import tests still prove their own checks: the direct-commit test asserts that `IMPORT_PACKAGE_NOT_APPROVED` is NOT the reason it refused.
+
+## D — F6
+
+- `CommitStageStagedGuardF6006R.test_F6`: the planner's staged check is bypassed with a mock of `importer._is_staged`. The test asserts the plan really succeeds. The commit-stage guard then refuses, reports `STORE_IS_STAGING_COPY` with 0 rows, and writes nothing.
+- `test_F6b`: the converse. It proves the planner's check refuses on its own.
+
+## F — PRESERVED
+
+- **D10–D13 and A15:** still killed (mutants re-run below).
+- **Construction authority:** `_governed_construction_authority` still returns False, and no literal grant exists.
+- **Write bypasses:** add, extend and records mutation remain absent.
+- **Reserved-reason fold (M-2):** intact.
+- **Same-process introspection:** remains declared out of boundary.
+
+## RESIDUALS
+
+**R-1 — MEDIUM — the leakage guard is lexical**
+
+- **Location:** content_identity.py, `instrument_token_leaks` and `LEAKAGE_CHECKED_DIMENSIONS`.
+- **Failure scenario:** an agnostic definition bound to XAUUSD whose time semantics name an alias ("CABLE-SESSION") or an index symbol ("US30"). The token is not a currency/metal pair, not a metal and not the bound instrument, so it passes. The instrument token then enters identity and SPLITS it per instrument.
+  - The failure direction is over-split (fragmentation), not a cross-instrument merge.
+  - Numeric semantics tuned to one instrument (e.g. a pip size) are undetectable by any lexical scan.
+- **Blocks merge:** NO. The detectable cases fail closed, and the undetected failure over-splits rather than merging.
+- **Smallest safe correction:** a Tracker-owned governed instrument-symbology registry (symbols and aliases) replacing the built-in vocabulary.
+- **Frozen authority reopen:** NO.
+
+**R-2 — MEDIUM — ANY rows do not check applicability-scope membership**
+
+- **Location:** search.py, `_canonical_matches`.
+- **Failure scenario:** a definition whose semantic scope is FX_METALS resolves EXACT for a request bound to GER40. No governed instrument-to-universe membership map exists to check against.
+  - No identity is created: construction authority is absent, and CROSS-INSTRUMENT IDENTITY CREATION stays fenced.
+  - However, a consumer could reuse a definition outside its declared semantic scope.
+- **Blocks merge:** NO for this branch. It must be resolved before any cross-instrument USE of a shared identity.
+- **Smallest safe correction:** a governed universe-membership registry, checked in `_canonical_matches` and in PRE_ID lookup.
+- **Frozen authority reopen:** NO.
+- → CANONICAL_AGNOSTIC_ROW_INSTRUMENT_REPRESENTATION_SOUND = QUALIFIED.
+
+**R-3 — LOW — shared feed is proven only by declaration**
+
+- **Location:** causal_time_semantics and source_provider.
+- **Failure scenario:** "same server/feed is proven" rests on equality of the declared clock string and provider. Two feeds that are actually different but declared with the same string would share identity.
+- **Blocks merge:** NO.
+- **Smallest safe correction:** a governed feed/clock registry.
+- **Frozen authority reopen:** NO.
+
+**R-4 — LOW — BOUND_ROLE references are not a governed dependency form**
+
+- **Location:** stale_sweep dangling-dependency check; pinned by test R4b.
+- **Failure scenario:** role references share identity at the key level (L4). Registration of such a definition, however, fails closed: STALE_STATE_SWEEP_FAILED with DANGLING_DEPENDENCY.
+- **Why not fixed:** no role-resolution semantics were invented.
+- **Blocks merge:** NO.
+- **Smallest safe correction:** Manager defines role-reference resolution, and the sweep resolves roles against the binding.
+- **Frozen authority reopen:** NO.
+
+**R-5 — LOW — the catalogue hash algorithm is unversioned**
+
+- **Location:** catalogue.py, `FeatureDefinitionCatalogue.computed_hash`.
+- **Failure scenario:** a later change to the hashing would silently un-approve every registered package.
+- **Blocks merge:** NO. The registry is empty.
+- **Smallest safe correction:** add a catalogue-hash algorithm id to the entry.
+- **Frozen authority reopen:** NO.
+
+**Carried forward (not new)**
+
+- CR015 M-2: public creation/transition history lists.
+- Registry and module rebinding by code replacement. This is the same class as the policy and normalizer registries and is declared out of boundary.
+
+## EVIDENCE
+
+DERIVATION_CLASS = INDEPENDENTLY_DERIVED. EXACT_INPUTS = the IMPLEMENTATION_SHA tree on Python 3.12.10. REPRODUCIBLE_BY_MANAGER = YES.
+
+**Targeted tests**
+
+| Suite | Result |
+|---|---|
+| tests.test_identity_surface | Ran 181, OK |
+| tests.test_pre_id_content_identity | Ran 59, OK |
+| tests.test_registration_atomicity | Ran 11, OK |
+| tests.test_import_content_key | Ran 13, OK |
+| tests.test_identity_import | Ran 25, OK |
+
+**Full suite:** `python -m unittest discover -s tests` ran 332 tests, OK. The DC-006 total was 304.
+
+**Mutation**
+
+- Method: scratchpad driver `mutate006r.py`, the DC-006 driver extended. For each mutant it applies one exact-anchor replacement, runs the full suite, restores the file, and re-checks that the baseline is green afterwards.
+- First pass, 79 mutants: 75 killed, 4 surviving.
+
+| First-pass survivor | Resolution |
+|---|---|
+| IMP_plan_staged_check_removed | killed by F6b |
+| LK_prefix_pair_off | killed by a suffixed pair of another instrument in L6 |
+| ROW_canon_any_match_off | killed by the content-free canonical-ID lookup in R4 |
+| ROW_near_uses_exact_key | proven equivalent: an ANY canonical match is always an exact hit, so the near list never decides the outcome. The code change was reverted rather than kept untested, and the mutant was removed. |
+
+- Final: 78 mutated, 78 killed, 0 survivors. The restored baseline was green.
+- Groups:
+
+| Group | Count | Mutants |
+|---|---|---|
+| Retained DC-006 | 48 | I-guards; D10, D11, D12, D12b, D13, Dx, A15; B authority; A14 controls; import discriminators; M-2 |
+| Leakage | 10 | guard off; scope, time and dependencies unchecked; bound rule; pair rule; metal rule; adjacent rule; prefix rule; bound_universe hashed |
+| ANY | 2 | specific rule; fitted rule |
+| Row | 5 | must-be-ANY; ANY match; ANY timeframe; ANY accepts unbound; PRE_ID concrete |
+| Registry | 11 | check removed; declared hashes; role word; hex format; duplicate; build type; use type; use integrity; use key; mutable registry; partial catalogue hash |
+| F6 | 2 | commit guard off; refusal misreported |
+
+## RETURN
+
+Commit and branch:
+
+- BASE_FOR_CORRECTION = d9350ee76aac00e7ba88a2681dec0eaa797fd81d
+- IMPLEMENTATION_SHA = 4bdee299d259764c57d57bfe4ff060d9cdf61f2e
+- REPORT_SHA = (the commit adding this section; stated in the relay message)
+- PUSH_SUCCEEDED = (stated in the relay message)
+- PR_CREATED = NO
+- MERGED = NO
+
+Corrections:
+
+- AGNOSTIC_BOUND_UNIVERSE_SPLITS_IDENTITY = NO
+- AGNOSTIC_INSTRUMENT_TOKEN_LEAKAGE_FAILS_CLOSED = YES (for the detectable token classes; R-1)
+- CANONICAL_AGNOSTIC_ROW_INSTRUMENT_REPRESENTATION_SOUND = QUALIFIED (R-2)
+- APPROVED_IMPORT_PACKAGE_REGISTRY_IMPLEMENTED = YES
+- FAKE_SELF_CONSISTENT_IMPORT_CAN_WRITE = NO
+- IMPORT_PRODUCTION_PACKAGE_REGISTRATION_BLOCKED = YES
+- F6_KILLED = YES
+- D10_KILLED = YES
+- D11_KILLED = YES
+- D12_KILLED = YES
+- D13_KILLED = YES
+- A15_KILLED = YES
+- CONSTRUCTION_AUTHORIZED_PATH_EXISTS = NO
+- SAME_PROCESS_INTROSPECTION_RESIDUAL = DECLARED_OUT_OF_BOUNDARY
+
+Results:
+
+- TARGETED_TEST_RESULTS = surface 181 OK; pre_id 59 OK; atomicity 11 OK; import_content_key 13 OK; identity_import 25 OK
+- FULL_TEST_RESULT = Ran 332, OK
+- MUTATION_RESULT = 78 mutated, 78 killed, 0 surviving
+
+New findings:
+
+- NEW_CRITICAL_COUNT = 0
+- NEW_HIGH_COUNT = 0
+- NEW_MEDIUM_COUNT = 2 (R-1, R-2)
+- NEW_LOW_COUNT = 3 (R-3, R-4, R-5)
+
+TECHNICALLY_READY_FOR_MANAGER_RECONCILIATION = YES
+
+**Scope**
+
+| File | Change |
+|---|---|
+| tracker_identity/content_identity.py | edited |
+| tracker_identity/catalogue.py | edited |
+| tracker_identity/search.py | edited |
+| tracker_identity/importer.py | edited |
+| tracker_identity/store.py | F6 only |
+| tracker_identity/__init__.py | exports |
+| tracker_identity/import_package_registry.py | new |
+| tests/test_identity_surface.py | tests |
+| tests/test_identity_import.py | tests |
+| tests/test_import_content_key.py | tests |
+| tests/test_era1_boundary.py | tests |
+
+The following were not touched: population/**, .github/**, FW, ML, the Composer document and CLAUDE.md.
+
+Nothing was created: no FEATURE_ID, FEATURE_VERSION, Tracker registry row, cross-instrument identity, EURUSD fit, FW execution, holdout exposure, ML training, Type-2 or production artifact. Drive was read only.
+
+DESKTOP_CODER TEST PASS != MANAGER ACCEPTANCE
+REVIEW_CODER FINDING != MANAGER DECISION
+NO_STEP_AUTO_AUTHORIZES_THE_NEXT = TRUE
+DO NOT MERGE.
