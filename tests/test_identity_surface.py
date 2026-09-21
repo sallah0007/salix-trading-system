@@ -442,6 +442,16 @@ def governed_claim(store,request_id,content_overrides=None):
     assert result.absent_claim_token is not None,result.errors
     return result
 
+def governed_lookup_raw(store,request_id,content_overrides=None):
+    """Like governed_claim, but returns the result even when no claim issues."""
+    for sc in MANDATORY_DUPLICATE_CONTROL_SCOPES:
+        store.declare_scope(sc,"EMPTY_VERIFIED")
+    content=dict(GATE_CONTENT)
+    if content_overrides: content.update(content_overrides)
+    return identity_lookup(store=store,subject=pre_id_subject(content=content),
+                           request_id=request_id,
+                           search_policy=governed_search_policy(),normalizer=normalizer())
+
 def pre_id_subject(**overrides):
     content=dict(GATE_CONTENT); content.update(overrides.pop("content",{}))
     s={
@@ -832,7 +842,7 @@ class ManagerReAttackC1R(unittest.TestCase):
         result=governed_claim(store,"REQ-P6")
         self.assertEqual(result.outcome,LookupOutcome.ABSENT_EXACT_STRUCTURAL_IN_ERA_1)
         claim=store.claims[0]
-        self.assertIn(claim.claim_id,store._issued_claim_ids)
+        self.assertEqual(store.claim_authenticity(claim),(True,None))
         prov=claim.provenance
         self.assertIsNotNone(prov)
         self.assertTrue(prov.lookup_complete)
@@ -1051,6 +1061,379 @@ class ManagerReAttackC1R(unittest.TestCase):
         self.assertFalse(AbsentClaimToken("c","o","r").authorizes_construction)
         self.assertFalse(ClaimProvenance(
             "r","k","o",True,"a","b","c","d","e","f","g").authorizes_construction)
+
+class IssuanceAuthenticityCR1CR2(unittest.TestCase):
+    """DC-ISSUANCE-AUTHENTICITY-BINDING-003 — mandatory controls 1-14.
+
+    CR-1: issuance was proved by membership in `store._issued_claim_ids`, an
+    ordinary set — adding a fabricated id made a synthetic claim "issued".
+    CR-2: a genuinely issued claim could have its provenance replaced in the
+    public `claims` list; its id stayed "issued" while authorizes_construction
+    became caller-selected. Both reproduced as full canonical row writes.
+
+    Authenticity is now equality with an exact snapshot held by a closure-owned
+    per-store ledger that no caller-reachable container can reach.
+    """
+
+    def _genuine(self,store=None,request_id="REQ-GEN"):
+        store=store or CanonicalIdentityStore()
+        governed_claim(store,request_id)
+        return store,store.claims[0]
+
+    def _commit(self,store,request_id,key=None):
+        key=key or gate_key()
+        return store.commit_registration(
+            identity=keyed_row(key),creation=object(),
+            content_key_composite=key.composite,request_id=request_id)
+
+    def _forged_provenance(self,request_id,authorizes=False):
+        from tracker_identity import ClaimProvenance
+        gov=governed_search_policy(); n=governed_normalizer()
+        return ClaimProvenance(
+            request_id=request_id,content_key_composite=gate_key().composite,
+            lookup_outcome=LookupOutcome.ABSENT_EXACT_STRUCTURAL_IN_ERA_1.value,
+            lookup_complete=True,search_policy_id=gov.policy_id,
+            search_policy_version=gov.version,search_policy_hash=gov.policy_hash,
+            normalizer_id=n.normalizer_id,normalizer_version=n.version,
+            normalizer_hash=n.normalizer_hash,
+            semantic_uniqueness="UNRESOLVED_NOT_CERTIFIED",
+            authorizes_construction=authorizes,
+            lookup_result_id="forged-result",issuance_evidence_hash="f"*64)
+
+    # 1 -----------------------------------------------------------------
+    def test_C01_synthetic_provenance_and_record_cannot_register(self):
+        store=CanonicalIdentityStore()
+        fake=ClaimRecord("claim-SYN",gate_key().composite,"REQ-SYN","TRACKER",
+                         "2026-01-01T00:00:00+00:00","2099-01-01T00:00:00+00:00",
+                         "ACTIVE",None,self._forged_provenance("REQ-SYN",True))
+        store.claims.append(fake)
+        ok,error=self._commit(store,"REQ-SYN")
+        self.assertFalse(ok)
+        self.assertEqual(error,"CLAIM_NOT_ISSUED_BY_THIS_STORE")
+        self.assertEqual(store.all(),())
+
+    # 2 -----------------------------------------------------------------
+    def test_C02_synthetic_claim_plus_every_caller_mutable_container(self):
+        """CR-1 exactly: plant the synthetic claim AND add its id to every
+        set/dict/list reachable on the store. None of them is issuance proof."""
+        store=CanonicalIdentityStore()
+        fake=ClaimRecord("claim-SYN2",gate_key().composite,"REQ-S2","TRACKER",
+                         "2026-01-01T00:00:00+00:00","2099-01-01T00:00:00+00:00",
+                         "ACTIVE",None,self._forged_provenance("REQ-S2",True))
+        store.claims.append(fake)
+        for value in list(vars(store).values()):
+            if isinstance(value,set):
+                value.add("claim-SYN2")
+            elif isinstance(value,dict):
+                value["claim-SYN2"]="ISSUED"
+        # The removed set must stay removed: its presence would be a regression.
+        self.assertFalse(hasattr(store,"_issued_claim_ids"))
+        ok,error=self._commit(store,"REQ-S2")
+        self.assertFalse(ok)
+        self.assertEqual(error,"CLAIM_NOT_ISSUED_BY_THIS_STORE")
+        self.assertEqual(store.all(),())
+
+    # 3 -----------------------------------------------------------------
+    def test_C03_genuine_claim_with_provenance_replaced_cannot_register(self):
+        """CR-2 exactly. The claim id stays genuinely issued; the authority
+        bit is caller-selected. It must not register."""
+        from dataclasses import replace
+        store,genuine=self._genuine()
+        tampered=replace(genuine,provenance=replace(
+            genuine.provenance,authorizes_construction=True))
+        store.claims[0]=tampered
+        self.assertEqual(store.claim_authenticity(tampered),
+                         (False,"CLAIM_CONTENT_ALTERED_SINCE_ISSUANCE"))
+        ok,error=self._commit(store,"REQ-GEN")
+        self.assertFalse(ok)
+        self.assertEqual(error,"CLAIM_CONTENT_ALTERED_SINCE_ISSUANCE")
+        self.assertEqual(store.all(),())
+
+    # 4 -----------------------------------------------------------------
+    def test_C04_every_bound_field_is_covered_by_authenticity(self):
+        from dataclasses import replace
+        other=gate_key(price_basis="ASK").composite
+        record_edits={
+            "request_id":{"request_id":"REQ-OTHER"},
+            "content_key":{"content_key_composite":other},
+            "issuer":{"issuer":"ATTACKER"},
+            "issued_ts":{"issued_ts":"2000-01-01T00:00:00+00:00"},
+            "expires_ts":{"expires_ts":"2999-01-01T00:00:00+00:00"},
+            "lifecycle_state":{"state":"RELEASED"},
+            "release_reason":{"release_reason":"FORGED"},
+        }
+        provenance_edits={
+            "authority_bit":{"authorizes_construction":True},
+            "policy_binding":{"search_policy_hash":"0"*64},
+            "normalizer_binding":{"normalizer_hash":"0"*64},
+            "lookup_result_id":{"lookup_result_id":"forged-result"},
+            "evidence_binding":{"issuance_evidence_hash":"0"*64},
+            "provenance_request_id":{"request_id":"REQ-OTHER"},
+            "provenance_content_key":{"content_key_composite":other},
+            "semantic_uniqueness":{"semantic_uniqueness":"CERTIFIED_UNIQUE"},
+            "lookup_outcome":{"lookup_outcome":"EXACT_CANONICAL_IDENTITY"},
+            "lookup_complete":{"lookup_complete":False},
+        }
+        for name,edit in record_edits.items():
+            store,genuine=self._genuine()
+            ok,_=store.claim_authenticity(replace(genuine,**edit))
+            self.assertFalse(ok,name)
+        for name,edit in provenance_edits.items():
+            store,genuine=self._genuine()
+            forged=replace(genuine,provenance=replace(genuine.provenance,**edit))
+            ok,error=store.claim_authenticity(forged)
+            self.assertFalse(ok,name)
+            self.assertEqual(error,"CLAIM_CONTENT_ALTERED_SINCE_ISSUANCE",name)
+
+    def test_C04b_frozen_record_mutated_in_place_is_detected(self):
+        """object.__setattr__ bypasses a frozen dataclass. The ledger holds a
+        serialized snapshot, not a shared object reference, so the in-place
+        edit is still detected."""
+        store,genuine=self._genuine()
+        object.__setattr__(genuine.provenance,"authorizes_construction",True)
+        self.assertEqual(store.claim_authenticity(genuine),
+                         (False,"CLAIM_CONTENT_ALTERED_SINCE_ISSUANCE"))
+        ok,error=self._commit(store,"REQ-GEN")
+        self.assertFalse(ok)
+        self.assertEqual(store.all(),())
+
+    def test_C04c_subclassed_record_or_provenance_is_refused(self):
+        from dataclasses import replace
+        from tracker_identity import ClaimProvenance
+        class LookalikeRecord(ClaimRecord):
+            pass
+        class LookalikeProvenance(ClaimProvenance):
+            pass
+        store,genuine=self._genuine()
+        rec=LookalikeRecord(*[getattr(genuine,f) for f in genuine.__dataclass_fields__])
+        self.assertEqual(store.claim_authenticity(rec),
+                         (False,"CLAIM_RECORD_TYPE_NOT_AUTHENTIC"))
+        prov=LookalikeProvenance(*[getattr(genuine.provenance,f)
+                                   for f in genuine.provenance.__dataclass_fields__])
+        self.assertEqual(store.claim_authenticity(replace(genuine,provenance=prov)),
+                         (False,"CLAIM_PROVENANCE_TYPE_NOT_AUTHENTIC"))
+
+    # 5 -----------------------------------------------------------------
+    def test_C05_copies_gain_nothing_beyond_the_exact_issued_state(self):
+        """An exact copy/deepcopy/reconstruction IS the issued state and is
+        allowed by the design — and it gains no extra authority: it fails at
+        the construction gate like the original, and it is single-use through
+        the ledger, not through the object."""
+        import copy
+        store,genuine=self._genuine()
+        for clone in (copy.copy(genuine),copy.deepcopy(genuine),
+                      ClaimRecord(*[getattr(genuine,f)
+                                    for f in genuine.__dataclass_fields__])):
+            self.assertEqual(store.claim_authenticity(clone),(True,None))
+            self.assertFalse(clone.provenance.authorizes_construction)
+        store.claims.append(copy.deepcopy(genuine))
+        ok,error=self._commit(store,"REQ-GEN")
+        self.assertFalse(ok)
+        self.assertEqual(error,"CLAIM_NOT_CONSTRUCTION_AUTHORIZED")
+        self.assertEqual(store.all(),())
+
+    # 6 -----------------------------------------------------------------
+    def test_C06_store_A_claim_replay_into_store_B_fails(self):
+        store_a,genuine=self._genuine()
+        self.assertEqual(store_a.claim_authenticity(genuine),(True,None))
+        store_b=CanonicalIdentityStore()
+        self.assertEqual(store_b.claim_authenticity(genuine),
+                         (False,"CLAIM_NOT_ISSUED_BY_THIS_STORE"))
+        store_b.claims.append(genuine)
+        ok,error=self._commit(store_b,"REQ-GEN")
+        self.assertFalse(ok)
+        self.assertEqual(error,"CLAIM_NOT_ISSUED_BY_THIS_STORE")
+        self.assertEqual(store_b.all(),())
+
+    def test_C06b_copying_or_replacing_the_store_does_not_transfer_authority(self):
+        import copy
+        from dataclasses import replace
+        store_a,genuine=self._genuine()
+        for clone in (copy.copy(store_a),replace(store_a)):
+            self.assertIsNot(clone,store_a)
+            self.assertEqual(clone.claim_authenticity(genuine),
+                             (False,"CLAIM_NOT_ISSUED_BY_THIS_STORE"))
+
+    # 7 -----------------------------------------------------------------
+    def test_C07_expired_released_and_consumed_claims_stay_unusable(self):
+        # expired
+        store=CanonicalIdentityStore()
+        clock=_Clock(datetime.now(timezone.utc)); store._clock=clock
+        governed_claim(store,"REQ-E")
+        clock.advance(10_000)
+        ok,error=self._commit(store,"REQ-E")
+        self.assertFalse(ok)
+        self.assertEqual(error,"CLAIM_NOT_ACTIVE:EXPIRED")
+        # released
+        store,genuine=self._genuine(request_id="REQ-R")
+        self.assertTrue(store.release_claim(claim_id=genuine.claim_id,reason="DONE"))
+        ok,error=self._commit(store,"REQ-R")
+        self.assertFalse(ok)
+        self.assertEqual(error,"CLAIM_NOT_ACTIVE:RELEASED")
+        # mirror revived to ACTIVE by the caller: lifecycle tamper, still dead
+        from dataclasses import replace
+        store.claims[0]=replace(store.claims[0],state="ACTIVE",release_reason=None)
+        ok,error=self._commit(store,"REQ-R")
+        self.assertFalse(ok)
+        self.assertEqual(error,"CLAIM_LIFECYCLE_ALTERED_SINCE_ISSUANCE")
+        self.assertEqual(store.all(),())
+
+    def test_C07b_release_cannot_be_revived_through_the_public_api(self):
+        store,genuine=self._genuine(request_id="REQ-RV")
+        self.assertTrue(store.release_claim(claim_id=genuine.claim_id,reason="DONE"))
+        self.assertFalse(store.release_claim(claim_id=genuine.claim_id,reason="AGAIN"))
+        self.assertIsNone(store.active_claim(gate_key().composite))
+
+    def test_C07c_editing_expiry_cannot_extend_a_claim(self):
+        from dataclasses import replace
+        store=CanonicalIdentityStore()
+        clock=_Clock(datetime.now(timezone.utc)); store._clock=clock
+        governed_claim(store,"REQ-X")
+        store.claims[0]=replace(store.claims[0],expires_ts="2999-01-01T00:00:00+00:00")
+        clock.advance(10_000)
+        self.assertIsNone(store.active_claim(gate_key().composite))
+        ok,error=self._commit(store,"REQ-X")
+        self.assertFalse(ok)
+
+    # 8 -----------------------------------------------------------------
+    def test_C08_one_active_claim_per_content_key_survives_mirror_tampering(self):
+        """Hiding a pending claim by flipping its MIRROR to RELEASED must not
+        let a second active claim be issued on the same content key."""
+        from dataclasses import replace
+        store,genuine=self._genuine(request_id="REQ-1")
+        store.claims[0]=replace(genuine,state="RELEASED",release_reason="HIDDEN")
+        second=governed_lookup_raw(store,"REQ-2")
+        self.assertIsNone(second.absent_claim_token)
+        self.assertTrue(any("PENDING_CLAIM_EXISTS" in e for e in second.errors),
+                        second.errors)
+
+    def test_C08c_public_active_claim_reports_the_ledger_not_the_mirror(self):
+        """Pins the reserve_claim pre-check layer on its own (mutant A8).
+
+        Under mutation this layer and the writer's own ledger check masked each
+        other, so each is asserted independently."""
+        from dataclasses import replace
+        store,genuine=self._genuine(request_id="REQ-A8")
+        store.claims[0]=replace(genuine,state="RELEASED",release_reason="HIDE")
+        self.assertIsNotNone(store.active_claim(gate_key().composite))
+
+    def test_C08d_the_single_writer_enforces_one_active_claim_by_itself(self):
+        """Pins the writer's own ledger check (mutant A11): called directly,
+        bypassing reserve_claim's pre-check, it still refuses a second claim."""
+        from dataclasses import replace
+        from tracker_identity import store as store_module
+        store,genuine=self._genuine(request_id="REQ-A11")
+        store.claims[0]=replace(genuine,state="RELEASED",release_reason="HIDE")
+        rec,error=store_module._issue_claim(
+            store,content_key_composite=gate_key().composite,request_id="REQ-A11B",
+            search_policy=governed_search_policy(),normalizer=governed_normalizer(),
+            include_validation_scope=False,issuer="TRACKER",ttl_seconds=60)
+        self.assertIsNone(rec)
+        self.assertTrue(error.startswith("PENDING_CLAIM_EXISTS"),error)
+
+    def test_C08b_same_claim_cannot_register_twice(self):
+        """Registration never succeeds today, so double-registration is proven
+        at the claim layer: a claim is consumed at most once, in the ledger,
+        and no copy of it can be presented after that."""
+        import copy
+        store,genuine=self._genuine(request_id="REQ-TWICE")
+        dup=copy.deepcopy(genuine)
+        store.claims.append(dup)
+        self.assertTrue(store.release_claim(claim_id=genuine.claim_id,reason="USED"))
+        for c in list(store.claims):
+            ok,_=store.claim_authenticity(c)
+            if ok:
+                self.assertNotEqual(c.state,"ACTIVE")
+        ok,error=self._commit(store,"REQ-TWICE")
+        self.assertFalse(ok)
+        self.assertEqual(error,"CLAIM_NOT_ACTIVE:RELEASED")
+
+    # 9 -----------------------------------------------------------------
+    def test_C09_direct_commit_without_authentic_issued_claim_fails(self):
+        store=CanonicalIdentityStore()
+        ok,error=self._commit(store,"REQ-NONE")
+        self.assertFalse(ok)
+        self.assertEqual(error,"CLAIM_NOT_FOUND")
+        ok,error=store.commit_registration(identity=keyed_row(gate_key()),
+            creation=object(),content_key_composite=None,request_id=None)
+        self.assertFalse(ok)
+        self.assertEqual(error,"CLAIM_REQUIRED_FOR_REGISTRATION")
+        self.assertEqual(store.all(),())
+
+    def test_C09b_a_planted_lookalike_cannot_shadow_a_genuine_claim(self):
+        """Scanning stops only at an AUTHENTIC match, so a record planted ahead
+        of the genuine one neither authorises nor denies it."""
+        store,genuine=self._genuine(request_id="REQ-SH")
+        fake=ClaimRecord("claim-SHADOW",genuine.content_key_composite,"REQ-SH",
+                         "TRACKER",genuine.issued_ts,genuine.expires_ts,"ACTIVE",None,
+                         self._forged_provenance("REQ-SH",True))
+        store.claims.insert(0,fake)
+        claim,error=store.validate_claim_for_registration(
+            content_key_composite=genuine.content_key_composite,request_id="REQ-SH")
+        self.assertIsNotNone(claim,error)
+        self.assertEqual(claim.claim_id,genuine.claim_id)
+        ok,error=self._commit(store,"REQ-SH")
+        self.assertFalse(ok)
+        self.assertEqual(error,"CLAIM_NOT_CONSTRUCTION_AUTHORIZED")
+
+    # 10 ----------------------------------------------------------------
+    def test_C10_policy_and_normalizer_integrity_remain_pass(self):
+        self.assertEqual(resolve_governed_search_policy(governed_search_policy()),())
+        self.assertEqual(resolve_governed_normalizer(governed_normalizer()),())
+        store,genuine=self._genuine(request_id="REQ-INT")
+        self.assertEqual(genuine.provenance.completeness_errors(),())
+
+    # 11 ----------------------------------------------------------------
+    def test_C11_no_issuance_path_accepts_a_record_provenance_or_authority(self):
+        """There is no sealer. The only writer takes raw lookup inputs."""
+        import inspect
+        from tracker_identity import store as store_module
+        params=inspect.signature(CanonicalIdentityStore.reserve_claim).parameters
+        for forbidden in ("provenance","record","claim","authorizes_construction",
+                          "lookup_result_id","issuance_evidence_hash","claim_id",
+                          "issued_ts","expires_ts","snapshot","tag"):
+            self.assertNotIn(forbidden,params,forbidden)
+        issue_params=inspect.signature(store_module._issue_claim).parameters
+        for forbidden in ("provenance","record","claim","authorizes_construction",
+                          "lookup_result_id","issuance_evidence_hash","claim_id"):
+            self.assertNotIn(forbidden,issue_params,forbidden)
+        # No module-level container holds issuance state.
+        leaked=[n for n,v in vars(store_module).items()
+                if isinstance(v,(dict,set,list)) and not n.startswith("__")]
+        self.assertEqual(leaked,[],leaked)
+
+    def test_C11b_invoking_the_issuer_directly_grants_no_authority(self):
+        """Calling the single writer directly is a legitimate issuance: it
+        re-derives every fact and cannot emit construction authority."""
+        from tracker_identity import store as store_module
+        store=verified_store()
+        rec,error=store_module._issue_claim(
+            store,content_key_composite=gate_key().composite,request_id="REQ-DIRECT",
+            search_policy=governed_search_policy(),normalizer=governed_normalizer(),
+            include_validation_scope=False,issuer="ATTACKER",ttl_seconds=60)
+        self.assertIsNotNone(rec,error)
+        self.assertFalse(rec.provenance.authorizes_construction)
+        r=gate_intake(store,gate_candidate(claim_request_id="REQ-DIRECT"))
+        self.assertFalse(r.accepted)
+        self.assertTrue(any("CLAIM_NOT_CONSTRUCTION_AUTHORIZED" in e for e in r.errors),
+                        r.errors)
+        # And it refuses to issue where the store's own records contradict it.
+        dup_store=verified_store([keyed_row(gate_key())])
+        rec2,error2=store_module._issue_claim(
+            dup_store,content_key_composite=gate_key().composite,request_id="REQ-D2",
+            search_policy=governed_search_policy(),normalizer=governed_normalizer(),
+            include_validation_scope=False,issuer="ATTACKER",ttl_seconds=60)
+        self.assertIsNone(rec2)
+        self.assertTrue(error2.startswith("CLAIM_CONTENT_IDENTITY_ALREADY_PRESENT"),error2)
+
+    # 12 ----------------------------------------------------------------
+    def test_C12_import_path_residual_remains_open_and_untouched(self):
+        """Recorded, not fixed: store.add()/extend() still write rows without a
+        claim. IMPORT_PATH_AUTHORITY_RESIDUAL = OPEN. This test pins the fact so
+        that a later fix is a deliberate, visible change."""
+        store=CanonicalIdentityStore()
+        store.add(keyed_row(gate_key()))
+        self.assertEqual(len(store.all()),1)
 
 class ManagerReAttackM1R(unittest.TestCase):
     """M-1R: the registry CONTAINER must be immutable, not only its entries."""

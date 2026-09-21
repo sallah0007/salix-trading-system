@@ -1,7 +1,8 @@
 import hashlib
 import json
 import uuid
-from dataclasses import dataclass, field, replace
+import weakref
+from dataclasses import dataclass, field, fields, replace
 from datetime import datetime, timedelta, timezone
 from threading import RLock
 from typing import Iterable, Optional
@@ -21,17 +22,235 @@ def _hash_facts(payload)->str:
     raw=json.dumps(payload,sort_keys=True,separators=(",",":"),default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
+def _provenance_facts(prov):
+    if prov is None:
+        return None
+    if type(prov) is not ClaimProvenance:
+        return {"__untrusted_type__":repr(type(prov))}
+    return {f.name:getattr(prov,f.name) for f in fields(prov)}
+
+def _claim_snapshot(rec)->str:
+    """Canonical serialization of EVERY bound issuance fact of a claim.
+
+    Covers claim id, content key, request id, issuer, both timestamps and the
+    full provenance — including the authority bit, the policy and normalizer
+    bindings, the lookup result id and the issuance evidence hash. Changing any
+    one of them after issuance changes this string.
+
+    Lifecycle (state, release_reason) is deliberately excluded: it changes
+    legitimately after issuance, so it is held authoritatively in the ledger
+    and the record's copy is compared against that separately.
+    """
+    return json.dumps({
+        "claim_id":rec.claim_id,
+        "content_key_composite":rec.content_key_composite,
+        "request_id":rec.request_id,
+        "issuer":rec.issuer,
+        "issued_ts":rec.issued_ts,
+        "expires_ts":rec.expires_ts,
+        "provenance":_provenance_facts(rec.provenance),
+    },sort_keys=True,separators=(",",":"),default=repr)
+
+def _make_issuance_authority():
+    """Build the store-owned issuance authority from FUNCTION-LOCAL state.
+
+    WHY THIS EXISTS (CR-1 / CR-2). The previous revision proved issuance with
+    `store._issued_claim_ids`, an ordinary set: a caller could add any claim id
+    to it (CR-1), or replace the provenance of a genuinely issued claim in the
+    public `claims` list while its id stayed "issued" (CR-2). Both reached a
+    canonical row write. Membership in a mutable container is not proof, and
+    an underscore is not access control.
+
+    DESIGN. The ledger below is a dict that lives only in this closure — it is
+    never a store attribute and never a module attribute, so no ordinary
+    container mutation can reach it. For every claim it records an exact
+    canonical snapshot of the issued facts plus the authoritative lifecycle.
+    A claim is authentic only if its current contents reproduce that snapshot
+    EXACTLY and its lifecycle matches the ledger's. No key, no MAC, no secret:
+    authenticity is equality with a record only the issuer can write.
+
+    There is exactly ONE writer, `issue`, and it accepts only the raw inputs a
+    lookup is entitled to supply. It re-derives every authority-bearing fact
+    from the store's own records and generates the claim id, the lookup result
+    id, both timestamps and the evidence hash itself. There is deliberately NO
+    function that accepts a caller-built record or provenance to "seal": such a
+    function would be a signer, and any in-process signer is callable by the
+    caller too. Invoking `issue` directly is therefore indistinguishable from
+    a legitimate issuance — it cannot mint construction authority.
+
+    Ledgers are per store, keyed by object identity and dropped when the store
+    is collected, so a claim issued by one store is unknown to every other.
+
+    STATED BOUNDARY. This defends against mutation of any ordinary
+    caller-reachable DATA: lists, sets, dicts, record fields, provenance
+    fields, frozen-record reconstruction, copying, cross-store replay. It does
+    NOT defend against replacing CODE — rebinding store methods or module
+    functions — nor against reflection on closure cells (fn.__closure__), gc,
+    or ctypes. No pure in-process Python design can; none is claimed.
+    """
+    ledgers={}
+
+    def _entries(store,create=False):
+        key=id(store)
+        led=ledgers.get(key)
+        if led is None and create:
+            led={}
+            ledgers[key]=led
+            weakref.finalize(store,ledgers.pop,key,None)
+        return led
+
+    def _mirror(store,claim_id,entry):
+        # Keep the public, display-only lifecycle copy in step with the ledger.
+        for i,c in enumerate(store.claims):
+            if isinstance(c,ClaimRecord) and c.claim_id==claim_id:
+                store.claims[i]=replace(c,state=entry["state"],release_reason=entry["reason"])
+
+    def expire_due(store,now_iso):
+        for claim_id,entry in (_entries(store) or {}).items():
+            if entry["state"]=="ACTIVE" and now_iso>=entry["expires_ts"]:
+                entry["state"]="EXPIRED"
+                entry["reason"]="TTL_EXPIRED"
+                _mirror(store,claim_id,entry)
+
+    def active_claim_id(store,content_key_composite):
+        for claim_id,entry in (_entries(store) or {}).items():
+            if entry["content_key"]==content_key_composite and entry["state"]=="ACTIVE":
+                return claim_id
+        return None
+
+    def authenticate(store,rec):
+        """(True, None) only for an unaltered claim THIS store issued."""
+        if type(rec) is not ClaimRecord:
+            return False,"CLAIM_RECORD_TYPE_NOT_AUTHENTIC"
+        entry=(_entries(store) or {}).get(rec.claim_id)
+        if entry is None:
+            return False,"CLAIM_NOT_ISSUED_BY_THIS_STORE"
+        if rec.provenance is not None and type(rec.provenance) is not ClaimProvenance:
+            return False,"CLAIM_PROVENANCE_TYPE_NOT_AUTHENTIC"
+        if _claim_snapshot(rec)!=entry["snapshot"]:
+            return False,"CLAIM_CONTENT_ALTERED_SINCE_ISSUANCE"
+        if rec.state!=entry["state"] or rec.release_reason!=entry["reason"]:
+            return False,"CLAIM_LIFECYCLE_ALTERED_SINCE_ISSUANCE"
+        return True,None
+
+    def terminate(store,claim_id,to_state,reason):
+        """Monotonic: ACTIVE -> terminal only. Nothing is ever revived, so this
+        grants no power beyond the public release_claim()."""
+        if to_state not in ("EXPIRED","RELEASED"):
+            return False
+        entry=(_entries(store) or {}).get(claim_id)
+        if entry is None or entry["state"]!="ACTIVE":
+            return False
+        entry["state"]=to_state
+        entry["reason"]=reason
+        _mirror(store,claim_id,entry)
+        return True
+
+    def issue(store,*,content_key_composite,request_id,search_policy,normalizer,
+              include_validation_scope,issuer,ttl_seconds):
+        content_key_composite=str(content_key_composite or "").strip()
+        request_id=str(request_id or "").strip()
+        if not content_key_composite:
+            return None,"CLAIM_CONTENT_KEY_REQUIRED"
+        if not request_id:
+            return None,"CLAIM_REQUEST_ID_REQUIRED"
+        policy_errors=resolve_governed_search_policy(search_policy)
+        if policy_errors:
+            return None,"CLAIM_SEARCH_POLICY_NOT_GOVERNED:"+",".join(policy_errors)
+        normalizer_errors=resolve_governed_normalizer(normalizer)
+        if normalizer_errors:
+            return None,"CLAIM_NORMALIZER_NOT_GOVERNED:"+",".join(normalizer_errors)
+
+        # Scope reachability and absence are RE-DERIVED from this store.
+        active_era_id=store.active_era_id
+        unproven=sorted(sc for sc,st in store.scope_status_report(
+            search_policy.searched_scopes,active_era_id)
+            if st in ("UNREACHABLE","UNKNOWN"))
+        if unproven:
+            return None,"CLAIM_SCOPE_NOT_PROVEN_REACHABLE:"+",".join(unproven)
+        for scope in search_policy.searched_scopes:
+            for r in store.list_scope(scope,active_era_id):
+                if not include_validation_scope and r.scope=="validation":
+                    continue
+                if not r.has_content_key:
+                    return None,"CLAIM_CONTENT_KEY_UNRESOLVED_ROWS:"+r.feature_id
+                if r.content_key_composite==content_key_composite:
+                    return None,"CLAIM_CONTENT_IDENTITY_ALREADY_PRESENT:"+r.feature_id
+
+        verified={
+            "request_id":request_id,
+            "content_key_composite":content_key_composite,
+            "registry_id":store.registry_id,
+            "active_era_id":active_era_id,
+            "search_policy":[search_policy.policy_id,search_policy.version,
+                             search_policy.policy_hash],
+            "normalizer":[normalizer.normalizer_id,normalizer.version,
+                          normalizer.normalizer_hash],
+            "searched_scopes":list(search_policy.searched_scopes),
+            "include_validation_scope":bool(include_validation_scope),
+            "outcome":CLAIMABLE_LOOKUP_OUTCOMES[0],
+        }
+        provenance=ClaimProvenance(
+            request_id=request_id,
+            content_key_composite=content_key_composite,
+            lookup_outcome=CLAIMABLE_LOOKUP_OUTCOMES[0],
+            lookup_complete=True,
+            search_policy_id=search_policy.policy_id,
+            search_policy_version=search_policy.version,
+            search_policy_hash=search_policy.policy_hash,
+            normalizer_id=normalizer.normalizer_id,
+            normalizer_version=normalizer.version,
+            normalizer_hash=normalizer.normalizer_hash,
+            semantic_uniqueness="UNRESOLVED_NOT_CERTIFIED",
+            # Construction authority is never granted here. ERA_1 structural
+            # absence is not global absence and semantic uniqueness is not
+            # certified. When a governed construction ORDER exists, THIS is the
+            # single place it is resolved — from the order, never from a
+            # caller-supplied flag, which is why no such parameter exists.
+            authorizes_construction=False,
+            lookup_result_id=str(uuid.uuid4()),
+            issuance_evidence_hash=_hash_facts(verified),
+        )
+        now_iso=store._now_iso()
+        now=datetime.fromisoformat(now_iso)
+        with store._claim_lock:
+            expire_due(store,now_iso)
+            existing=active_claim_id(store,content_key_composite)
+            if existing is not None:
+                return None,"PENDING_CLAIM_EXISTS:"+existing
+            rec=ClaimRecord(
+                claim_id=f"claim-{uuid.uuid4()}",
+                content_key_composite=content_key_composite,
+                request_id=request_id,issuer=str(issuer),
+                issued_ts=now_iso,
+                expires_ts=(now+timedelta(seconds=ttl_seconds)).isoformat(),
+                state="ACTIVE",
+                provenance=provenance,
+            )
+            _entries(store,create=True)[rec.claim_id]={
+                "snapshot":_claim_snapshot(rec),
+                "state":"ACTIVE","reason":None,
+                "expires_ts":rec.expires_ts,
+                "content_key":content_key_composite,
+            }
+            store.claims.append(rec)
+            return rec,None
+
+    return issue,authenticate,terminate,expire_due,active_claim_id
+
+(_issue_claim,_authenticate_claim,_terminate_claim,
+ _expire_due_claims,_active_claim_id)=_make_issuance_authority()
+
 @dataclass
 class CanonicalIdentityStore:
     records:list[FeatureIdentity]=field(default_factory=list)
     registry_id:str="SALIX-ERA1-REGISTRY"
     active_era_id:str="ERA_1"
     creation_records:list[object]=field(default_factory=list)
+    # Display-only lifecycle mirror. NOT authority: every decision is taken
+    # against the closure-held issuance ledger, and this list is checked
+    # against it. Anything a caller appends or replaces here is inert.
     claims:list[ClaimRecord]=field(default_factory=list)
-    # Claim ids this store ISSUED itself. A ClaimRecord appended to `claims` by
-    # any other route is absent from here, so a lookalike cannot be redeemed at
-    # registration even if it is structurally perfect.
-    _issued_claim_ids:set=field(default_factory=set,repr=False,compare=False)
     declared_scope_status:dict=field(default_factory=dict)
     _claim_lock:RLock=field(default_factory=RLock,repr=False,compare=False)
     _clock:object=field(default=None,repr=False,compare=False)
@@ -101,19 +320,24 @@ class CanonicalIdentityStore:
 
     # ---- atomic claim reservation ------------------------------------------
     def _expire_due(self,now_iso:str)->None:
-        for i,c in enumerate(self.claims):
-            if c.state=="ACTIVE" and now_iso >= c.expires_ts:
-                self.claims[i]=ClaimRecord(c.claim_id,c.content_key_composite,
-                    c.request_id,c.issuer,c.issued_ts,c.expires_ts,"EXPIRED","TTL_EXPIRED",
-                    c.provenance)
+        # Expiry is decided from the LEDGER's issued expires_ts, never from the
+        # mirror record, so editing a record's timestamp cannot extend a claim.
+        _expire_due_claims(self,now_iso)
 
     def _active_claim_at_locked(self,content_key_composite:str,now_iso:str)->Optional[ClaimRecord]:
         """Caller MUST already hold _claim_lock and MUST have obtained now_iso
         from _now_iso(). Private: the timestamp may only come from the
-        store-owned clock, never from outside the store."""
+        store-owned clock, never from outside the store.
+
+        'Active' is the LEDGER's verdict, not the mirror's. Flipping a mirror
+        record's state cannot hide a pending claim or fake one.
+        """
         self._expire_due(now_iso)
+        claim_id=_active_claim_id(self,content_key_composite)
+        if claim_id is None:
+            return None
         for c in self.claims:
-            if c.content_key_composite==content_key_composite and c.is_active_at(now_iso):
+            if isinstance(c,ClaimRecord) and c.claim_id==claim_id:
                 return c
         return None
 
@@ -134,125 +358,58 @@ class CanonicalIdentityStore:
                       ttl_seconds:int=DEFAULT_CLAIM_TTL_SECONDS):
         """Store-owned claim ISSUANCE. Returns (ClaimRecord|None, error|None).
 
-        THE FLOW IS INVERTED. A previous revision accepted a caller-built
-        ClaimProvenance as proof, which proved nothing: a caller could copy the
-        public governed policy binding, invent normalizer values, hand-build a
-        provenance and receive a claim that looked fully bound. The store now
-        REFUSES to be told the facts and establishes them itself:
-
-          * the search policy must resolve against the governed registry;
-          * the normalizer must resolve against the governed registry;
-          * every governed searched scope must be proven reachable IN THIS
-            STORE — an empty store is not self-certifying;
-          * the absence is RE-DERIVED here over this store's own records, so
-            'lookup_complete' and the outcome are facts the store established,
-            never assertions it was handed;
-          * the provenance object is then constructed by the store, including
-            a store-generated lookup_result_id and an issuance evidence hash
-            over exactly the facts it verified.
-
-        No parameter of this method carries authority. A caller supplies only
-        what it wants looked up; everything that could confer authority is
-        derived here. That is what makes a real issued claim distinguishable
-        from a caller-constructed lookalike by executable state rather than by
-        secrecy.
+        The caller supplies only what it wants looked up. Every fact that could
+        confer authority — governed bindings, scope reachability, the absence
+        itself, the claim id, the lookup result id, both timestamps and the
+        evidence hash — is established by the issuance authority from this
+        store's own records. The issued claim's exact contents are recorded in
+        a closure-held ledger that no caller-reachable container can alter, and
+        registration later requires the presented claim to reproduce them.
 
         The reservation is PERSISTED inside the lock. A claim that is not
         persisted was never issued. A second active claim on the same content
         key is refused, never granted.
         """
-        content_key_composite=str(content_key_composite or "").strip()
-        request_id=str(request_id or "").strip()
-        if not content_key_composite:
-            return None,"CLAIM_CONTENT_KEY_REQUIRED"
-        if not request_id:
-            return None,"CLAIM_REQUEST_ID_REQUIRED"
-
-        policy_errors=resolve_governed_search_policy(search_policy)
-        if policy_errors:
-            return None,"CLAIM_SEARCH_POLICY_NOT_GOVERNED:"+",".join(policy_errors)
-        normalizer_errors=resolve_governed_normalizer(normalizer)
-        if normalizer_errors:
-            return None,"CLAIM_NORMALIZER_NOT_GOVERNED:"+",".join(normalizer_errors)
-
-        # Scope reachability and absence are RE-DERIVED from this store.
-        active_era_id=self.active_era_id
-        unproven=sorted(sc for sc,st in self.scope_status_report(
-            search_policy.searched_scopes,active_era_id)
-            if st in ("UNREACHABLE","UNKNOWN"))
-        if unproven:
-            return None,"CLAIM_SCOPE_NOT_PROVEN_REACHABLE:"+",".join(unproven)
-        for scope in search_policy.searched_scopes:
-            for r in self.list_scope(scope,active_era_id):
-                if not include_validation_scope and r.scope=="validation":
-                    continue
-                if not r.has_content_key:
-                    return None,"CLAIM_CONTENT_KEY_UNRESOLVED_ROWS:"+r.feature_id
-                if r.content_key_composite==content_key_composite:
-                    return None,"CLAIM_CONTENT_IDENTITY_ALREADY_PRESENT:"+r.feature_id
-
-        verified={
-            "request_id":request_id,
-            "content_key_composite":content_key_composite,
-            "registry_id":self.registry_id,
-            "active_era_id":active_era_id,
-            "search_policy":[search_policy.policy_id,search_policy.version,
-                             search_policy.policy_hash],
-            "normalizer":[normalizer.normalizer_id,normalizer.version,
-                          normalizer.normalizer_hash],
-            "searched_scopes":list(search_policy.searched_scopes),
-            "include_validation_scope":bool(include_validation_scope),
-            "outcome":CLAIMABLE_LOOKUP_OUTCOMES[0],
-        }
-        provenance=ClaimProvenance(
-            request_id=request_id,
-            content_key_composite=content_key_composite,
-            lookup_outcome=CLAIMABLE_LOOKUP_OUTCOMES[0],
-            lookup_complete=True,
-            search_policy_id=search_policy.policy_id,
-            search_policy_version=search_policy.version,
-            search_policy_hash=search_policy.policy_hash,
-            normalizer_id=normalizer.normalizer_id,
-            normalizer_version=normalizer.version,
-            normalizer_hash=normalizer.normalizer_hash,
-            semantic_uniqueness="UNRESOLVED_NOT_CERTIFIED",
-            # Construction authority is never granted here. ERA_1 structural
-            # absence is not global absence and semantic uniqueness is not
-            # certified. When a governed construction ORDER exists, THIS is the
-            # single place it is resolved — from the order, never from a
-            # caller-supplied flag, which is why no such parameter exists.
-            authorizes_construction=False,
-            lookup_result_id=str(uuid.uuid4()),
-            issuance_evidence_hash=_hash_facts(verified),
-        )
         now_iso=self._now_iso()
-        now=datetime.fromisoformat(now_iso)
         with self._claim_lock:
             # Private locked helper: lock ownership and time ownership are both
             # explicit, and no public method is re-entered while holding a lock.
-            existing=self._active_claim_at_locked(content_key_composite,now_iso)
+            existing=self._active_claim_at_locked(
+                str(content_key_composite or "").strip(),now_iso)
             if existing is not None:
                 return None,"PENDING_CLAIM_EXISTS:"+existing.claim_id
-            rec=ClaimRecord(
-                claim_id=f"claim-{uuid.uuid4()}",
-                content_key_composite=content_key_composite,
-                request_id=request_id,issuer=issuer,
-                issued_ts=now_iso,
-                expires_ts=(now+timedelta(seconds=ttl_seconds)).isoformat(),
-                state="ACTIVE",
-                provenance=provenance,
-            )
-            self.claims.append(rec)
-            self._issued_claim_ids.add(rec.claim_id)
-            return rec,None
+            return _issue_claim(
+                self,content_key_composite=content_key_composite,
+                request_id=request_id,search_policy=search_policy,
+                normalizer=normalizer,
+                include_validation_scope=include_validation_scope,
+                issuer=issuer,ttl_seconds=ttl_seconds)
 
-    # NOTE: bind_lookup_evidence() was REMOVED.
-    #
-    # It was a public, caller-controlled evidence binder: any caller could
-    # attach a fabricated lookup_result_id and evidence hash to a claim and
-    # make it appear fully provenance-bound. There is now nothing to bind,
-    # because BOTH identifiers are generated by the store at issuance and no
-    # public entry point accepts either value.
+    def claim_authenticity(self,rec):
+        """Read-only. (True, None) only for an unaltered claim THIS store issued."""
+        with self._claim_lock:
+            return _authenticate_claim(self,rec)
+
+    def _authentic_match_locked(self,content_key_composite,request_id):
+        """First AUTHENTIC claim for (key, request). Caller holds _claim_lock.
+
+        Scans past lookalikes rather than stopping at the first textual match,
+        so a planted record cannot shadow a genuine claim. Returns
+        (claim|None, error|None); when only inauthentic matches exist, the
+        first authentication failure is reported.
+        """
+        first_error=None
+        for c in self.claims:
+            if not isinstance(c,ClaimRecord):
+                continue
+            if c.content_key_composite!=content_key_composite or c.request_id!=request_id:
+                continue
+            ok,error=_authenticate_claim(self,c)
+            if ok:
+                return c,None
+            if first_error is None:
+                first_error=error
+        return None,(first_error or "CLAIM_NOT_FOUND")
 
     def validate_claim_for_registration(self,*,content_key_composite:str,
                                         request_id:str):
@@ -265,25 +422,17 @@ class CanonicalIdentityStore:
         now_iso=self._now_iso()
         with self._claim_lock:
             self._expire_due(now_iso)
-            for c in self.claims:
-                if c.content_key_composite!=content_key_composite: continue
-                if c.request_id!=request_id: continue
-                if c.state=="ACTIVE" and c.is_active_at(now_iso):
-                    return c,None
-                return None,"CLAIM_NOT_ACTIVE:"+c.state
-            return None,"CLAIM_NOT_FOUND"
+            c,error=self._authentic_match_locked(content_key_composite,request_id)
+            if c is None:
+                return None,error
+            if c.state=="ACTIVE" and c.is_active_at(now_iso):
+                return c,None
+            return None,"CLAIM_NOT_ACTIVE:"+c.state
 
     def release_claim(self,*,claim_id:str,reason:str)->bool:
+        # Only a claim this store issued can be released, and only once.
         with self._claim_lock:
-            for i,c in enumerate(self.claims):
-                if c.claim_id==claim_id:
-                    if c.state!="ACTIVE":
-                        return False
-                    self.claims[i]=ClaimRecord(c.claim_id,c.content_key_composite,
-                        c.request_id,c.issuer,c.issued_ts,c.expires_ts,"RELEASED",reason,
-                        c.provenance)
-                    return True
-            return False
+            return _terminate_claim(self,claim_id,"RELEASED",reason)
 
     # ---- migration gate -----------------------------------------------------
     def rows_without_content_key(self,era_id:str|None=None,include_validation:bool=False):
@@ -336,14 +485,17 @@ class CanonicalIdentityStore:
                     return False,"CONTENT_KEY_REQUIRED_FOR_REGISTRATION"
 
                 self._expire_due(now_iso)
-                held=None
-                for c in self.claims:
-                    if (c.content_key_composite==content_key_composite
-                            and c.request_id==request_id):
-                        held=c
-                        break
+                # AUTHENTICITY FIRST (CR-1 / CR-2). The claim must reproduce,
+                # exactly, the contents this store recorded when it issued it,
+                # and its lifecycle must match the ledger. Membership of an id
+                # in any caller-reachable container proves nothing; a record
+                # whose provenance was replaced after issuance fails here.
+                held,auth_error=self._authentic_match_locked(
+                    content_key_composite,request_id)
                 if held is None:
-                    return False,"CLAIM_NOT_FOUND"
+                    return False,auth_error
+                # Safe to read from `held` now: its timestamps and state have
+                # just been proven equal to the ledger's.
                 if not held.is_active_at(now_iso):
                     return False,"CLAIM_NOT_ACTIVE:"+held.state
 
@@ -363,13 +515,9 @@ class CanonicalIdentityStore:
                 # observable and testable rather than being masked by a blanket
                 # authority refusal. Nothing has been mutated at this point, so
                 # ordering costs no safety.
-                # The claim must be one THIS store issued. A structurally
-                # perfect ClaimRecord appended to `claims` by any other route is
-                # absent from the issuance ledger and is refused here, which is
-                # what makes a real issued claim distinguishable from a
-                # caller-constructed lookalike by executable state.
-                if held.claim_id not in self._issued_claim_ids:
-                    return False,"CLAIM_NOT_ISSUED_BY_THIS_STORE"
+                # Everything below re-checks facts the authenticity check has
+                # already bound to the issuance record. It is retained as
+                # defence in depth, not relied upon as the proof.
                 prov=held.provenance
                 if prov is None:
                     return False,"CLAIM_PROVENANCE_MISSING"
@@ -402,11 +550,7 @@ class CanonicalIdentityStore:
                 self.records.append(identity)
                 self.creation_records.append(creation)
 
-                for i,c in enumerate(self.claims):
-                    if c.claim_id==held.claim_id:
-                        self.claims[i]=ClaimRecord(
-                            c.claim_id,c.content_key_composite,c.request_id,
-                            c.issuer,c.issued_ts,c.expires_ts,
-                            "RELEASED","REGISTRATION_COMPLETED",c.provenance)
-                        break
+                # Consumption goes through the ledger, so a consumed claim is
+                # terminal there and cannot be presented again by any copy.
+                _terminate_claim(self,held.claim_id,"RELEASED","REGISTRATION_COMPLETED")
                 return True,None
