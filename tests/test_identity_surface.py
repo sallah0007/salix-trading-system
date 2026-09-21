@@ -346,6 +346,24 @@ class _Clock:
     def __call__(self): return self.at
     def advance(self,seconds): self.at=self.at+timedelta(seconds=seconds)
 
+def install_test_clock(testcase,clock):
+    """TEST-ONLY time control by code replacement: patches the store module's
+    internal wall-clock source for one test. Production has no clock surface."""
+    from unittest import mock
+    from tracker_identity import store as store_module
+    patcher=mock.patch.object(store_module,"_wall_now",clock)
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
+
+def patch_store_source(testcase,name,value):
+    """TEST-ONLY: replace one store-owned source function for this test."""
+    from unittest import mock
+    from tracker_identity import store as store_module
+    patcher=mock.patch.object(store_module,name,value)
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
+    return patcher
+
 def gate_key(**overrides):
     payload=dict(GATE_CONTENT); payload.update(overrides)
     key,errors=build_content_identity_key(payload)
@@ -509,7 +527,7 @@ class GateHardeningNegativeControls(unittest.TestCase):
 
     def test_NC05_expired_claim_fails(self):
         store=CanonicalIdentityStore()
-        clock=_Clock(datetime.now(timezone.utc)); store._clock=clock
+        clock=_Clock(datetime.now(timezone.utc)); install_test_clock(self,clock)
         governed_claim(store,"REQ-EXP")
         clock.advance(10_000)
         r=gate_intake(store,gate_candidate(claim_request_id="REQ-EXP"))
@@ -718,7 +736,7 @@ class GateHardeningNegativeControls(unittest.TestCase):
         """A's expired claim must die on EXPIRY, not merely on the terminal
         authority gate. B reaches the authority gate; A does not get that far."""
         store=CanonicalIdentityStore()
-        clock=_Clock(datetime.now(timezone.utc)); store._clock=clock
+        clock=_Clock(datetime.now(timezone.utc)); install_test_clock(self,clock)
         governed_claim(store,"REQ-A")
         clock.advance(10_000)                       # A's claim expires
         governed_claim(store,"REQ-B")
@@ -1258,7 +1276,7 @@ class IssuanceAuthenticityCR1CR2(unittest.TestCase):
     def test_C07_expired_released_and_consumed_claims_stay_unusable(self):
         # expired
         store=CanonicalIdentityStore()
-        clock=_Clock(datetime.now(timezone.utc)); store._clock=clock
+        clock=_Clock(datetime.now(timezone.utc)); install_test_clock(self,clock)
         governed_claim(store,"REQ-E")
         clock.advance(10_000)
         ok,error=self._commit(store,"REQ-E")
@@ -1287,7 +1305,7 @@ class IssuanceAuthenticityCR1CR2(unittest.TestCase):
     def test_C07c_editing_expiry_cannot_extend_a_claim(self):
         from dataclasses import replace
         store=CanonicalIdentityStore()
-        clock=_Clock(datetime.now(timezone.utc)); store._clock=clock
+        clock=_Clock(datetime.now(timezone.utc)); install_test_clock(self,clock)
         governed_claim(store,"REQ-X")
         store.claims[0]=replace(store.claims[0],expires_ts="2999-01-01T00:00:00+00:00")
         clock.advance(10_000)
@@ -1327,7 +1345,7 @@ class IssuanceAuthenticityCR1CR2(unittest.TestCase):
         rec,error=store_module._issue_claim(
             store,content_key_composite=gate_key().composite,request_id="REQ-A11B",
             search_policy=governed_search_policy(),normalizer=governed_normalizer(),
-            include_validation_scope=False,issuer="TRACKER",ttl_seconds=60)
+            include_validation_scope=False,issuer="TRACKER")
         self.assertIsNone(rec)
         self.assertTrue(error.startswith("PENDING_CLAIM_EXISTS"),error)
 
@@ -1410,7 +1428,7 @@ class IssuanceAuthenticityCR1CR2(unittest.TestCase):
         rec,error=store_module._issue_claim(
             store,content_key_composite=gate_key().composite,request_id="REQ-DIRECT",
             search_policy=governed_search_policy(),normalizer=governed_normalizer(),
-            include_validation_scope=False,issuer="ATTACKER",ttl_seconds=60)
+            include_validation_scope=False,issuer="ATTACKER")
         self.assertIsNotNone(rec,error)
         self.assertFalse(rec.provenance.authorizes_construction)
         r=gate_intake(store,gate_candidate(claim_request_id="REQ-DIRECT"))
@@ -1422,7 +1440,7 @@ class IssuanceAuthenticityCR1CR2(unittest.TestCase):
         rec2,error2=store_module._issue_claim(
             dup_store,content_key_composite=gate_key().composite,request_id="REQ-D2",
             search_policy=governed_search_policy(),normalizer=governed_normalizer(),
-            include_validation_scope=False,issuer="ATTACKER",ttl_seconds=60)
+            include_validation_scope=False,issuer="ATTACKER")
         self.assertIsNone(rec2)
         self.assertTrue(error2.startswith("CLAIM_CONTENT_IDENTITY_ALREADY_PRESENT"),error2)
 
@@ -1436,14 +1454,11 @@ class IssuanceAuthenticityCR1CR2(unittest.TestCase):
         self.assertEqual(len(store.all()),1)
 
 class WeakrefAndStoreOwnedTime004(unittest.TestCase):
-    """DC-WEAKREF-TIME-HARDENING-004 — mandatory controls NC-W1..NC-W14.
+    """DC-004 controls, migrated in DC-005 to the test-only time mechanism.
 
-    CR-R1: cleanup was registered as weakref.finalize(store, ledgers.pop, key).
-    A bound method's __self__ is its owner, and weakref.finalize exposes its
-    callback through the public peek() API — so the ledger was reachable, and
-    forgeable, without any reflection on closure cells.
-    MR-TIME-1/2, LR-TIME-1: caller-selected expiry time, caller-extendable
-    lifetime, unbounded TTL and an unhandled overflow.
+    Every proposition is preserved. What changed is HOW tests steer time: the
+    production `_clock` field is gone, so tests now replace the store module's
+    internal clock/lifetime SOURCE functions with unittest.mock.
     """
 
     TIME_PARAM_NAMES=("now","now_iso","now_ts","at","when","timestamp",
@@ -1454,56 +1469,26 @@ class WeakrefAndStoreOwnedTime004(unittest.TestCase):
         governed_claim(store,request_id)
         return store,store.claims[0]
 
-    def _reserve(self,store,ttl,request_id="REQ-TTL"):
+    def _reserve(self,store,request_id="REQ-TTL"):
         return store.reserve_claim(
             content_key_composite=gate_key().composite,request_id=request_id,
-            search_policy=governed_search_policy(),normalizer=governed_normalizer(),
-            ttl_seconds=ttl)
+            search_policy=governed_search_policy(),normalizer=governed_normalizer())
 
-    # NC-W1 -------------------------------------------------------------
+    # NC-W1 (private-registry view; the governed PUBLIC route is DC005 NC-1)
     def test_W01_finalize_registry_does_not_expose_the_ledger(self):
-        """Walk every finalizer registered for this store through the PUBLIC
-        peek() API. Nothing reachable without closure reflection may be, or
-        own, a mapping."""
         import weakref
         store,_=self._genuine()
         mine=[f for f in list(weakref.finalize._registry)
               if f.peek() and f.peek()[0] is store]
         self.assertEqual(len(mine),1,"exactly one cleanup finalizer per store")
         _,func,args,kwargs=mine[0].peek()
-        self.assertIsNone(getattr(func,"__self__",None),
-                          "callback is a bound method: its owner is exposed")
+        self.assertIsNone(getattr(func,"__self__",None))
         for value in (*args,*(kwargs or {}).values()):
             self.assertNotIsInstance(value,(dict,list,set),value)
         self.assertEqual(args,(id(store),))
 
-    def test_W01b_the_original_forgery_route_is_closed(self):
-        """Re-run the exact CR-R1 chain. It must find no ledger to rewrite."""
-        import weakref
-        from dataclasses import replace
-        from tracker_identity import store as store_module
-        store,genuine=self._genuine(request_id="REQ-W1B")
-        ledger=None
-        for fin in list(weakref.finalize._registry):
-            peeked=fin.peek()
-            if peeked and peeked[0] is store:
-                owner=getattr(peeked[1],"__self__",None)
-                if isinstance(owner,dict):
-                    ledger=owner
-        self.assertIsNone(ledger)
-        store.claims[0]=replace(genuine,provenance=replace(
-            genuine.provenance,authorizes_construction=True))
-        ok,error=store.commit_registration(
-            identity=keyed_row(gate_key()),creation=object(),
-            content_key_composite=gate_key().composite,request_id="REQ-W1B")
-        self.assertFalse(ok)
-        self.assertEqual(error,"CLAIM_CONTENT_ALTERED_SINCE_ISSUANCE")
-        self.assertEqual(store.all(),())
-
-    # NC-W2 / W3 / W4 ---------------------------------------------------
     def test_W02_W03_W04_authenticity_protections_are_preserved(self):
         from dataclasses import replace
-        # W2: synthetic claim + every caller-reachable store container stuffed
         store=CanonicalIdentityStore()
         fake=ClaimRecord("claim-W2",gate_key().composite,"REQ-W2","TRACKER",
                          "2026-01-01T00:00:00+00:00","2099-01-01T00:00:00+00:00",
@@ -1514,171 +1499,108 @@ class WeakrefAndStoreOwnedTime004(unittest.TestCase):
             elif isinstance(value,dict): value["claim-W2"]="ISSUED"
         self.assertEqual(store.claim_authenticity(fake),
                          (False,"CLAIM_NOT_ISSUED_BY_THIS_STORE"))
-        # W3: genuine provenance replacement
         store,genuine=self._genuine(request_id="REQ-W3")
         forged=replace(genuine,provenance=replace(genuine.provenance,
                                                   authorizes_construction=True))
         self.assertEqual(store.claim_authenticity(forged),
                          (False,"CLAIM_CONTENT_ALTERED_SINCE_ISSUANCE"))
-        # W4: cross-store replay
-        other=CanonicalIdentityStore()
-        self.assertEqual(other.claim_authenticity(genuine),
+        self.assertEqual(CanonicalIdentityStore().claim_authenticity(genuine),
                          (False,"CLAIM_NOT_ISSUED_BY_THIS_STORE"))
 
-    # NC-W5 -------------------------------------------------------------
-    def test_W05_no_expiry_or_authority_callable_accepts_caller_time(self):
-        """Every module-level callable in the store module and every method
-        on the store is checked. None may take a time parameter."""
+    def test_W05_no_store_or_module_callable_accepts_caller_time(self):
         import inspect
         from tracker_identity import store as store_module
         offenders=[]
-        for name,obj in vars(store_module).items():
+        for name,obj in list(vars(store_module).items())+[
+                ("store."+n,o) for n,o in vars(CanonicalIdentityStore).items()]:
             if callable(obj) and not isinstance(obj,type):
                 try: params=inspect.signature(obj).parameters
                 except (TypeError,ValueError): continue
                 offenders+=[name+"("+p+")" for p in params if p in self.TIME_PARAM_NAMES]
-        for name,obj in vars(CanonicalIdentityStore).items():
-            if callable(obj):
-                try: params=inspect.signature(obj).parameters
-                except (TypeError,ValueError): continue
-                offenders+=["store."+name+"("+p+")" for p in params
-                            if p in self.TIME_PARAM_NAMES]
         self.assertEqual(offenders,[],offenders)
 
-    def test_W05b_caller_cannot_force_expiry_through_the_module_helper(self):
+    def test_W05b_module_expiry_helper_refuses_caller_time(self):
         from tracker_identity import store as store_module
         store,_=self._genuine(request_id="REQ-W5B")
         with self.assertRaises(TypeError):
             store_module._expire_due_claims(store,"2999-01-01T00:00:00+00:00")
         self.assertIsNotNone(store.active_claim(gate_key().composite))
 
-    # NC-W6 -------------------------------------------------------------
-    def test_W06_caller_cannot_request_more_than_the_governed_lifetime(self):
-        from tracker_identity.store import CLAIM_TTL_MAX_SECONDS
-        rec,error=self._reserve(verified_store(),CLAIM_TTL_MAX_SECONDS+1)
-        self.assertIsNone(rec)
-        self.assertEqual(error,"CLAIM_TTL_EXCEEDS_GOVERNED_MAXIMUM")
-        rec,error=self._reserve(verified_store(),CLAIM_TTL_MAX_SECONDS)
-        self.assertIsNotNone(rec,error)
-
-    def test_W06b_far_future_clock_cannot_extend_a_claim_in_real_time(self):
-        """The MR-TIME-2 attack, measured with REAL elapsed time.
-
-        Jump the store clock to 2999, issue a 1-second claim, remove the
-        clock. At base, effective time fell back to the wall clock and the
-        claim stayed alive until 2999. Store time now keeps advancing at real
-        rate from its last value, so the claim dies after ~1 real second."""
+    def test_W06b_wall_clock_step_back_cannot_extend_a_claim(self):
+        """MR-TIME-2 proposition, measured with REAL elapsed time. The wall
+        source is driven to 2999 (instrumentation), a 1-second claim issued,
+        then the real wall source restored — a large step BACKWARDS. Store
+        time keeps advancing from its last value at real rate, so the claim
+        still dies after ~1 real second instead of living until 2999."""
         import time as _time
         from datetime import datetime as _dt, timezone as _tz
         store=verified_store()
-        store._clock=lambda: _dt(2999,1,1,tzinfo=_tz.utc)
-        rec,error=self._reserve(store,1,request_id="REQ-W6B")
+        wall=patch_store_source(self,"_wall_now",lambda: _dt(2999,1,1,tzinfo=_tz.utc))
+        ttl=patch_store_source(self,"_governed_claim_ttl_seconds",lambda: 1)
+        rec,error=self._reserve(store,"REQ-W6B")
         self.assertIsNotNone(rec,error)
-        store._clock=None
+        wall.stop()
         self.assertIsNotNone(store.active_claim(gate_key().composite))
         _time.sleep(1.25)
         self.assertIsNone(store.active_claim(gate_key().composite))
         self.assertEqual(store.claims[0].state,"EXPIRED")
 
-    # NC-W7 -------------------------------------------------------------
-    def test_W07_negative_or_zero_ttl_cannot_create_an_expired_claim(self):
-        for ttl in (-5,-1,0):
+    def test_W07_W08_malformed_governed_lifetime_is_a_structured_failure(self):
+        """Defence in depth on the STORE'S OWN lifetime source. No caller
+        supplies a lifetime; if the policy source is ever wrong, issuance
+        refuses with a structured error instead of issuing or raising."""
+        cases={-5:"CLAIM_TTL_NOT_POSITIVE",0:"CLAIM_TTL_NOT_POSITIVE",
+               901:"CLAIM_TTL_EXCEEDS_GOVERNED_MAXIMUM",
+               10**12:"CLAIM_TTL_EXCEEDS_GOVERNED_MAXIMUM",
+               True:"CLAIM_TTL_INVALID_TYPE",1.5:"CLAIM_TTL_INVALID_TYPE",
+               "60":"CLAIM_TTL_INVALID_TYPE",None:"CLAIM_TTL_INVALID_TYPE"}
+        for value,expected in cases.items():
             store=verified_store()
-            rec,error=self._reserve(store,ttl)
-            self.assertIsNone(rec,ttl)
-            self.assertEqual(error,"CLAIM_TTL_NOT_POSITIVE",ttl)
-            self.assertEqual(store.claims,[],ttl)
-
-    # NC-W8 -------------------------------------------------------------
-    def test_W08_oversized_or_malformed_ttl_is_a_structured_failure(self):
-        cases={10**12:"CLAIM_TTL_EXCEEDS_GOVERNED_MAXIMUM",
-               10**30:"CLAIM_TTL_EXCEEDS_GOVERNED_MAXIMUM",
-               True:"CLAIM_TTL_INVALID_TYPE",
-               1.5:"CLAIM_TTL_INVALID_TYPE",
-               "60":"CLAIM_TTL_INVALID_TYPE",
-               None:"CLAIM_TTL_INVALID_TYPE"}
-        for ttl,expected in cases.items():
-            store=verified_store()
-            rec,error=self._reserve(store,ttl)   # must not raise
-            self.assertIsNone(rec,repr(ttl))
-            self.assertEqual(error,expected,repr(ttl))
+            p=patch_store_source(self,"_governed_claim_ttl_seconds",lambda v=value: v)
+            rec,error=self._reserve(store)
+            p.stop()
+            self.assertIsNone(rec,repr(value))
+            self.assertEqual(error,expected,repr(value))
+            self.assertEqual(store.claims,[],repr(value))
 
     def test_W08b_expiry_overflow_near_datetime_max_is_structured(self):
         from datetime import datetime as _dt, timedelta as _td, timezone as _tz
         store=verified_store()
-        store._clock=lambda: _dt.max.replace(tzinfo=_tz.utc)-_td(seconds=10)
-        rec,error=self._reserve(store,60)        # must not raise
+        patch_store_source(self,"_wall_now",
+                           lambda: _dt.max.replace(tzinfo=_tz.utc)-_td(seconds=10))
+        rec,error=self._reserve(store)
         self.assertIsNone(rec)
         self.assertEqual(error,"CLAIM_EXPIRY_OVERFLOW")
 
-    # NC-W9 -------------------------------------------------------------
-    def test_W09_test_clock_can_only_move_store_time_forward(self):
-        """Exact supported boundary: the deterministic test clock may ACCELERATE
-        store time and nothing else. A past clock is ignored, a rewind is
-        ignored, and a malformed clock is ignored rather than trusted."""
-        from datetime import datetime as _dt, timezone as _tz
-        from tracker_identity.store import _transaction_time
-        store=CanonicalIdentityStore()
-        wall=_dt.now(_tz.utc)
-        store._clock=lambda: _dt(1970,1,1,tzinfo=_tz.utc)
-        self.assertGreaterEqual(_transaction_time(store),wall)
-        store._clock=lambda: _dt(2500,1,1,tzinfo=_tz.utc)
-        jumped=_transaction_time(store)
-        store._clock=lambda: _dt(2000,1,1,tzinfo=_tz.utc)
-        self.assertGreaterEqual(_transaction_time(store),jumped)
-        for bad in (lambda: "2999-01-01", lambda: _dt(2999,1,1),
-                    lambda: (_ for _ in ()).throw(RuntimeError("boom"))):
-            store._clock=bad
-            before=_transaction_time(store)
-            self.assertGreaterEqual(_transaction_time(store),before)
-
-    def test_W09a_naive_test_clock_has_no_effect_at_all(self):
-        """A naive datetime is ambiguous. datetime.astimezone() would silently
-        reinterpret it as LOCAL time rather than raise, so it is refused
-        outright — it must not move store time by any amount (mutant T4)."""
-        from datetime import datetime as _dt, timezone as _tz
-        from tracker_identity.store import _transaction_time
-        store=CanonicalIdentityStore()
-        store._clock=lambda: _dt(2999,1,1)              # naive
-        self.assertLess(_transaction_time(store),_dt(2100,1,1,tzinfo=_tz.utc))
-
-    def test_W09c_store_time_survives_a_monotonic_clock_regression(self):
-        """Drives the negative-elapsed guard deterministically (mutant T14).
-        time.monotonic() cannot go backwards on a real clock, so the store's
-        clock source is patched to do exactly that."""
-        from unittest import mock
-        from datetime import datetime as _dt, timezone as _tz
-        from tracker_identity import store as store_module
-        store=CanonicalIdentityStore()
-        with mock.patch.object(store_module.time,"monotonic",return_value=5_000.0):
-            store._clock=lambda: _dt(2500,1,1,tzinfo=_tz.utc)
-            jumped=store_module._transaction_time(store)
-            store._clock=None
-        with mock.patch.object(store_module.time,"monotonic",return_value=4_000.0):
-            after=store_module._transaction_time(store)
-        self.assertGreaterEqual(after,jumped)
-
     def test_W08c_store_time_saturates_at_datetime_max_without_raising(self):
-        """Drives the elapsed-add overflow guard deterministically (mutant T15):
-        with store time at datetime.max, any positive elapsed time overflows."""
-        from unittest import mock
         from datetime import datetime as _dt, timezone as _tz
         from tracker_identity import store as store_module
         store=verified_store()
         top=_dt.max.replace(tzinfo=_tz.utc)
-        with mock.patch.object(store_module.time,"monotonic",return_value=1.0):
-            store._clock=lambda: top
-            store_module._transaction_time(store)
-            store._clock=None
-        with mock.patch.object(store_module.time,"monotonic",return_value=60.0):
-            self.assertEqual(store_module._transaction_time(store),top)
-            rec,error=self._reserve(store,60)          # must not raise
+        mono=patch_store_source(self,"_monotonic_now",lambda: 1.0)
+        wall=patch_store_source(self,"_wall_now",lambda: top)
+        store_module._transaction_time(store)
+        wall.stop(); mono.stop()
+        patch_store_source(self,"_monotonic_now",lambda: 60.0)
+        self.assertEqual(store_module._transaction_time(store),top)
+        rec,error=self._reserve(store)
         self.assertIsNone(rec)
         self.assertEqual(error,"CLAIM_EXPIRY_OVERFLOW")
 
-    def test_W09b_test_clock_grants_no_construction_authority(self):
+    def test_W09c_store_time_survives_a_monotonic_clock_regression(self):
+        from datetime import datetime as _dt, timezone as _tz
+        from tracker_identity import store as store_module
         store=CanonicalIdentityStore()
-        clock=_Clock(datetime.now(timezone.utc)); store._clock=clock
+        mono=patch_store_source(self,"_monotonic_now",lambda: 5_000.0)
+        wall=patch_store_source(self,"_wall_now",lambda: _dt(2500,1,1,tzinfo=_tz.utc))
+        jumped=store_module._transaction_time(store)
+        wall.stop(); mono.stop()
+        patch_store_source(self,"_monotonic_now",lambda: 4_000.0)
+        self.assertGreaterEqual(store_module._transaction_time(store),jumped)
+
+    def test_W09b_instrumented_time_grants_no_construction_authority(self):
+        store=CanonicalIdentityStore()
+        clock=_Clock(datetime.now(timezone.utc)); install_test_clock(self,clock)
         governed_claim(store,"REQ-W9B")
         r=gate_intake(store,gate_candidate(claim_request_id="REQ-W9B"))
         self.assertFalse(r.accepted)
@@ -1686,14 +1608,13 @@ class WeakrefAndStoreOwnedTime004(unittest.TestCase):
                         r.errors)
         self.assertEqual(store.all(),())
 
-    # NC-W10 ------------------------------------------------------------
     def test_W10_clock_rewind_cannot_revive_expired_or_released_claims(self):
         store=CanonicalIdentityStore()
-        clock=_Clock(datetime.now(timezone.utc)); store._clock=clock
+        clock=_Clock(datetime.now(timezone.utc)); install_test_clock(self,clock)
         governed_claim(store,"REQ-W10")
         clock.advance(10_000)
         self.assertIsNone(store.active_claim(gate_key().composite))
-        clock.advance(-20_000)                     # rewind well before issue
+        clock.advance(-20_000)
         self.assertIsNone(store.active_claim(gate_key().composite))
         self.assertEqual(store.claims[0].state,"EXPIRED")
         ok,error=store.commit_registration(
@@ -1701,14 +1622,11 @@ class WeakrefAndStoreOwnedTime004(unittest.TestCase):
             content_key_composite=gate_key().composite,request_id="REQ-W10")
         self.assertFalse(ok)
         self.assertEqual(error,"CLAIM_NOT_ACTIVE:EXPIRED")
-        # released, then rewound
-        store,genuine=self._genuine(request_id="REQ-W10R")
-        store._clock=_Clock(datetime.now(timezone.utc))
-        self.assertTrue(store.release_claim(claim_id=genuine.claim_id,reason="DONE"))
-        store._clock.advance(-20_000)
-        self.assertIsNone(store.active_claim(gate_key().composite))
+        store2,genuine=self._genuine(request_id="REQ-W10R")
+        self.assertTrue(store2.release_claim(claim_id=genuine.claim_id,reason="DONE"))
+        clock.advance(-50_000)
+        self.assertIsNone(store2.active_claim(gate_key().composite))
 
-    # NC-W11 ------------------------------------------------------------
     def test_W11_one_active_claim_per_key_remains_intact(self):
         store=verified_store()
         first=governed_lookup_raw(store,"REQ-W11A")
@@ -1718,18 +1636,243 @@ class WeakrefAndStoreOwnedTime004(unittest.TestCase):
         self.assertTrue(any("PENDING_CLAIM_EXISTS" in e for e in second.errors))
         self.assertEqual(len([c for c in store.claims if c.state=="ACTIVE"]),1)
 
-    # NC-W12 / W13 / W14 ------------------------------------------------
     def test_W12_W13_W14_fences_hold(self):
-        # W12: no construction-authorized path
         store,genuine=self._genuine(request_id="REQ-W12")
         self.assertFalse(genuine.provenance.authorizes_construction)
-        # W13: registries still PASS
         self.assertEqual(resolve_governed_search_policy(governed_search_policy()),())
         self.assertEqual(resolve_governed_normalizer(governed_normalizer()),())
-        # W14: import / direct-mutation residual remains OPEN and untouched
         residual=CanonicalIdentityStore()
         residual.add(keyed_row(gate_key()))
         self.assertEqual(len(residual.all()),1)
+
+
+class ClockIsolationPublicWeakref005(unittest.TestCase):
+    """DC-CLOCK-ISOLATION-WEAKREF-TEST-005 — mandatory controls NC-1..NC-17."""
+
+    CLOCK_ATTRS=("_clock","clock","_now","now","_wall_now","wall_now",
+                 "_monotonic_now","_time","time","last_effective","_ttl","ttl",
+                 "_governed_claim_ttl_seconds","now_iso","_caller_now")
+    FORBIDDEN_ISSUANCE_PARAMS=("ttl","ttl_seconds","lifetime","expires_ts",
+                               "issued_ts","expires_at","issued_at","now",
+                               "now_iso","clock","transaction_time","timestamp")
+
+    def _genuine(self,request_id="REQ-5"):
+        store=CanonicalIdentityStore()
+        governed_claim(store,request_id)
+        return store,store.claims[0]
+
+    # NC-1 / NC-2 -------------------------------------------------------
+    def test_NC01_NC02_exact_public_weakref_route(self):
+        """The governed route, using documented public APIs ONLY:
+            weakref.getweakrefs(store)  -> ref
+            ref.__callback__            -> weakref.finalize
+            finalize.peek()             -> (obj, func, args, kwargs)
+            func.__self__               -> must NOT be the ledger
+        At aaec2c4 this route returned `dict.pop` bound to the ledger and a
+        forged claim written through it committed a row. weakref.finalize.
+        _registry is deliberately NOT used anywhere in this test."""
+        import weakref
+        from dataclasses import replace
+        store,genuine=self._genuine(request_id="REQ-PUB")
+        refs=weakref.getweakrefs(store)
+        self.assertGreaterEqual(len(refs),1)
+        finalizers=[r.__callback__ for r in refs
+                    if isinstance(r.__callback__,weakref.finalize)]
+        self.assertEqual(len(finalizers),1,"one cleanup finalizer on the store")
+        peeked=finalizers[0].peek()
+        self.assertIsNotNone(peeked,"finalizer must be alive while store is")
+        obj,func,args,kwargs=peeked
+        self.assertIs(obj,store)
+        # no bound-method owner of any kind
+        self.assertIsNone(getattr(func,"__self__",None),
+                          "callback is bound: its owner is publicly exposed")
+        # nothing reachable from the public route is a mutable container
+        for value in (func,*args,*(kwargs or {}).values()):
+            self.assertNotIsInstance(value,(dict,list,set),repr(value))
+        self.assertEqual(args,(id(store),))
+        self.assertEqual(dict(kwargs or {}),{})
+        # NC-2: the former forgery chain has nothing to rewrite
+        store.claims[0]=replace(genuine,provenance=replace(
+            genuine.provenance,authorizes_construction=True))
+        ok,error=store.commit_registration(
+            identity=keyed_row(gate_key()),creation=object(),
+            content_key_composite=gate_key().composite,request_id="REQ-PUB")
+        self.assertFalse(ok)
+        self.assertEqual(error,"CLAIM_CONTENT_ALTERED_SINCE_ISSUANCE")
+        self.assertEqual(store.all(),())
+
+    # NC-3 --------------------------------------------------------------
+    def test_NC03_constructor_has_no_clock_authority(self):
+        import dataclasses, inspect
+        names={f.name for f in dataclasses.fields(CanonicalIdentityStore)}
+        self.assertEqual(names & set(self.CLOCK_ATTRS),set(),names)
+        ctor=inspect.signature(CanonicalIdentityStore).parameters
+        for bad in self.CLOCK_ATTRS:
+            self.assertNotIn(bad,ctor,bad)
+        with self.assertRaises(TypeError):
+            CanonicalIdentityStore(_clock=lambda: datetime(2999,1,1,tzinfo=timezone.utc))
+
+    def test_NC03b_store_time_advances_from_the_monotonic_source(self):
+        """Pins that elapsed time comes from the DEDICATED monotonic source
+        (mutant D3). Existing tests only asserted inequalities, which still
+        held when the source was bypassed for time.monotonic(). With the wall
+        source frozen, a 10,000 s advance of the monotonic source must advance
+        store time by exactly 10,000 s."""
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        from tracker_identity import store as store_module
+        store=CanonicalIdentityStore()
+        patch_store_source(self,"_wall_now",lambda: _dt(2400,1,1,tzinfo=_tz.utc))
+        mono=patch_store_source(self,"_monotonic_now",lambda: 100.0)
+        first=store_module._transaction_time(store)
+        mono.stop()
+        patch_store_source(self,"_monotonic_now",lambda: 10_100.0)
+        second=store_module._transaction_time(store)
+        self.assertEqual(second-first,_td(seconds=10_000))
+
+    # NC-4 --------------------------------------------------------------
+    def test_NC04_no_caller_mutable_store_field_controls_time(self):
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        from tracker_identity import store as store_module
+        future=_dt(2999,1,1,tzinfo=_tz.utc)
+        store=CanonicalIdentityStore()
+        for attr in self.CLOCK_ATTRS:
+            setattr(store,attr,(lambda: future))
+        store.last_effective=future
+        before=_dt.now(_tz.utc)
+        observed=store_module._transaction_time(store)
+        after=_dt.now(_tz.utc)
+        self.assertGreaterEqual(observed,before-_td(seconds=1))
+        self.assertLessEqual(observed,after+_td(seconds=1))
+        rec,error=governed_claim(store,"REQ-NC4"),None
+        self.assertLess(_dt.fromisoformat(store.claims[0].issued_ts).year,2100)
+
+    # NC-5 / NC-6 / NC-7 ------------------------------------------------
+    def test_NC05_NC06_NC07_issuance_surfaces_take_no_time_or_lifetime(self):
+        import inspect
+        from tracker_identity import store as store_module
+        for fn in (CanonicalIdentityStore.reserve_claim,store_module._issue_claim):
+            params=inspect.signature(fn).parameters
+            for bad in self.FORBIDDEN_ISSUANCE_PARAMS:
+                self.assertNotIn(bad,params,fn.__name__+"."+bad)
+        store=verified_store()
+        for kw in ({"ttl_seconds":60},{"issued_ts":"2999-01-01T00:00:00+00:00"},
+                   {"expires_ts":"2999-01-01T00:00:00+00:00"}):
+            with self.assertRaises(TypeError):
+                store.reserve_claim(content_key_composite=gate_key().composite,
+                    request_id="REQ-K",search_policy=governed_search_policy(),
+                    normalizer=governed_normalizer(),**kw)
+            with self.assertRaises(TypeError):
+                store_module._issue_claim(store,content_key_composite=gate_key().composite,
+                    request_id="REQ-K",search_policy=governed_search_policy(),
+                    normalizer=governed_normalizer(),include_validation_scope=False,
+                    issuer="TRACKER",**kw)
+
+    def test_NC06b_issued_and_expires_come_from_store_time_and_policy(self):
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        from tracker_identity.store import CLAIM_TTL_MAX_SECONDS
+        before=_dt.now(_tz.utc)
+        store,genuine=self._genuine(request_id="REQ-NC6")
+        after=_dt.now(_tz.utc)
+        issued=_dt.fromisoformat(genuine.issued_ts)
+        expires=_dt.fromisoformat(genuine.expires_ts)
+        self.assertGreaterEqual(issued,before-_td(seconds=1))
+        self.assertLessEqual(issued,after+_td(seconds=1))
+        self.assertEqual((expires-issued).total_seconds(),CLAIM_TTL_MAX_SECONDS)
+
+    # NC-8 --------------------------------------------------------------
+    def test_NC08_test_time_mechanism_is_code_replacement_only(self):
+        """The ONLY way to steer store time is replacing the store module's
+        source functions. Demonstrated both ways: data does nothing, code
+        replacement does something — so the hook is instrumentation, not an
+        API or data surface."""
+        from datetime import datetime as _dt, timezone as _tz
+        from tracker_identity import store as store_module
+        future=_dt(2999,1,1,tzinfo=_tz.utc)
+        data_store=CanonicalIdentityStore()
+        for attr in self.CLOCK_ATTRS:
+            setattr(data_store,attr,(lambda: future))
+        self.assertLess(store_module._transaction_time(data_store).year,2100)
+        code_store=CanonicalIdentityStore()
+        patch_store_source(self,"_wall_now",lambda: future)
+        self.assertEqual(store_module._transaction_time(code_store),future)
+
+    # NC-9 / NC-10 / NC-11 / NC-12 -------------------------------------
+    def test_NC09_to_NC12_lifecycle_concurrency_isolation_content(self):
+        from dataclasses import replace
+        store=CanonicalIdentityStore()
+        clock=_Clock(datetime.now(timezone.utc)); install_test_clock(self,clock)
+        governed_claim(store,"REQ-N9")
+        clock.advance(10_000)
+        self.assertIsNone(store.active_claim(gate_key().composite))
+        clock.advance(-30_000)
+        self.assertIsNone(store.active_claim(gate_key().composite))      # NC-9
+        s10=verified_store()
+        self.assertIsNotNone(governed_lookup_raw(s10,"A").absent_claim_token)
+        self.assertIsNone(governed_lookup_raw(s10,"B").absent_claim_token)  # NC-10
+        s11,g=self._genuine(request_id="REQ-N11")
+        self.assertEqual(CanonicalIdentityStore().claim_authenticity(g),
+                         (False,"CLAIM_NOT_ISSUED_BY_THIS_STORE"))          # NC-11
+        self.assertEqual(s11.claim_authenticity(replace(g,issued_ts="2999-01-01T00:00:00+00:00")),
+                         (False,"CLAIM_CONTENT_ALTERED_SINCE_ISSUANCE"))    # NC-12
+
+    # NC-13 -------------------------------------------------------------
+    def test_NC13_lifecycle_helpers_cannot_exceed_the_public_boundary(self):
+        from tracker_identity import store as store_module
+        self.assertFalse(hasattr(store_module,"_terminate_claim"),
+                         "free-form state/reason terminator must not exist")
+        for reserved in ("TTL_EXPIRED","REGISTRATION_COMPLETED"," TTL_EXPIRED ",""," "):
+            store,g=self._genuine(request_id="REQ-R"+str(abs(hash(reserved))))
+            self.assertFalse(store.release_claim(claim_id=g.claim_id,reason=reserved),
+                             repr(reserved))
+            self.assertFalse(store_module._release_claim(store,g.claim_id,reserved),
+                             repr(reserved))
+            self.assertEqual(store_module._ledger_state(store,g.claim_id),"ACTIVE")
+        store,g=self._genuine(request_id="REQ-OK")
+        self.assertTrue(store_module._release_claim(store,g.claim_id,"DONE"))
+        self.assertEqual(store_module._ledger_state(store,g.claim_id),"RELEASED")
+
+    def test_NC13b_consume_cannot_falsify_a_registration(self):
+        """Even with the identity planted in records by the A14 route and a
+        genuine ACTIVE claim, consumption is refused: there is no construction
+        authority, so no registration happened."""
+        from tracker_identity import store as store_module
+        store,g=self._genuine(request_id="REQ-CON")
+        planted=keyed_row(gate_key())
+        store.add(planted)
+        self.assertFalse(store_module._consume_claim(store,g.claim_id,planted))
+        self.assertEqual(store_module._ledger_state(store,g.claim_id),"ACTIVE")
+        self.assertEqual(store.claims[0].release_reason,None)
+
+    def test_NC13c_no_exported_helper_can_expire_a_live_claim(self):
+        """EXPIRED is assigned only by genuine store-time expiry."""
+        import inspect
+        from tracker_identity import store as store_module
+        store,g=self._genuine(request_id="REQ-EXP")
+        for name,fn in list(vars(store_module).items()):
+            if not callable(fn) or isinstance(fn,type) or name.startswith("__"):
+                continue
+            params=list(inspect.signature(fn).parameters)
+            if params[:1]!=["store"]:
+                continue
+            for args in ((g.claim_id,"EXPIRED","TTL_EXPIRED"),(g.claim_id,"TTL_EXPIRED"),
+                         (g.claim_id,),()):
+                try:
+                    fn(store,*args)
+                except TypeError:
+                    pass
+        self.assertNotEqual(store_module._ledger_state(store,g.claim_id),"EXPIRED")
+
+    # NC-14 / NC-15 / NC-16 --------------------------------------------
+    def test_NC14_NC15_NC16_fences_hold(self):
+        store,g=self._genuine(request_id="REQ-F")
+        self.assertFalse(g.provenance.authorizes_construction)
+        r=gate_intake(store,gate_candidate(claim_request_id="REQ-F"))
+        self.assertTrue(any("CLAIM_NOT_CONSTRUCTION_AUTHORIZED" in e for e in r.errors))
+        self.assertEqual(resolve_governed_search_policy(governed_search_policy()),())
+        self.assertEqual(resolve_governed_normalizer(governed_normalizer()),())
+        residual=CanonicalIdentityStore()
+        residual.add(keyed_row(gate_key()))
+        self.assertEqual(len(residual.all()),1)   # A14 OPEN, untouched
 
 class ManagerReAttackM1R(unittest.TestCase):
     """M-1R: the registry CONTAINER must be immutable, not only its entries."""

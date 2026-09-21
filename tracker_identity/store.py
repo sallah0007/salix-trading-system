@@ -52,12 +52,37 @@ def _claim_snapshot(rec)->str:
         "provenance":_provenance_facts(rec.provenance),
     },sort_keys=True,separators=(",",":"),default=repr)
 
-# Governed claim-lifetime policy. Callers may request a lifetime only inside
-# these bounds; anything else is refused with a structured error rather than
-# silently clamped. The maximum IS the governed default, so no caller can
-# obtain a claim that outlives what the store would have issued unasked.
+# ---------------------------------------------------------------------------
+# STORE-OWNED TIME AND LIFETIME SOURCES
+#
+# These three functions are the ONLY inputs to transaction time and claim
+# lifetime. Production runtime reads the real UTC clock, the real monotonic
+# clock and the governed default lifetime. No constructor argument, store
+# field, flag, environment variable or API parameter reaches any of them.
+#
+# Deterministic tests replace these FUNCTIONS with unittest.mock. That is test
+# instrumentation by code replacement — the same class as rebinding any store
+# method — which is outside the stated boundary for production callers. It is
+# not production data and not an API surface.
+# ---------------------------------------------------------------------------
+def _wall_now():
+    return datetime.now(timezone.utc)
+
+def _monotonic_now():
+    return time.monotonic()
+
+def _governed_claim_ttl_seconds():
+    return DEFAULT_CLAIM_TTL_SECONDS
+
+# Bounds the governed lifetime must satisfy. They constrain the store's own
+# policy source (defence in depth against a mis-edited or mis-patched policy);
+# no caller supplies a lifetime at all.
 CLAIM_TTL_MIN_SECONDS=1
 CLAIM_TTL_MAX_SECONDS=DEFAULT_CLAIM_TTL_SECONDS
+
+# Lifecycle reasons only the store may assign. A caller releasing a claim may
+# not claim it timed out or was consumed by a registration.
+RESERVED_LIFECYCLE_REASONS=frozenset({"TTL_EXPIRED","REGISTRATION_COMPLETED"})
 
 def _make_issuance_authority():
     """Build the store-owned issuance authority from FUNCTION-LOCAL state.
@@ -82,9 +107,13 @@ def _make_issuance_authority():
     reflection. Cleanup is now a plain closure-local function taking only the
     integer key, so the registry holds no object that owns the ledger.
 
-    STORE-OWNED TIME (corrected here). Every expiry decision is taken at the
-    store's own transaction time, obtained inside this closure. No function
-    here or on the store accepts a caller-selected time. See transaction_time.
+    STORE-OWNED TIME. Every expiry decision is taken at the store's own
+    transaction time, derived only from _wall_now() and _monotonic_now(). No
+    function here or on the store accepts a caller-selected time, and no store
+    field feeds time: the former `_clock` field is removed, because an
+    ordinary caller could use it to push authoritative time, issued_ts,
+    expires_ts and the high-water mark arbitrarily far forward — and that
+    poisoning outlived the field's removal for the life of the store.
 
     STATED BOUNDARY. Defends against ordinary mutation of any caller-reachable
     DATA and against the public weakref registry route. Does NOT defend against
@@ -109,50 +138,20 @@ def _make_issuance_authority():
             weakref.finalize(store,_drop,key)
         return st
 
-    def _injected_now(store):
-        """The deterministic test clock, if one is set and well-formed.
-
-        A clock that raises, or returns anything but a timezone-aware datetime,
-        is ignored rather than trusted. Its only possible effect on store time
-        is to move it FORWARD — see transaction_time.
-        """
-        clock=getattr(store,"_clock",None)
-        if clock is None:
-            return None
-        try:
-            value=clock()
-        except Exception:
-            return None
-        if not isinstance(value,datetime) or value.tzinfo is None:
-            return None
-        try:
-            return value.astimezone(timezone.utc)
-        except (OverflowError,ValueError):
-            return None
-
     def transaction_time(store):
-        """The store's own transaction time. Monotonic, never slower than real.
+        """The store's own transaction time. Takes no time argument.
 
-            effective = max(wall clock,
-                            injected test clock (if any),
+            effective = max(_wall_now(),
                             last effective + real monotonic time elapsed)
 
-        Consequences, each pinned by a test:
-          * it never decreases, so a rewound clock cannot revive anything;
-          * it never freezes, because it always advances by real elapsed time
-            from its previous value — so a far-future jump followed by removing
-            the injected clock cannot leave claims alive past their TTL;
-          * an injected clock can only move time FORWARD. It can shorten a
-            claim's liveness; it can never slow, freeze, rewind or extend one.
-        A caller who sets a clock therefore obtains no lifetime and no
-        authority — only earlier expiry, which release_claim already permits.
+        Sources are the store-owned clocks only. It never decreases, so a
+        wall-clock step backwards cannot revive or extend anything, and it
+        never runs slower than real elapsed time. Calling it directly records
+        the current real time and nothing else: no caller can choose it.
         """
         st=_state(store)
-        mono=time.monotonic()
-        candidates=[datetime.now(timezone.utc)]
-        injected=_injected_now(store)
-        if injected is not None:
-            candidates.append(injected)
+        mono=_monotonic_now()
+        candidates=[_wall_now()]
         if st["last_effective"] is not None:
             elapsed=max(0.0,mono-st["last_monotonic"])
             try:
@@ -210,17 +209,52 @@ def _make_issuance_authority():
             return False,"CLAIM_LIFECYCLE_ALTERED_SINCE_ISSUANCE"
         return True,None
 
-    def terminate(store,claim_id,to_state,reason):
-        """Monotonic: ACTIVE -> terminal only. Nothing is ever revived, so this
-        grants no power beyond the public release_claim()."""
-        if to_state not in ("EXPIRED","RELEASED"):
+    def release(store,claim_id,reason):
+        """EXACTLY the public release_claim() semantics, and no more.
+
+        ACTIVE -> RELEASED only. The reason must be a non-blank string that is
+        not a store-reserved lifecycle reason, so a caller cannot record that a
+        claim expired or was consumed by a registration when it was not.
+        Expiry is never caller-invocable: only expire_due assigns EXPIRED, and
+        only when a claim is genuinely due at store time.
+        """
+        if not isinstance(reason,str) or not reason.strip():
+            return False
+        if reason.strip() in RESERVED_LIFECYCLE_REASONS:
             return False
         st=states.get(id(store))
         entry=(st["ledger"] if st else {}).get(claim_id)
         if entry is None or entry["state"]!="ACTIVE":
             return False
-        entry["state"]=to_state
+        entry["state"]="RELEASED"
         entry["reason"]=reason
+        _mirror(store,claim_id,entry)
+        return True
+
+    def consume(store,claim_id,identity):
+        """Mark a claim consumed by a registration — only if one really happened.
+
+        Requires an authentic, ACTIVE, construction-authorized claim whose
+        identity is actually present in the store's records under the claim's
+        content key. No construction authority exists today, so this always
+        refuses: invoking it directly cannot falsify a registration.
+        """
+        st=states.get(id(store))
+        entry=(st["ledger"] if st else {}).get(claim_id)
+        if entry is None or entry["state"]!="ACTIVE":
+            return False
+        held=next((c for c in store.claims
+                   if isinstance(c,ClaimRecord) and c.claim_id==claim_id),None)
+        if held is None or authenticate(store,held)!=(True,None):
+            return False
+        if held.provenance is None or held.provenance.authorizes_construction is not True:
+            return False
+        if identity is None or not any(r is identity for r in store.records):
+            return False
+        if getattr(identity,"content_key_composite",None)!=entry["content_key"]:
+            return False
+        entry["state"]="RELEASED"
+        entry["reason"]="REGISTRATION_COMPLETED"
         _mirror(store,claim_id,entry)
         return True
 
@@ -235,13 +269,16 @@ def _make_issuance_authority():
         return None
 
     def issue(store,*,content_key_composite,request_id,search_policy,normalizer,
-              include_validation_scope,issuer,ttl_seconds):
+              include_validation_scope,issuer):
         content_key_composite=str(content_key_composite or "").strip()
         request_id=str(request_id or "").strip()
         if not content_key_composite:
             return None,"CLAIM_CONTENT_KEY_REQUIRED"
         if not request_id:
             return None,"CLAIM_REQUEST_ID_REQUIRED"
+        # Lifetime is store-owned. It is read from the governed policy source,
+        # never from the caller, and validated in case that source is wrong.
+        ttl_seconds=_governed_claim_ttl_seconds()
         ttl_error=_ttl_error(ttl_seconds)
         if ttl_error:
             return None,ttl_error
@@ -330,11 +367,12 @@ def _make_issuance_authority():
             store.claims.append(rec)
             return rec,None
 
-    return (issue,authenticate,terminate,expire_due,active_claim_id,
+    return (issue,authenticate,release,consume,expire_due,active_claim_id,
             transaction_time,ledger_state)
 
-(_issue_claim,_authenticate_claim,_terminate_claim,_expire_due_claims,
- _active_claim_id,_transaction_time,_ledger_state)=_make_issuance_authority()
+(_issue_claim,_authenticate_claim,_release_claim,_consume_claim,
+ _expire_due_claims,_active_claim_id,_transaction_time,
+ _ledger_state)=_make_issuance_authority()
 
 
 @dataclass
@@ -349,11 +387,6 @@ class CanonicalIdentityStore:
     claims:list[ClaimRecord]=field(default_factory=list)
     declared_scope_status:dict=field(default_factory=dict)
     _claim_lock:RLock=field(default_factory=RLock,repr=False,compare=False)
-    # DETERMINISTIC TEST CLOCK — a supported, bounded test surface, NOT an
-    # authority. It can only move store time FORWARD (earlier expiry). It
-    # can never slow, freeze, rewind or extend a claim, and it grants no
-    # construction authority. See the issuance authority's transaction_time.
-    _clock:object=field(default=None,repr=False,compare=False)
     transitions:list[object]=field(default_factory=list)
     _transition_lock:RLock=field(default_factory=RLock,repr=False,compare=False)
 
@@ -454,8 +487,7 @@ class CanonicalIdentityStore:
     def reserve_claim(self,*,content_key_composite:str,request_id:str,
                       search_policy=None,normalizer=None,
                       include_validation_scope:bool=False,
-                      issuer:str="TRACKER",
-                      ttl_seconds:int=DEFAULT_CLAIM_TTL_SECONDS):
+                      issuer:str="TRACKER"):
         """Store-owned claim ISSUANCE. Returns (ClaimRecord|None, error|None).
 
         The caller supplies only what it wants looked up. Every fact that could
@@ -463,10 +495,9 @@ class CanonicalIdentityStore:
         store's own records, and the issued claim's exact contents are recorded
         in a closure-held ledger that no caller-reachable container can alter.
 
-        ttl_seconds is bounded by governed store policy
-        [CLAIM_TTL_MIN_SECONDS, CLAIM_TTL_MAX_SECONDS]. Non-integer,
-        non-positive and over-maximum values are refused with a structured
-        error; nothing is clamped silently and nothing can overflow.
+        Claim lifetime is STORE-OWNED: there is no lifetime parameter. The
+        governed default applies to every claim, and neither transaction time,
+        issued_ts nor expires_ts can be chosen by the caller.
 
         The reservation is PERSISTED inside the lock. A claim that is not
         persisted was never issued. A second active claim on the same content
@@ -483,7 +514,7 @@ class CanonicalIdentityStore:
                 request_id=request_id,search_policy=search_policy,
                 normalizer=normalizer,
                 include_validation_scope=include_validation_scope,
-                issuer=issuer,ttl_seconds=ttl_seconds)
+                issuer=issuer)
 
     def claim_authenticity(self,rec):
         """Read-only. (True, None) only for an unaltered claim THIS store issued."""
@@ -532,9 +563,10 @@ class CanonicalIdentityStore:
             return None,"CLAIM_NOT_ACTIVE:"+str(state)
 
     def release_claim(self,*,claim_id:str,reason:str)->bool:
-        # Only a claim this store issued can be released, and only once.
+        """Only a claim this store issued, only once, and only as RELEASED with
+        a non-reserved reason. Expiry and consumption are store-assigned."""
         with self._claim_lock:
-            return _terminate_claim(self,claim_id,"RELEASED",reason)
+            return _release_claim(self,claim_id,reason)
 
     # ---- migration gate -----------------------------------------------------
     def rows_without_content_key(self,era_id:str|None=None,include_validation:bool=False):
@@ -654,5 +686,5 @@ class CanonicalIdentityStore:
 
                 # Consumption goes through the ledger, so a consumed claim is
                 # terminal there and cannot be presented again by any copy.
-                _terminate_claim(self,held.claim_id,"RELEASED","REGISTRATION_COMPLETED")
+                _consume_claim(self,held.claim_id,identity)
                 return True,None

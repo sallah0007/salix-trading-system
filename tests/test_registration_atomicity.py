@@ -56,6 +56,16 @@ class FrozenClock:
         self.at = self.at + timedelta(seconds=seconds)
 
 
+def install_test_clock(testcase, clock):
+    """TEST-ONLY time control by code replacement: patches the store module's
+    internal wall-clock source for one test. Production has no clock surface."""
+    from unittest import mock
+    from tracker_identity import store as store_module
+    patcher = mock.patch.object(store_module, "_wall_now", clock)
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
+
+
 def policy():
     p = SearchPolicy("safe-intake", "1", "", ("current_active",), ("current_active",), {})
     return SearchPolicy(p.policy_id, p.version, p.computed_hash(),
@@ -184,7 +194,7 @@ class RegistrationAtomicity(unittest.TestCase):
         store = CanonicalIdentityStore()
         key = content_key()
         clock = FrozenClock(datetime.now(timezone.utc))
-        store._clock = clock
+        install_test_clock(self, clock)
         governed_claim(store, "REQ-A")
         # A's claim expires; B takes the key.
         clock.advance(10_000)
@@ -249,7 +259,7 @@ class RegistrationAtomicity(unittest.TestCase):
         store = CanonicalIdentityStore()
         key = content_key()
         clock = FrozenClock(datetime.now(timezone.utc))
-        store._clock = clock
+        install_test_clock(self, clock)
         governed_claim(store, "REQ-OLD")
         self.assertEqual(store.claims[0].state, "ACTIVE")
 
@@ -276,7 +286,7 @@ class RegistrationAtomicity(unittest.TestCase):
         store = CanonicalIdentityStore()
         key = content_key()
         clock = FrozenClock(datetime.now(timezone.utc))
-        store._clock = clock
+        install_test_clock(self, clock)
         governed_claim(store, "REQ-SC")
         issued_at = clock.at
         clock.advance(10_000)

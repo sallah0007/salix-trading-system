@@ -120,6 +120,22 @@ class FrozenClock:
         self.at = self.at + timedelta(seconds=seconds)
 
 
+def install_test_clock(testcase, clock):
+    """TEST-ONLY time control, by code replacement.
+
+    Replaces the store module's internal wall-clock SOURCE with `clock` for the
+    duration of one test, using unittest.mock, and restores it afterwards.
+    Production stores have no clock field, constructor argument, flag or
+    environment variable: time can only be steered by instrumenting code, which
+    is test-harness behaviour, not a production data or API surface.
+    """
+    from unittest import mock
+    from tracker_identity import store as store_module
+    patcher = mock.patch.object(store_module, "_wall_now", clock)
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
+
+
 def run(store, subject, request_id="REQ", now=None):
     return identity_lookup(store=store, subject=subject, request_id=request_id,
                            search_policy=policy(), normalizer=normalizer(), now=now)
@@ -431,7 +447,7 @@ class AtomicClaims(unittest.TestCase):
     def test_M_expired_claim_cannot_authorize_late_registration(self):
         store = verified_store()
         clock = FrozenClock(datetime.now(timezone.utc))
-        store._clock = clock
+        install_test_clock(self, clock)
         run(store, pre_id(), request_id="REQ-STALLED")
         key, _ = build_content_identity_key(content())
         clock.advance(10_000)
@@ -443,7 +459,7 @@ class AtomicClaims(unittest.TestCase):
     def test_M_expiry_frees_the_key_for_a_new_claim(self):
         store = verified_store()
         clock = FrozenClock(datetime.now(timezone.utc))
-        store._clock = clock
+        install_test_clock(self, clock)
         run(store, pre_id(), request_id="REQ-STALLED")
         clock.advance(10_000)
         fresh = run(store, pre_id(), request_id="REQ-NEW")
@@ -454,7 +470,7 @@ class AtomicClaims(unittest.TestCase):
         """Expiry is a recorded state transition, not only a time comparison."""
         store = verified_store()
         clock = FrozenClock(datetime.now(timezone.utc))
-        store._clock = clock
+        install_test_clock(self, clock)
         run(store, pre_id(), request_id="REQ-TTL")
         self.assertEqual(store.claims[0].state, "ACTIVE")
         clock.advance(10_000)
@@ -482,7 +498,7 @@ class AtomicClaims(unittest.TestCase):
         """A future timestamp cannot be injected to kill a live claim."""
         store = verified_store()
         clock = FrozenClock(datetime.now(timezone.utc))
-        store._clock = clock
+        install_test_clock(self, clock)
         run(store, pre_id(), request_id="REQ-LIVE")
         key, _ = build_content_identity_key(content())
         self.assertEqual(store.claims[0].state, "ACTIVE")
@@ -496,7 +512,7 @@ class AtomicClaims(unittest.TestCase):
         """Only the store clock decides. A stray attribute must be ignored."""
         store = verified_store()
         clock = FrozenClock(datetime.now(timezone.utc))
-        store._clock = clock
+        install_test_clock(self, clock)
         run(store, pre_id(), request_id="REQ-SIDE")
         key, _ = build_content_identity_key(content())
         store._caller_now = "2099-01-01T00:00:00+00:00"   # plausible side channel
@@ -519,7 +535,7 @@ class AtomicClaims(unittest.TestCase):
     def test_C3_injected_store_clock_still_drives_deterministic_expiry(self):
         store = verified_store()
         clock = FrozenClock(datetime.now(timezone.utc))
-        store._clock = clock
+        install_test_clock(self, clock)
         run(store, pre_id(), request_id="REQ-TTL2")
         self.assertIsNotNone(store.active_claim(
             build_content_identity_key(content())[0].composite))
