@@ -1040,3 +1040,186 @@ DO NOT MERGE.
 DESKTOP_CODER TEST PASS != MANAGER ACCEPTANCE
 CODER FINDING != SALIX DECISION
 NO_STEP_AUTO_AUTHORIZES_THE_NEXT = TRUE
+
+---
+
+# WEAKREF + STORE-OWNED TIME CORRECTION — DC-WEAKREF-TIME-HARDENING-004
+
+APPENDED. Everything above is preserved as written.
+
+FROM = DESKTOP_CODER
+TASK_ID = DC-WEAKREF-TIME-HARDENING-004
+BASE_FOR_CORRECTION = aaec2c49af0f339752a4095c9fdd9e5d39f9ab49
+IMPLEMENTATION_PARENT = 644b59facbb01c383729172f180593cec6ae0536 (verified)
+IMPLEMENTATION_SHA  = 6edc67ee540b0e73d678607f5bc8b723e667b6c2
+No prior commit was amended, squashed or rebased.
+
+GOVERNED COMMISSION OPENED = YES
+  Drive 1x2xlGrA7NeyeRri6OAgAv6CAkvfnq2Cm_B0uWgzdSIg, read in full, read-only.
+
+## CORRECTION TO MY OWN PRIOR RETURN
+
+At 644b59f I wrote that the ledger was "never a store attribute and never a
+module attribute, so no ordinary container mutation can reach it". That was
+FALSE. Cleanup was registered as weakref.finalize(store, ledgers.pop, key).
+`ledgers.pop` is a bound method; its __self__ is the ledger; and
+weakref.finalize publishes its callback through the public peek() API.
+
+## ALL DEFECTS REPRODUCED AT BASE BEFORE ANY EDIT
+
+  CR-R1     fin.peek()[1].__self__ IS the ledger dict. Snapshot rewritten
+            through it, no __closure__ used -> committed=True, rows=1
+  MR-TIME-1 _expire_due_claims(store, "2999-...") force-expired a live claim
+  MR-TIME-2 far-future injected clock, then removed -> claim expires_ts
+            2999-01-01T00:15, still active on the real clock
+            ttl_seconds=-5 -> claim created already expired
+  LR-TIME-1 ttl_seconds=10**12 -> UNHANDLED OverflowError
+
+## CORRECTIONS
+
+1 CR-R1. Cleanup is now `_drop(key)`, a plain closure-local function taking
+  only the integer store id. Verified via public peek(): exactly one finalizer
+  per store, func.__self__ is None, args == (id(store),), and no dict/list/set
+  is reachable from func, args or kwargs. The ledger is not merely renamed or
+  hidden: nothing in the registry owns or contains it.
+
+2 STORE-OWNED TIME. No method on the store and no callable in the store module
+  accepts a time parameter (asserted by signature scan across both, NC-W5).
+  `_expire_due`, `_active_claim_at_locked` and `_expire_due_claims` lost their
+  now_iso parameters. Liveness at validation and registration reads the ledger
+  at store time, not a record predicate given a supplied timestamp.
+
+  The store derives a per-store monotonic effective time, held in the closure:
+
+      effective = max(wall clock, injected test clock, last + real elapsed)
+
+  It never decreases, never freezes, never runs slower than real time.
+
+  Two simpler designs were rejected on evidence, not preference:
+    * anchoring expiry to the wall clock alone breaks deterministic tests that
+      advance the clock and then issue — new claims are born expired;
+    * a plain high-water mark lets one far-future jump FREEZE effective time,
+      so claims outlive their TTL in real time — the MR-TIME-2 defect again.
+
+3 TTL. Bounded to [CLAIM_TTL_MIN_SECONDS=1, CLAIM_TTL_MAX_SECONDS=governed
+  default 900]. Structured refusals: CLAIM_TTL_INVALID_TYPE (including bool,
+  since True is an int), CLAIM_TTL_NOT_POSITIVE, CLAIM_TTL_EXCEEDS_GOVERNED_
+  MAXIMUM. Nothing is silently clamped. Arithmetic near datetime.max saturates
+  or returns CLAIM_EXPIRY_OVERFLOW; nothing raises. Enforced inside the single
+  writer, so direct invocation is bounded too.
+
+## EXACT SUPPORTED TEST-CLOCK BOUNDARY (NC-W9)
+
+`store._clock` remains settable. It must: test_pre_id_content_identity.py,
+which this commission does not authorise me to edit, assigns it after
+construction in six tests. Its power is now bounded precisely:
+
+  * it can only move store time FORWARD — earlier expiry, a liveness effect
+    that release_claim() already grants any caller;
+  * it cannot slow, freeze, rewind or extend any claim;
+  * a past, naive, malformed or raising clock is IGNORED, not trusted;
+  * it grants no construction authority (NC-W9b).
+
+A far-future jump followed by removing the clock no longer extends anything:
+NC-W6b proves this with REAL elapsed time — a 1-second claim issued under a
+2999 clock dies after ~1.25 s of wall time once the clock is removed.
+
+## MANDATORY NEGATIVE CONTROLS — ALL PASS
+
+  NC-W1  finalize registry exposes no ledger via bound-method owner   W01, W01b
+  NC-W2  synthetic claim + every store container stuffed -> unauthentic W02
+  NC-W3  genuine provenance replacement rejected                       W03
+  NC-W4  cross-store replay rejected                                   W04
+  NC-W5  no store/module callable accepts caller-selected time         W05, W05b
+  NC-W6  caller cannot extend lifetime (over-max TTL; real-time jump)  W06, W06b
+  NC-W7  negative / zero TTL refused, no expired-at-birth claim        W07
+  NC-W8  oversized / malformed TTL structured; datetime.max saturates  W08, W08b, W08c
+  NC-W9  test clock forward-only, ignores past/naive/malformed/raising W09, W09a, W09c
+         and grants no authority                                       W09b
+  NC-W10 rewind cannot revive expired or released claims               W10
+  NC-W11 one-active-claim-per-key intact                               W11
+  NC-W12 construction-authorized path absent                           W12, R6
+  NC-W13 policy + normalizer registries PASS                           W13
+  NC-W14 import/direct-mutation residual OPEN and untouched            W14, C12
+
+## TESTS
+
+PYTHON = 3.12.10  (C:\Users\salla\AppData\Local\Programs\Python\Python312\python.exe)
+TARGETED = <PY> -m unittest tests.test_identity_surface  -> Ran 124 — OK
+FULL     = <PY> -m unittest discover -s tests            -> Ran 256 — OK
+  TOTAL=256 PASSED=256 FAILED=0 ERRORS=0 SKIPPED=0
+Suite time rose to ~1.4 s. That is NC-W6b's deliberate real-time sleep, the
+only way to prove non-extension without trusting the clock under test.
+Baseline at BASE_SHA was 155. No test deleted. No safety assertion weakened.
+
+## MUTATION RESULT
+
+NEW GUARDS (this task) — 17 mutated.
+  First sweep: 14 killed, 3 SURVIVED:
+    T4  naive injected datetime accepted     SURVIVED -> killed by W09a
+    T14 negative monotonic elapsed allowed   SURVIVED -> killed by W09c
+    T15 elapsed-add overflow unguarded       SURVIVED -> killed by W08c
+  T4 survived because datetime.astimezone() silently reinterprets a naive
+  value as LOCAL time instead of raising, so the mutant's jump still looked
+  monotonic. T14 and T15 are unreachable with a real clock (monotonic time
+  never regresses; two fast calls can see zero elapsed on Windows' ~15 ms
+  tick), so both are driven deterministically by patching the store's clock
+  source with unittest.mock.
+  FINAL: 17 killed, 0 surviving.
+
+PRIOR AUTHENTICITY GUARDS — regression sweep on the new code, 14 mutated.
+  The ledger was restructured in this task, so every prior guard was re-run.
+  A1-A8, A10-A14: all still KILLED.
+  A9 superseded by T12 (expiry from the ledger), killed.
+  A15 consumption recorded in the ledger at commit: SURVIVES.
+
+COMBINED = 31 guards mutated, 30 killed, 1 surviving.
+
+ALL SURVIVING MUTANTS:
+  A15 — the claim-consumption step after a SUCCESSFUL registration. It cannot
+  be reached: registration never succeeds, because no construction authority
+  exists. Unchanged from the previous round, unkillable by construction, and
+  not counted as evidence. It becomes testable when a governed construction
+  order exists.
+
+## STATED BOUNDARY — UNCHANGED, RESTATED
+
+DEFENDED: ordinary mutation of any caller-reachable DATA, and now the public
+weakref registry route.
+NOT DEFENDED, and not claimed: CODE replacement (rebinding store methods or
+module functions) and reflection on closure cells (fn.__closure__), gc,
+ctypes. `_drop` still closes over the state dict — reachable through
+_drop.__closure__, which is reflection, the stated boundary.
+
+## CHANGED FILES
+
+  tracker_identity/store.py
+  tests/test_identity_surface.py
+  coder_returns/C-GOLD-ID-GATE-HARDENING-001.md   (this append)
+
+All three are on the allowed list. models.py, test_registration_atomicity.py
+and test_safe_intake_era.py were NOT needed and were not modified.
+test_pre_id_content_identity.py (not allowed this round) was not modified, and
+its six post-construction `_clock` assignments still pass. population/**,
+.github/**, CLAUDE.md, importer.py untouched.
+
+## RETURN
+
+CR_R1_CLOSED = YES
+STORE_OWNED_TIME_RESTORED = YES
+CALLER_SELECTED_TTL_BLOCKED = YES   (bounded to [1, governed default])
+OVERFLOW_STRUCTURED_FAILURE = YES
+CROSS_STORE_REPLAY_BLOCKED = YES
+POST_ISSUANCE_CONTENT_MUTATION_BLOCKED = YES   (data mutation; see boundary)
+CONSTRUCTION_AUTHORIZED_PATH_EXISTS = NO
+IMPORT_PATH_AUTHORITY_RESIDUAL = OPEN
+FULL_TEST_RESULT = Ran 256 tests — OK (0 failed, 0 errors, 0 skipped)
+MUTATION_RESULT = 31 guards, 30 killed, 1 surviving (A15, unreachable)
+PRIOR_RETURN_CORRECTED = YES  (644b59f ledger-unreachability claim was false)
+TECHNICALLY_READY_FOR_MANAGER_RECONCILIATION = YES
+PR_CREATED = NO   MERGED = NO
+
+DESKTOP_CODER TEST PASS != MANAGER ACCEPTANCE
+REVIEW_CODER FINDING != MANAGER DECISION
+NO_STEP_AUTO_AUTHORIZES_THE_NEXT = TRUE
+DO NOT MERGE.
