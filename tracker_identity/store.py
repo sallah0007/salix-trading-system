@@ -1,5 +1,6 @@
 import hashlib
 import json
+import time
 import uuid
 import weakref
 from dataclasses import dataclass, field, fields, replace
@@ -51,53 +52,117 @@ def _claim_snapshot(rec)->str:
         "provenance":_provenance_facts(rec.provenance),
     },sort_keys=True,separators=(",",":"),default=repr)
 
+# Governed claim-lifetime policy. Callers may request a lifetime only inside
+# these bounds; anything else is refused with a structured error rather than
+# silently clamped. The maximum IS the governed default, so no caller can
+# obtain a claim that outlives what the store would have issued unasked.
+CLAIM_TTL_MIN_SECONDS=1
+CLAIM_TTL_MAX_SECONDS=DEFAULT_CLAIM_TTL_SECONDS
+
 def _make_issuance_authority():
     """Build the store-owned issuance authority from FUNCTION-LOCAL state.
 
-    WHY THIS EXISTS (CR-1 / CR-2). The previous revision proved issuance with
-    `store._issued_claim_ids`, an ordinary set: a caller could add any claim id
-    to it (CR-1), or replace the provenance of a genuinely issued claim in the
-    public `claims` list while its id stayed "issued" (CR-2). Both reached a
-    canonical row write. Membership in a mutable container is not proof, and
-    an underscore is not access control.
+    WHY THIS EXISTS (CR-1 / CR-2). Issuance was once proved by membership in
+    an ordinary set, and the authority bit was read from a record the caller
+    could replace. Both reached a canonical row write.
 
-    DESIGN. The ledger below is a dict that lives only in this closure — it is
-    never a store attribute and never a module attribute, so no ordinary
-    container mutation can reach it. For every claim it records an exact
-    canonical snapshot of the issued facts plus the authoritative lifecycle.
-    A claim is authentic only if its current contents reproduce that snapshot
-    EXACTLY and its lifecycle matches the ledger's. No key, no MAC, no secret:
-    authenticity is equality with a record only the issuer can write.
+    DESIGN. Per-store state lives only in this closure. For every claim the
+    ledger records an exact canonical snapshot of the issued facts plus the
+    authoritative lifecycle. A claim is authentic only if its current contents
+    reproduce that snapshot EXACTLY and its lifecycle matches the ledger's.
+    No key, no MAC, no secret: authenticity is equality with a record only the
+    issuer can write. There is exactly ONE writer, it takes raw lookup inputs
+    only, and no function accepts a caller-built record to "seal".
 
-    There is exactly ONE writer, `issue`, and it accepts only the raw inputs a
-    lookup is entitled to supply. It re-derives every authority-bearing fact
-    from the store's own records and generates the claim id, the lookup result
-    id, both timestamps and the evidence hash itself. There is deliberately NO
-    function that accepts a caller-built record or provenance to "seal": such a
-    function would be a signer, and any in-process signer is callable by the
-    caller too. Invoking `issue` directly is therefore indistinguishable from
-    a legitimate issuance — it cannot mint construction authority.
+    CR-R1 (corrected here). A previous revision registered per-store cleanup
+    as weakref.finalize(store, ledgers.pop, key). `ledgers.pop` is a BOUND
+    METHOD whose owner is the ledger dict, and weakref.finalize keeps its
+    callback in a process-wide registry readable through the public peek()
+    API. So `fin.peek()[1].__self__` handed the ledger to any caller, without
+    reflection. Cleanup is now a plain closure-local function taking only the
+    integer key, so the registry holds no object that owns the ledger.
 
-    Ledgers are per store, keyed by object identity and dropped when the store
-    is collected, so a claim issued by one store is unknown to every other.
+    STORE-OWNED TIME (corrected here). Every expiry decision is taken at the
+    store's own transaction time, obtained inside this closure. No function
+    here or on the store accepts a caller-selected time. See transaction_time.
 
-    STATED BOUNDARY. This defends against mutation of any ordinary
-    caller-reachable DATA: lists, sets, dicts, record fields, provenance
-    fields, frozen-record reconstruction, copying, cross-store replay. It does
-    NOT defend against replacing CODE — rebinding store methods or module
-    functions — nor against reflection on closure cells (fn.__closure__), gc,
-    or ctypes. No pure in-process Python design can; none is claimed.
+    STATED BOUNDARY. Defends against ordinary mutation of any caller-reachable
+    DATA and against the public weakref registry route. Does NOT defend against
+    replacing CODE (rebinding store methods or module functions) or against
+    reflection on closure cells (fn.__closure__), gc, or ctypes. No pure
+    in-process Python design can; none is claimed.
     """
-    ledgers={}
+    states={}
 
-    def _entries(store,create=False):
+    def _drop(key):
+        # Plain function, integer argument. Deliberately NOT `states.pop`: a
+        # bound method's __self__ is its owner, and weakref.finalize publishes
+        # its callback through peek().
+        states.pop(key,None)
+
+    def _state(store):
         key=id(store)
-        led=ledgers.get(key)
-        if led is None and create:
-            led={}
-            ledgers[key]=led
-            weakref.finalize(store,ledgers.pop,key,None)
-        return led
+        st=states.get(key)
+        if st is None:
+            st={"ledger":{},"last_effective":None,"last_monotonic":None}
+            states[key]=st
+            weakref.finalize(store,_drop,key)
+        return st
+
+    def _injected_now(store):
+        """The deterministic test clock, if one is set and well-formed.
+
+        A clock that raises, or returns anything but a timezone-aware datetime,
+        is ignored rather than trusted. Its only possible effect on store time
+        is to move it FORWARD — see transaction_time.
+        """
+        clock=getattr(store,"_clock",None)
+        if clock is None:
+            return None
+        try:
+            value=clock()
+        except Exception:
+            return None
+        if not isinstance(value,datetime) or value.tzinfo is None:
+            return None
+        try:
+            return value.astimezone(timezone.utc)
+        except (OverflowError,ValueError):
+            return None
+
+    def transaction_time(store):
+        """The store's own transaction time. Monotonic, never slower than real.
+
+            effective = max(wall clock,
+                            injected test clock (if any),
+                            last effective + real monotonic time elapsed)
+
+        Consequences, each pinned by a test:
+          * it never decreases, so a rewound clock cannot revive anything;
+          * it never freezes, because it always advances by real elapsed time
+            from its previous value — so a far-future jump followed by removing
+            the injected clock cannot leave claims alive past their TTL;
+          * an injected clock can only move time FORWARD. It can shorten a
+            claim's liveness; it can never slow, freeze, rewind or extend one.
+        A caller who sets a clock therefore obtains no lifetime and no
+        authority — only earlier expiry, which release_claim already permits.
+        """
+        st=_state(store)
+        mono=time.monotonic()
+        candidates=[datetime.now(timezone.utc)]
+        injected=_injected_now(store)
+        if injected is not None:
+            candidates.append(injected)
+        if st["last_effective"] is not None:
+            elapsed=max(0.0,mono-st["last_monotonic"])
+            try:
+                candidates.append(st["last_effective"]+timedelta(seconds=elapsed))
+            except OverflowError:
+                candidates.append(datetime.max.replace(tzinfo=timezone.utc))
+        effective=max(candidates)
+        st["last_effective"]=effective
+        st["last_monotonic"]=mono
+        return effective
 
     def _mirror(store,claim_id,entry):
         # Keep the public, display-only lifecycle copy in step with the ledger.
@@ -105,24 +170,36 @@ def _make_issuance_authority():
             if isinstance(c,ClaimRecord) and c.claim_id==claim_id:
                 store.claims[i]=replace(c,state=entry["state"],release_reason=entry["reason"])
 
-    def expire_due(store,now_iso):
-        for claim_id,entry in (_entries(store) or {}).items():
-            if entry["state"]=="ACTIVE" and now_iso>=entry["expires_ts"]:
+    def expire_due(store):
+        """Expire at the STORE'S transaction time. Accepts no time argument."""
+        st=states.get(id(store))
+        if st is None:
+            return
+        now=transaction_time(store)
+        for claim_id,entry in st["ledger"].items():
+            if entry["state"]=="ACTIVE" and now>=entry["expires_at"]:
                 entry["state"]="EXPIRED"
                 entry["reason"]="TTL_EXPIRED"
                 _mirror(store,claim_id,entry)
 
     def active_claim_id(store,content_key_composite):
-        for claim_id,entry in (_entries(store) or {}).items():
+        st=states.get(id(store))
+        for claim_id,entry in (st["ledger"] if st else {}).items():
             if entry["content_key"]==content_key_composite and entry["state"]=="ACTIVE":
                 return claim_id
         return None
+
+    def ledger_state(store,claim_id):
+        st=states.get(id(store))
+        entry=(st["ledger"] if st else {}).get(claim_id)
+        return None if entry is None else entry["state"]
 
     def authenticate(store,rec):
         """(True, None) only for an unaltered claim THIS store issued."""
         if type(rec) is not ClaimRecord:
             return False,"CLAIM_RECORD_TYPE_NOT_AUTHENTIC"
-        entry=(_entries(store) or {}).get(rec.claim_id)
+        st=states.get(id(store))
+        entry=(st["ledger"] if st else {}).get(rec.claim_id)
         if entry is None:
             return False,"CLAIM_NOT_ISSUED_BY_THIS_STORE"
         if rec.provenance is not None and type(rec.provenance) is not ClaimProvenance:
@@ -138,13 +215,24 @@ def _make_issuance_authority():
         grants no power beyond the public release_claim()."""
         if to_state not in ("EXPIRED","RELEASED"):
             return False
-        entry=(_entries(store) or {}).get(claim_id)
+        st=states.get(id(store))
+        entry=(st["ledger"] if st else {}).get(claim_id)
         if entry is None or entry["state"]!="ACTIVE":
             return False
         entry["state"]=to_state
         entry["reason"]=reason
         _mirror(store,claim_id,entry)
         return True
+
+    def _ttl_error(ttl_seconds):
+        # bool is an int subclass; True must not pass as a one-second lifetime.
+        if isinstance(ttl_seconds,bool) or not isinstance(ttl_seconds,int):
+            return "CLAIM_TTL_INVALID_TYPE"
+        if ttl_seconds<CLAIM_TTL_MIN_SECONDS:
+            return "CLAIM_TTL_NOT_POSITIVE"
+        if ttl_seconds>CLAIM_TTL_MAX_SECONDS:
+            return "CLAIM_TTL_EXCEEDS_GOVERNED_MAXIMUM"
+        return None
 
     def issue(store,*,content_key_composite,request_id,search_policy,normalizer,
               include_validation_scope,issuer,ttl_seconds):
@@ -154,6 +242,9 @@ def _make_issuance_authority():
             return None,"CLAIM_CONTENT_KEY_REQUIRED"
         if not request_id:
             return None,"CLAIM_REQUEST_ID_REQUIRED"
+        ttl_error=_ttl_error(ttl_seconds)
+        if ttl_error:
+            return None,ttl_error
         policy_errors=resolve_governed_search_policy(search_policy)
         if policy_errors:
             return None,"CLAIM_SEARCH_POLICY_NOT_GOVERNED:"+",".join(policy_errors)
@@ -211,35 +302,40 @@ def _make_issuance_authority():
             lookup_result_id=str(uuid.uuid4()),
             issuance_evidence_hash=_hash_facts(verified),
         )
-        now_iso=store._now_iso()
-        now=datetime.fromisoformat(now_iso)
         with store._claim_lock:
-            expire_due(store,now_iso)
+            expire_due(store)
             existing=active_claim_id(store,content_key_composite)
             if existing is not None:
                 return None,"PENDING_CLAIM_EXISTS:"+existing
+            now=transaction_time(store)
+            try:
+                expires_at=now+timedelta(seconds=ttl_seconds)
+            except OverflowError:
+                return None,"CLAIM_EXPIRY_OVERFLOW"
             rec=ClaimRecord(
                 claim_id=f"claim-{uuid.uuid4()}",
                 content_key_composite=content_key_composite,
                 request_id=request_id,issuer=str(issuer),
-                issued_ts=now_iso,
-                expires_ts=(now+timedelta(seconds=ttl_seconds)).isoformat(),
+                issued_ts=now.isoformat(),
+                expires_ts=expires_at.isoformat(),
                 state="ACTIVE",
                 provenance=provenance,
             )
-            _entries(store,create=True)[rec.claim_id]={
+            _state(store)["ledger"][rec.claim_id]={
                 "snapshot":_claim_snapshot(rec),
                 "state":"ACTIVE","reason":None,
-                "expires_ts":rec.expires_ts,
+                "expires_at":expires_at,
                 "content_key":content_key_composite,
             }
             store.claims.append(rec)
             return rec,None
 
-    return issue,authenticate,terminate,expire_due,active_claim_id
+    return (issue,authenticate,terminate,expire_due,active_claim_id,
+            transaction_time,ledger_state)
 
-(_issue_claim,_authenticate_claim,_terminate_claim,
- _expire_due_claims,_active_claim_id)=_make_issuance_authority()
+(_issue_claim,_authenticate_claim,_terminate_claim,_expire_due_claims,
+ _active_claim_id,_transaction_time,_ledger_state)=_make_issuance_authority()
+
 
 @dataclass
 class CanonicalIdentityStore:
@@ -253,6 +349,10 @@ class CanonicalIdentityStore:
     claims:list[ClaimRecord]=field(default_factory=list)
     declared_scope_status:dict=field(default_factory=dict)
     _claim_lock:RLock=field(default_factory=RLock,repr=False,compare=False)
+    # DETERMINISTIC TEST CLOCK — a supported, bounded test surface, NOT an
+    # authority. It can only move store time FORWARD (earlier expiry). It
+    # can never slow, freeze, rewind or extend a claim, and it grants no
+    # construction authority. See the issuance authority's transaction_time.
     _clock:object=field(default=None,repr=False,compare=False)
     transitions:list[object]=field(default_factory=list)
     _transition_lock:RLock=field(default_factory=RLock,repr=False,compare=False)
@@ -284,16 +384,13 @@ class CanonicalIdentityStore:
 
     # ---- transaction time --------------------------------------------------
     def _now_iso(self)->str:
-        """Store-owned transaction time.
+        """Store-owned transaction time, as an ISO string.
 
-        Production callers cannot supply it. Expiry, identity re-check and
-        claim consumption all read the SAME internally obtained time, so a
-        caller cannot widen an expiry window by passing a past timestamp.
-        Deterministic tests inject a store-owned clock, never a per-call value.
+        Obtained from the issuance authority's monotonic effective clock. No
+        caller can supply it, and no method anywhere accepts a caller-selected
+        time for an expiry decision.
         """
-        if self._clock is not None:
-            return self._clock().isoformat()
-        return datetime.now(timezone.utc).isoformat()
+        return _transaction_time(self).isoformat()
 
     # ---- scope reachability -------------------------------------------------
     def scope_status(self,scope:str,era_id:str|None=None)->str:
@@ -319,20 +416,23 @@ class CanonicalIdentityStore:
         self.declared_scope_status[scope]=status
 
     # ---- atomic claim reservation ------------------------------------------
-    def _expire_due(self,now_iso:str)->None:
-        # Expiry is decided from the LEDGER's issued expires_ts, never from the
-        # mirror record, so editing a record's timestamp cannot extend a claim.
-        _expire_due_claims(self,now_iso)
+    def _expire_due(self)->None:
+        """Expire due claims at the STORE'S transaction time.
 
-    def _active_claim_at_locked(self,content_key_composite:str,now_iso:str)->Optional[ClaimRecord]:
-        """Caller MUST already hold _claim_lock and MUST have obtained now_iso
-        from _now_iso(). Private: the timestamp may only come from the
-        store-owned clock, never from outside the store.
+        Takes no time argument. A previous revision accepted now_iso here and
+        in the module-level helper, which let a caller force expiry at a time
+        of its own choosing.
+        """
+        _expire_due_claims(self)
+
+    def _active_claim_at_locked(self,content_key_composite:str)->Optional[ClaimRecord]:
+        """Caller MUST already hold _claim_lock. Takes no time argument: the
+        store derives its own transaction time.
 
         'Active' is the LEDGER's verdict, not the mirror's. Flipping a mirror
         record's state cannot hide a pending claim or fake one.
         """
-        self._expire_due(now_iso)
+        self._expire_due()
         claim_id=_active_claim_id(self,content_key_composite)
         if claim_id is None:
             return None
@@ -349,7 +449,7 @@ class CanonicalIdentityStore:
         kill a legitimately ACTIVE claim, so no such parameter exists.
         """
         with self._claim_lock:
-            return self._active_claim_at_locked(content_key_composite,self._now_iso())
+            return self._active_claim_at_locked(content_key_composite)
 
     def reserve_claim(self,*,content_key_composite:str,request_id:str,
                       search_policy=None,normalizer=None,
@@ -359,23 +459,23 @@ class CanonicalIdentityStore:
         """Store-owned claim ISSUANCE. Returns (ClaimRecord|None, error|None).
 
         The caller supplies only what it wants looked up. Every fact that could
-        confer authority — governed bindings, scope reachability, the absence
-        itself, the claim id, the lookup result id, both timestamps and the
-        evidence hash — is established by the issuance authority from this
-        store's own records. The issued claim's exact contents are recorded in
-        a closure-held ledger that no caller-reachable container can alter, and
-        registration later requires the presented claim to reproduce them.
+        confer authority is established by the issuance authority from this
+        store's own records, and the issued claim's exact contents are recorded
+        in a closure-held ledger that no caller-reachable container can alter.
+
+        ttl_seconds is bounded by governed store policy
+        [CLAIM_TTL_MIN_SECONDS, CLAIM_TTL_MAX_SECONDS]. Non-integer,
+        non-positive and over-maximum values are refused with a structured
+        error; nothing is clamped silently and nothing can overflow.
 
         The reservation is PERSISTED inside the lock. A claim that is not
         persisted was never issued. A second active claim on the same content
         key is refused, never granted.
         """
-        now_iso=self._now_iso()
         with self._claim_lock:
             # Private locked helper: lock ownership and time ownership are both
             # explicit, and no public method is re-entered while holding a lock.
-            existing=self._active_claim_at_locked(
-                str(content_key_composite or "").strip(),now_iso)
+            existing=self._active_claim_at_locked(str(content_key_composite or "").strip())
             if existing is not None:
                 return None,"PENDING_CLAIM_EXISTS:"+existing.claim_id
             return _issue_claim(
@@ -419,15 +519,17 @@ class CanonicalIdentityStore:
         B claims and registers -> A returns. A's expired claim must not
         authorize a late duplicate registration.
         """
-        now_iso=self._now_iso()
         with self._claim_lock:
-            self._expire_due(now_iso)
+            self._expire_due()
             c,error=self._authentic_match_locked(content_key_composite,request_id)
             if c is None:
                 return None,error
-            if c.state=="ACTIVE" and c.is_active_at(now_iso):
+            # Liveness is the LEDGER's verdict at store time, not a record
+            # predicate evaluated against a supplied timestamp.
+            state=_ledger_state(self,c.claim_id)
+            if state=="ACTIVE":
                 return c,None
-            return None,"CLAIM_NOT_ACTIVE:"+c.state
+            return None,"CLAIM_NOT_ACTIVE:"+str(state)
 
     def release_claim(self,*,claim_id:str,reason:str)->bool:
         # Only a claim this store issued can be released, and only once.
@@ -474,7 +576,6 @@ class CanonicalIdentityStore:
 
         Returns (True, None) or (False, error).
         """
-        now_iso=self._now_iso()   # NOT caller-controlled
         request_id=str(request_id or "").strip()
         content_key_composite=str(content_key_composite or "").strip() or None
         with self._transition_lock:
@@ -484,7 +585,7 @@ class CanonicalIdentityStore:
                 if content_key_composite is None:
                     return False,"CONTENT_KEY_REQUIRED_FOR_REGISTRATION"
 
-                self._expire_due(now_iso)
+                self._expire_due()
                 # AUTHENTICITY FIRST (CR-1 / CR-2). The claim must reproduce,
                 # exactly, the contents this store recorded when it issued it,
                 # and its lifecycle must match the ledger. Membership of an id
@@ -494,10 +595,11 @@ class CanonicalIdentityStore:
                     content_key_composite,request_id)
                 if held is None:
                     return False,auth_error
-                # Safe to read from `held` now: its timestamps and state have
-                # just been proven equal to the ledger's.
-                if not held.is_active_at(now_iso):
-                    return False,"CLAIM_NOT_ACTIVE:"+held.state
+                # Liveness is the LEDGER's verdict at store time. Expiry was
+                # applied just above, so ACTIVE here means genuinely unexpired.
+                ledger_state=_ledger_state(self,held.claim_id)
+                if ledger_state!="ACTIVE":
+                    return False,"CLAIM_NOT_ACTIVE:"+str(ledger_state)
 
                 # A competing worker may have registered while this one paused.
                 for r in self.records:
