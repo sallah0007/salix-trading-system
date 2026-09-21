@@ -7,9 +7,12 @@ from tracker_identity import (
 )
 from tracker_identity import (
     MANDATORY_DUPLICATE_CONTROL_SCOPES,
-    BuiltIdentityCandidate, CanonicalEraBoundary, FeatureDefinitionRecord,
+    BuiltIdentityCandidate, CanonicalEraBoundary, ClaimRecord,
+    FeatureDefinitionRecord,
     build_content_identity_key, composer_boundary_outcome,
-    governed_search_policy, resolve_governed_search_policy,
+    governed_normalizer, governed_search_policy,
+    resolve_governed_normalizer, resolve_governed_normalizer_binding,
+    resolve_governed_search_policy,
     safe_intake_built_identity,
 )
 
@@ -770,29 +773,130 @@ class GateHardeningNegativeControls(unittest.TestCase):
         self.assertNotEqual(as_int.composite,as_str.composite)
 
 class ManagerReAttackC1R(unittest.TestCase):
-    """C-1R: an ACTIVE claim is not governed construction authority.
+    """C-1R / DC-AUTHORITY-ISSUANCE: authority is ISSUED by its owner.
 
-    Before this correction a caller could compute a content key, call
-    reserve_claim() directly, and redeem the result at registration without any
-    completed identity_lookup. The claim bound nothing about its origin.
+    REVIEW_CODER demonstrated that a caller could hand-build a ClaimProvenance,
+    copy the PUBLIC governed policy binding, invent normalizer values, have
+    reserve_claim accept it, then self-bind fabricated evidence strings and end
+    up with a claim that looked fully provenance-bound. The flow is now
+    inverted: the store establishes every fact itself and constructs the
+    provenance, and no public entry point accepts one.
     """
 
-    def test_R1_direct_reserve_claim_then_intake_fails(self):
+    def test_P1_caller_cannot_reserve_with_hand_built_provenance(self):
+        """reserve_claim no longer has a provenance parameter at all."""
+        import inspect
+        params=inspect.signature(CanonicalIdentityStore.reserve_claim).parameters
+        self.assertNotIn("provenance",params)
+        store=CanonicalIdentityStore()
+        with self.assertRaises(TypeError):
+            store.reserve_claim(content_key_composite=gate_key().composite,
+                                request_id="REQ-P1",provenance=object())
+
+    def test_P2_copying_the_public_policy_binding_confers_nothing(self):
+        """The governed binding is public. Presenting it is not authority."""
+        gov=governed_search_policy()
+        self.assertEqual(resolve_governed_search_policy(gov),())
+        store=CanonicalIdentityStore()          # scopes NOT proven reachable
+        rec,err=store.reserve_claim(content_key_composite=gate_key().composite,
+                                    request_id="REQ-P2",search_policy=gov,
+                                    normalizer=governed_normalizer())
+        self.assertIsNone(rec)
+        self.assertTrue(err.startswith("CLAIM_SCOPE_NOT_PROVEN_REACHABLE"),err)
+        self.assertEqual(store.claims,[])
+
+    def test_P3_P4_caller_cannot_supply_result_id_or_evidence_hash(self):
+        """Both identifiers are store-generated; no entry point accepts them."""
+        import inspect
+        params=inspect.signature(CanonicalIdentityStore.reserve_claim).parameters
+        for forbidden in ("lookup_result_id","issuance_evidence_hash",
+                          "lookup_evidence_hash","lookup_complete","lookup_outcome",
+                          "semantic_uniqueness","authorizes_construction"):
+            self.assertNotIn(forbidden,params,forbidden)
+        store=CanonicalIdentityStore()
+        result=governed_claim(store,"REQ-P34")
+        prov=store.claims[0].provenance
+        self.assertTrue(prov.store_issued)
+        self.assertEqual(prov.lookup_result_id,result.lookup_result_id)
+        self.assertEqual(len(prov.issuance_evidence_hash),64)
+
+    def test_P5_no_public_evidence_binder_exists(self):
+        """bind_lookup_evidence was removed, not merely tightened."""
+        self.assertFalse(hasattr(CanonicalIdentityStore,"bind_lookup_evidence"))
+        import inspect
+        from tracker_identity import store as store_module
+        self.assertNotIn("def bind_lookup_evidence",inspect.getsource(store_module))
+
+    def test_P6_P7_real_governed_lookup_issues_a_genuine_claim(self):
+        store=CanonicalIdentityStore()
+        result=governed_claim(store,"REQ-P6")
+        self.assertEqual(result.outcome,LookupOutcome.ABSENT_EXACT_STRUCTURAL_IN_ERA_1)
+        claim=store.claims[0]
+        self.assertIn(claim.claim_id,store._issued_claim_ids)
+        prov=claim.provenance
+        self.assertIsNotNone(prov)
+        self.assertTrue(prov.lookup_complete)
+        self.assertEqual(prov.completeness_errors(),())
+        self.assertFalse(prov.authorizes_construction)
+        self.assertFalse(result.absent_claim_token.authorizes_construction)
+        self.assertEqual(prov.semantic_uniqueness,"UNRESOLVED_NOT_CERTIFIED")
+
+    def test_P8_genuine_claim_fails_registration_at_authority_gate(self):
+        store=CanonicalIdentityStore()
+        governed_claim(store,"REQ-P8")
+        r=gate_intake(store,gate_candidate(claim_request_id="REQ-P8"))
+        self.assertFalse(r.accepted)
+        self.assertTrue(any("CLAIM_NOT_CONSTRUCTION_AUTHORIZED" in e for e in r.errors),
+                        r.errors)
+        self.assertEqual(store.all(),())
+
+    def test_P9_lookalike_claim_cannot_become_equivalent_to_a_genuine_one(self):
+        """A structurally perfect forgery, injected by the most direct public
+        route available, is still refused: it is not in the issuance ledger."""
+        from tracker_identity import ClaimProvenance
+        gov=governed_search_policy(); n=governed_normalizer()
+        genuine_store=CanonicalIdentityStore()
+        governed_claim(genuine_store,"REQ-GEN")
+        genuine=genuine_store.claims[0]
+
+        forged_prov=ClaimProvenance(
+            request_id="REQ-FAKE",content_key_composite=gate_key().composite,
+            lookup_outcome=genuine.provenance.lookup_outcome,lookup_complete=True,
+            search_policy_id=gov.policy_id,search_policy_version=gov.version,
+            search_policy_hash=gov.policy_hash,
+            normalizer_id=n.normalizer_id,normalizer_version=n.version,
+            normalizer_hash=n.normalizer_hash,
+            semantic_uniqueness="UNRESOLVED_NOT_CERTIFIED",
+            authorizes_construction=False,
+            lookup_result_id="FABRICATED-RESULT",
+            issuance_evidence_hash="FABRICATED-HASH")
+        self.assertEqual(forged_prov.completeness_errors(),())
+        fake=ClaimRecord("claim-FAKE",gate_key().composite,"REQ-FAKE","TRACKER",
+                         genuine.issued_ts,genuine.expires_ts,"ACTIVE",None,forged_prov)
+        store=CanonicalIdentityStore()
+        store.claims.append(fake)
+        ok,error=store.commit_registration(
+            identity=keyed_row(gate_key()),creation=object(),
+            content_key_composite=gate_key().composite,request_id="REQ-FAKE")
+        self.assertFalse(ok)
+        self.assertEqual(error,"CLAIM_NOT_ISSUED_BY_THIS_STORE")
+        self.assertEqual(store.all(),())
+
+    def test_R1_direct_reserve_without_governed_inputs_fails(self):
         store=CanonicalIdentityStore()
         rec,err=store.reserve_claim(content_key_composite=gate_key().composite,
                                     request_id="REQ-DIRECT")
         self.assertIsNone(rec)
-        self.assertEqual(err,"CLAIM_PROVENANCE_REQUIRED")
+        self.assertTrue(err.startswith("CLAIM_SEARCH_POLICY_NOT_GOVERNED"),err)
         r=gate_intake(store,gate_candidate(claim_request_id="REQ-DIRECT"))
         self.assertFalse(r.accepted)
         self.assertEqual(store.all(),())
         self.assertEqual(store.claims,[])
 
-    def test_R2_direct_reserve_claim_then_direct_commit_registration_fails(self):
+    def test_R2_direct_reserve_then_direct_commit_fails(self):
         store=CanonicalIdentityStore()
-        rec,err=store.reserve_claim(content_key_composite=gate_key().composite,
-                                    request_id="REQ-D2")
-        self.assertIsNone(rec)
+        store.reserve_claim(content_key_composite=gate_key().composite,
+                            request_id="REQ-D2")
         ok,error=store.commit_registration(
             identity=keyed_row(gate_key()),creation=object(),
             content_key_composite=gate_key().composite,request_id="REQ-D2")
@@ -801,7 +905,6 @@ class ManagerReAttackC1R(unittest.TestCase):
         self.assertEqual(store.all(),())
 
     def test_R3_claim_from_incomplete_lookup_is_never_issued(self):
-        """An INCOMPLETE_LOOKUP issues no claim, so none can be redeemed."""
         store=verified_store()
         result=identity_lookup(store=store,subject=pre_id_subject(),
                                request_id="REQ-INC",
@@ -812,133 +915,124 @@ class ManagerReAttackC1R(unittest.TestCase):
         r=gate_intake(store,gate_candidate(claim_request_id="REQ-INC"))
         self.assertFalse(r.accepted)
         self.assertEqual(store.all(),())
-        # And the provenance object itself refuses an incomplete lookup.
-        from tracker_identity import ClaimProvenance
-        gov=governed_search_policy(); n=normalizer()
-        bad=ClaimProvenance(
-            request_id="REQ-INC",content_key_composite=gate_key().composite,
-            lookup_outcome=LookupOutcome.INCOMPLETE_LOOKUP.value,lookup_complete=False,
-            search_policy_id=gov.policy_id,search_policy_version=gov.version,
-            search_policy_hash=gov.policy_hash,normalizer_id=n.normalizer_id,
-            normalizer_version=n.version,normalizer_hash=n.normalizer_hash,
-            semantic_uniqueness="UNRESOLVED_NOT_CERTIFIED")
-        errors=bad.completeness_errors()
-        self.assertIn("PROVENANCE_LOOKUP_NOT_COMPLETE",errors)
-        self.assertTrue(any("PROVENANCE_OUTCOME_NOT_CLAIMABLE" in e for e in errors),errors)
 
-    def test_R4_era1_structural_absence_claim_is_not_construction_authorized(self):
-        """The governed path issues a real, fully bound claim — and it still
-        fails closed, because Era-1 absence is not global absence."""
-        store=CanonicalIdentityStore()
-        result=governed_claim(store,"REQ-ABS")
-        self.assertEqual(result.outcome,LookupOutcome.ABSENT_EXACT_STRUCTURAL_IN_ERA_1)
-        self.assertFalse(result.absent_claim_token.authorizes_construction)
-        claim=store.claims[0]
-        self.assertIsNotNone(claim.provenance)
-        self.assertTrue(claim.provenance.lookup_evidence_bound)
-        self.assertEqual(claim.provenance.lookup_result_id,result.lookup_result_id)
-        self.assertEqual(claim.provenance.lookup_evidence_hash,result.lookup_evidence_hash)
-        self.assertFalse(claim.provenance.authorizes_construction)
-        r=gate_intake(store,gate_candidate(claim_request_id="REQ-ABS"))
-        self.assertFalse(r.accepted)
-        self.assertTrue(any("CLAIM_NOT_CONSTRUCTION_AUTHORIZED" in e for e in r.errors),r.errors)
-        self.assertEqual(store.all(),())
-
-    def test_R5_fabricated_lookup_evidence_binding_fails(self):
-        from tracker_identity import ClaimProvenance
-        gov=governed_search_policy(); n=normalizer()
-        # (a) fabricated policy binding is refused at reservation
-        forged=ClaimProvenance(
-            request_id="REQ-F",content_key_composite=gate_key().composite,
-            lookup_outcome=LookupOutcome.ABSENT_EXACT_STRUCTURAL_IN_ERA_1.value,
-            lookup_complete=True,search_policy_id="attacker.policy",
-            search_policy_version="1",search_policy_hash="0"*64,
-            normalizer_id=n.normalizer_id,normalizer_version=n.version,
-            normalizer_hash=n.normalizer_hash,
-            semantic_uniqueness="CERTIFIED_UNIQUE",authorizes_construction=True)
-        store=CanonicalIdentityStore()
+    def test_R4_store_rederives_absence_rather_than_accepting_it(self):
+        """The store refuses to issue when its OWN records contradict absence."""
+        store=verified_store([keyed_row(gate_key())])
         rec,err=store.reserve_claim(content_key_composite=gate_key().composite,
-                                    request_id="REQ-F",provenance=forged)
+                                    request_id="REQ-R4",
+                                    search_policy=governed_search_policy(),
+                                    normalizer=governed_normalizer())
         self.assertIsNone(rec)
-        self.assertTrue(err.startswith("CLAIM_PROVENANCE_POLICY_NOT_GOVERNED"),err)
-        # (b) governed-looking binding, but never tied to an emitted result.
-        # authorizes_construction stays False: a caller cannot self-assert it
-        # (see test_R5c), so this isolates the evidence-binding gate, which is
-        # evaluated BEFORE the authority gate.
-        unbound=ClaimProvenance(
-            request_id="REQ-U",content_key_composite=gate_key().composite,
-            lookup_outcome=LookupOutcome.ABSENT_EXACT_STRUCTURAL_IN_ERA_1.value,
-            lookup_complete=True,search_policy_id=gov.policy_id,
-            search_policy_version=gov.version,search_policy_hash=gov.policy_hash,
-            normalizer_id=n.normalizer_id,normalizer_version=n.version,
-            normalizer_hash=n.normalizer_hash,
-            semantic_uniqueness="UNRESOLVED_NOT_CERTIFIED",authorizes_construction=False)
-        store2=CanonicalIdentityStore()
-        rec2,err2=store2.reserve_claim(content_key_composite=gate_key().composite,
-                                       request_id="REQ-U",provenance=unbound)
-        self.assertIsNotNone(rec2,err2)
-        ok,error=store2.commit_registration(
-            identity=keyed_row(gate_key()),creation=object(),
-            content_key_composite=gate_key().composite,request_id="REQ-U")
-        self.assertFalse(ok)
-        self.assertEqual(error,"CLAIM_LOOKUP_EVIDENCE_NOT_BOUND")
-        self.assertEqual(store2.all(),())
-
-    def test_R5c_construction_authority_cannot_be_self_asserted(self):
-        """Second-pass B3. Found as a COMPLETE bypass and closed.
-
-        A policy binding is public knowledge, so presenting one proves nothing
-        about authority. Before this fence a caller could forge a provenance
-        with authorizes_construction=True, reserve the claim, self-bind
-        evidence and register a row. Construction authority is now refused at
-        reservation unless it comes from a governed order — which does not yet
-        exist, so it is always refused.
-        """
-        from tracker_identity import ClaimProvenance
-        gov=governed_search_policy(); n=normalizer()
-        forged=ClaimProvenance(
-            request_id="REQ-B3",content_key_composite=gate_key().composite,
-            lookup_outcome=LookupOutcome.ABSENT_EXACT_STRUCTURAL_IN_ERA_1.value,
-            lookup_complete=True,
-            search_policy_id=gov.policy_id,search_policy_version=gov.version,
-            search_policy_hash=gov.policy_hash,       # public, freely copyable
-            normalizer_id=n.normalizer_id,normalizer_version=n.version,
-            normalizer_hash=n.normalizer_hash,
-            semantic_uniqueness="CERTIFIED_UNIQUE",authorizes_construction=True)
-        store=CanonicalIdentityStore()
-        rec,err=store.reserve_claim(content_key_composite=gate_key().composite,
-                                    request_id="REQ-B3",provenance=forged)
-        self.assertIsNone(rec)
-        self.assertEqual(err,"CONSTRUCTION_AUTHORITY_NOT_SELF_ASSERTABLE")
+        self.assertTrue(err.startswith("CLAIM_CONTENT_IDENTITY_ALREADY_PRESENT"),err)
         self.assertEqual(store.claims,[])
-        # The whole forged chain therefore dies at step one.
-        ok,error=store.commit_registration(
-            identity=keyed_row(gate_key()),creation=object(),
-            content_key_composite=gate_key().composite,request_id="REQ-B3")
-        self.assertFalse(ok)
-        self.assertEqual(error,"CLAIM_NOT_FOUND")
-        self.assertEqual(store.all(),())
 
-    def test_R5b_lookup_evidence_binding_is_write_once(self):
-        store=CanonicalIdentityStore()
-        result=governed_claim(store,"REQ-W1")
-        ok,error=store.bind_lookup_evidence(
-            claim_id=result.absent_claim_token.claim_id,
-            lookup_result_id="forged-result",lookup_evidence_hash="forged-hash")
-        self.assertFalse(ok)
-        self.assertEqual(error,"CLAIM_LOOKUP_EVIDENCE_ALREADY_BOUND")
-        self.assertEqual(store.claims[0].provenance.lookup_result_id,
-                         result.lookup_result_id)
+    def test_N1_fake_normalizer_binding_fails(self):
+        fake=NormalizerSpec("totally.made.up","99","deadbeef",
+                            ("EXACT_STRUCTURAL_IDENTITY",))
+        self.assertTrue(any("NORMALIZER_NOT_GOVERNED" in e
+                            for e in resolve_governed_normalizer(fake)))
+        result=identity_lookup(store=verified_store(),subject=pre_id_subject(),
+                               request_id="REQ-N1",
+                               search_policy=governed_search_policy(),normalizer=fake)
+        self.assertEqual(result.outcome,LookupOutcome.INCOMPLETE_LOOKUP)
+        self.assertIsNone(result.absent_claim_token)
+
+    def test_N2_self_consistent_but_ungoverned_normalizer_fails(self):
+        p=NormalizerSpec("attacker.normalizer","1","",("EXACT_STRUCTURAL_IDENTITY",))
+        spoof=NormalizerSpec(p.normalizer_id,p.version,p.computed_hash(),
+                             p.equivalence_classes)
+        self.assertEqual(spoof.completeness_errors(),())
+        self.assertIn("NORMALIZER_NOT_GOVERNED:attacker.normalizer@1",
+                      resolve_governed_normalizer(spoof))
+        store=verified_store()
+        result=identity_lookup(store=store,subject=pre_id_subject(),request_id="REQ-N2",
+                               search_policy=governed_search_policy(),normalizer=spoof)
+        self.assertEqual(result.outcome,LookupOutcome.INCOMPLETE_LOOKUP)
+        self.assertEqual(store.claims,[])
+
+    def test_N2b_ungoverned_normalizer_is_refused_at_the_LOOKUP_layer(self):
+        """Pins WHICH layer refuses it.
+
+        The store also re-resolves the normalizer, so removing the lookup-layer
+        check alone still produced INCOMPLETE_LOOKUP via the issuance refusal —
+        the two guards masked each other under mutation. Asserting the specific
+        lookup-layer error code distinguishes them.
+        """
+        p=NormalizerSpec("attacker.normalizer","1","",("EXACT_STRUCTURAL_IDENTITY",))
+        spoof=NormalizerSpec(p.normalizer_id,p.version,p.computed_hash(),
+                             p.equivalence_classes)
+        result=identity_lookup(store=verified_store(),subject=pre_id_subject(),
+                               request_id="REQ-N2B",
+                               search_policy=governed_search_policy(),normalizer=spoof)
+        self.assertTrue(any(e.startswith("NORMALIZER_NOT_GOVERNED") for e in result.errors),
+                        result.errors)
+
+    def test_N2c_ungoverned_normalizer_is_refused_at_the_ISSUANCE_layer(self):
+        """The store re-resolves independently of whatever the lookup decided."""
+        p=NormalizerSpec("attacker.normalizer","1","",("EXACT_STRUCTURAL_IDENTITY",))
+        spoof=NormalizerSpec(p.normalizer_id,p.version,p.computed_hash(),
+                             p.equivalence_classes)
+        store=verified_store()
+        rec,err=store.reserve_claim(content_key_composite=gate_key().composite,
+                                    request_id="REQ-N2C",
+                                    search_policy=governed_search_policy(),
+                                    normalizer=spoof)
+        self.assertIsNone(rec)
+        self.assertTrue(err.startswith("CLAIM_NORMALIZER_NOT_GOVERNED"),err)
+        self.assertEqual(store.claims,[])
+
+    def test_N5_normalizer_entry_integrity_recheck_defeats_gc_route(self):
+        """Same defence-in-depth proof as A6, for the normalizer registry."""
+        import gc
+        from tracker_identity import normalizer_registry as nr
+        backing=[r for r in gc.get_referents(nr.GOVERNED_NORMALIZERS) if isinstance(r,dict)]
+        if not backing:
+            self.skipTest("no gc-reachable backing map on this interpreter")
+        backing=backing[0]
+        key=("tracker.identity.normalizer","1")
+        saved=backing[key]
+        rogue=nr.GovernedNormalizerEntry("tracker.identity.normalizer","1",
+                                         ("ALGEBRAIC_EQUIVALENCE",))
+        try:
+            backing[key]=rogue
+            self.assertIs(nr.GOVERNED_NORMALIZERS[key],rogue)
+            widened=NormalizerSpec("tracker.identity.normalizer","1",
+                                   rogue.normalizer_hash,("ALGEBRAIC_EQUIVALENCE",))
+            errors=resolve_governed_normalizer(widened)
+            self.assertTrue(any("ENTRY_INTEGRITY_FAILED" in e for e in errors),errors)
+            self.assertTrue(any("ENTRY_INTEGRITY_FAILED" in e
+                                for e in resolve_governed_normalizer_binding(
+                                    "tracker.identity.normalizer","1",
+                                    rogue.normalizer_hash)))
+        finally:
+            backing[key]=saved
+        self.assertIs(nr.GOVERNED_NORMALIZERS[key],saved)
+
+    def test_N3_governed_normalizer_binding_succeeds(self):
+        gov=governed_normalizer()
+        self.assertEqual(resolve_governed_normalizer(gov),())
+        self.assertEqual(gov.normalizer_hash,gov.computed_hash())
+        self.assertEqual(resolve_governed_normalizer_binding(
+            gov.normalizer_id,gov.version,gov.normalizer_hash),())
+
+    def test_N4_changed_equivalence_class_or_hash_fails(self):
+        gov=governed_normalizer()
+        widened=NormalizerSpec(gov.normalizer_id,gov.version,gov.normalizer_hash,
+                               gov.equivalence_classes+("ALGEBRAIC_EQUIVALENCE",))
+        self.assertTrue(any("EQUIVALENCE_CLASSES_NOT_GOVERNED" in e
+                            for e in resolve_governed_normalizer(widened)),
+                        resolve_governed_normalizer(widened))
+        wrong_hash=NormalizerSpec(gov.normalizer_id,gov.version,"0"*64,
+                                  gov.equivalence_classes)
+        self.assertIn("NORMALIZER_HASH_NOT_GOVERNED",
+                      resolve_governed_normalizer(wrong_hash))
+        self.assertIn("NORMALIZER_HASH_NOT_GOVERNED",
+                      resolve_governed_normalizer_binding(
+                          gov.normalizer_id,gov.version,"0"*64))
 
     def test_R6_no_construction_authorized_path_exists_yet(self):
-        """R6 = NOT YET AVAILABLE, asserted rather than assumed.
-
-        No code path anywhere in tracker_identity issues a claim or token with
-        authorizes_construction=True. Ordinary canonical registration is
-        therefore fail-closed until a governed construction order exists. This
-        test fails the moment someone introduces such a path, which is exactly
-        when Manager must re-decide.
-        """
+        """R6 = NOT YET AVAILABLE, asserted rather than assumed."""
         import inspect, pathlib
         import tracker_identity
         pkg=pathlib.Path(inspect.getfile(tracker_identity)).parent
@@ -950,10 +1044,9 @@ class ManagerReAttackC1R(unittest.TestCase):
                 if stripped.startswith("#"):
                     continue
                 if "authorizes_construction=True" in stripped.replace(" ",""):
-                    offenders.append(f"{path.name}:{lineno}")
+                    offenders.append(path.name+":"+str(lineno))
         self.assertEqual(offenders,[],
             "a construction-authorized path now exists: "+str(offenders))
-        # And the default really is False on both carriers.
         from tracker_identity import AbsentClaimToken, ClaimProvenance
         self.assertFalse(AbsentClaimToken("c","o","r").authorizes_construction)
         self.assertFalse(ClaimProvenance(
@@ -961,6 +1054,93 @@ class ManagerReAttackC1R(unittest.TestCase):
 
 class ManagerReAttackM1R(unittest.TestCase):
     """M-1R: the registry CONTAINER must be immutable, not only its entries."""
+
+    def test_A1_former_backing_map_route_is_gone(self):
+        """The exported registry was a VIEW over a module-level `_BUILT` dict,
+        so mutating that dict was reflected straight through. REVIEW_CODER
+        executed exactly that. No module-level backing dict now survives."""
+        from tracker_identity import policy_registry, normalizer_registry
+        for module in (policy_registry,normalizer_registry):
+            self.assertFalse(hasattr(module,"_BUILT"),module.__name__)
+            leaked=[name for name,value in vars(module).items()
+                    if isinstance(value,dict) and not name.startswith("__")]
+            self.assertEqual(leaked,[],
+                module.__name__+" still exposes a mutable dict: "+str(leaked))
+
+    def test_A2_A3_A4_normalizer_registry_is_equally_frozen(self):
+        from tracker_identity.normalizer_registry import (
+            GOVERNED_NORMALIZERS, GovernedNormalizerEntry,
+        )
+        rogue=GovernedNormalizerEntry("tracker.identity.normalizer","1",
+                                      ("EXACT_STRUCTURAL_IDENTITY",))
+        with self.assertRaises(TypeError):
+            GOVERNED_NORMALIZERS[rogue.key]=rogue          # replacement
+        with self.assertRaises(TypeError):
+            GOVERNED_NORMALIZERS[("rogue","1")]=rogue      # insertion
+        with self.assertRaises(TypeError):
+            del GOVERNED_NORMALIZERS[("tracker.identity.normalizer","1")]
+
+    def test_A5_entry_integrity_is_revalidated_not_assumed(self):
+        """Membership is not trust: the resolver recomputes entry integrity, so
+        an entry that reached the registry without satisfying the mandatory
+        rules would still be refused at use time."""
+        from tracker_identity import policy_registry as pr
+        rogue=pr.GovernedSearchPolicyEntry(
+            policy_id="tracker.identity.search",version="1",
+            required_scopes=("current_active",),searched_scopes=("current_active",))
+        self.assertTrue(any("MISSING_MANDATORY" in x for x in rogue.registry_errors()))
+        # Simulate an entry having got in, via a private local map the resolver
+        # consults; the integrity recheck must still refuse it.
+        entry,errors=pr._entry_or_errors("tracker.identity.search","1")
+        self.assertEqual(errors,())          # the real entry is sound
+        self.assertEqual(entry.registry_errors(),())
+        # A normalizer entry claiming an unsupported equivalence class is
+        # refused by its own integrity rules, so it can never be registered.
+        from tracker_identity.normalizer_registry import GovernedNormalizerEntry
+        widened=GovernedNormalizerEntry("tracker.identity.normalizer","2",
+                                        ("ALGEBRAIC_EQUIVALENCE",))
+        self.assertTrue(any("UNSUPPORTED_EQUIVALENCE_CLASS" in x
+                            for x in widened.registry_errors()),
+                        widened.registry_errors())
+
+    def test_A6_integrity_recheck_defeats_even_a_gc_route_mutation(self):
+        """Defence in depth, measured rather than asserted by scope.
+
+        A read-only mapping still holds a backing dict that gc can reach. That
+        is outside the stated threat model, but the control must not DEPEND on
+        it being unreachable: with the rogue entry installed by that route, the
+        resolver's integrity recheck still refuses it and no claim is issued.
+        """
+        import gc
+        from tracker_identity import policy_registry as pr
+        registry=pr.GOVERNED_SEARCH_POLICIES
+        backing=[r for r in gc.get_referents(registry) if isinstance(r,dict)]
+        if not backing:
+            self.skipTest("no gc-reachable backing map on this interpreter")
+        backing=backing[0]
+        key=("tracker.identity.search","1")
+        saved=backing[key]
+        rogue=pr.GovernedSearchPolicyEntry(
+            policy_id="tracker.identity.search",version="1",
+            required_scopes=("current_active",),searched_scopes=("current_active",))
+        try:
+            backing[key]=rogue
+            self.assertIs(registry[key],rogue)     # the mutation did land
+            narrow=ungoverned_policy(policy_id="tracker.identity.search",version="1",
+                                     required=("current_active",),
+                                     searched=("current_active",))
+            errors=resolve_governed_search_policy(narrow)
+            self.assertTrue(any("ENTRY_INTEGRITY_FAILED" in e for e in errors),errors)
+            store=verified_store()
+            result=identity_lookup(store=store,subject=pre_id_subject(),
+                                   request_id="REQ-GC",search_policy=narrow,
+                                   normalizer=governed_normalizer())
+            self.assertEqual(result.outcome,LookupOutcome.INCOMPLETE_LOOKUP)
+            self.assertIsNone(result.absent_claim_token)
+            self.assertEqual(store.claims,[])
+        finally:
+            backing[key]=saved
+        self.assertIs(registry[key],saved)
 
     def test_R7_assignment_to_registry_fails(self):
         from tracker_identity.policy_registry import (

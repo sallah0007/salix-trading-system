@@ -623,3 +623,213 @@ DO NOT MERGE.
 CODER FINDING != SALIX DECISION
 TEST PASS != GOVERNANCE CLOSURE
 NO_STEP_AUTO_AUTHORIZES_THE_NEXT = TRUE
+
+---
+
+# AUTHORITY ISSUANCE CORRECTION — DC-GOLD-ID-GATE-AUTHORITY-ISSUANCE-001
+
+APPENDED. Everything above stands as written at ba72b78 / a3d4879 and is
+preserved for audit.
+
+BASE_FOR_THIS_CORRECTION = a3d48797e3c7c7f5e6fc27ae3752d4b65d57acfd
+No prior commit was amended, squashed or rebased.
+
+DESIGN RULE APPLIED: AUTHORITY_MUST_BE_ISSUED_OR_RESOLVED_BY_ITS_OWNER.
+CALLER_PRESENTED_PROPERTIES_ARE_NOT AUTHORITY.
+
+## ALL THREE REVIEW_CODER DEFECTS REPRODUCED FIRST
+
+Executed against a3d4879 before any edit. Not taken on report.
+
+  D1  pr._BUILT[("rogue","1")]="INJECTED" -> GOVERNED_SEARCH_POLICIES returned
+      'INJECTED'. The exported proxy was a VIEW over a live module dict.
+  D2  hand-built ClaimProvenance + public governed policy binding + invented
+      normalizer ("totally.made.up"@99) -> reserve_claim ACCEPTED it;
+      bind_lookup_evidence ACCEPTED 'FABRICATED-RESULT'/'FABRICATED-HASH';
+      claim reported fully bound. No identity_lookup was ever called.
+  D3  an arbitrary normalizer identity passed completeness, as every existing
+      test using "safe-intake"/"import-ctl" normalizers demonstrates.
+
+## DEFECT 1 — REGISTRY BACKING MAP
+
+Both registries are now built by a function whose dict is FUNCTION-LOCAL and
+never becomes a module attribute. Only the read-only view escapes. `_BUILT` is
+gone; underscore naming is not treated as access control anywhere.
+
+Resolvers no longer trust membership. `_entry_or_errors()` RECOMPUTES each
+entry's integrity (mandatory scope coverage, derived hash, equivalence-class
+support) on every use, so an entry that reached the registry by any route is
+still refused if it does not satisfy the governed rules.
+
+REGISTRY_BACKING_MUTATION_POSSIBLE = NO (through any ordinary module surface)
+
+Measured honestly: a read-only mapping still holds a backing dict that
+gc.get_referents() can reach. That is outside the stated threat model, and the
+control does not depend on it being unreachable — tests A6 and N5 install a
+rogue entry BY THAT ROUTE and prove the integrity recheck still refuses it, the
+lookup still returns INCOMPLETE_LOOKUP, and no claim is issued.
+
+## DEFECT 2 — PROVENANCE WAS CALLER-FORGEABLE. FLOW INVERTED.
+
+reserve_claim no longer has a `provenance` parameter. It is now store-owned
+ISSUANCE: the caller supplies only what it wants looked up, and the store
+establishes every fact that could confer authority:
+
+  * search policy must resolve against the governed registry;
+  * normalizer must resolve against the governed registry;
+  * every governed searched scope must be proven reachable IN THIS STORE;
+  * ABSENCE IS RE-DERIVED over the store's own records — lookup_complete and
+    the outcome are facts the store established, never assertions it accepted;
+  * the store then CONSTRUCTS the provenance, including a store-generated
+    lookup_result_id and an issuance evidence hash over exactly those verified
+    facts.
+
+bind_lookup_evidence was REMOVED, not tightened. There is nothing left to bind:
+both identifiers are store-generated and no public entry point accepts either.
+
+identity_lookup now emits the STORE-generated lookup_result_id, so the result
+and the claim refer to the same issuance. identity_lookup has no more power to
+mint a claim than any other caller.
+
+A store-owned issuance ledger (`_issued_claim_ids`) records what this store
+actually issued. A structurally perfect forged ClaimRecord appended to
+`store.claims` — every governed binding resolving, completeness_errors() == ()
+— is refused at registration with CLAIM_NOT_ISSUED_BY_THIS_STORE. That is the
+executable distinction between REAL_LOOKUP_ISSUED_CLAIM and
+CALLER_CONSTRUCTED_LOOKALIKE. No secret is involved: the values are visible,
+they are simply not settable through any reachable entry point.
+
+CALLER_CAN_CONSTRUCT_AUTHORITATIVE_PROVENANCE = NO
+CALLER_CAN_FABRICATE_LOOKUP_EVIDENCE_BINDING  = NO
+REAL_LOOKUP_ISSUED_CLAIM_DISTINGUISHABLE      = YES
+
+## DEFECT 3 — GOVERNED NORMALIZER AUTHORITY
+
+New module tracker_identity/normalizer_registry.py, mirroring the policy
+registry: versioned Tracker-owned entries, derived hash, function-local build,
+read-only container, integrity revalidation on every resolve.
+
+GOVERNED V1: tracker.identity.normalizer @ 1, equivalence classes exactly
+("EXACT_STRUCTURAL_IDENTITY",). A registry entry claiming an unsupported class
+is refused by its own integrity rules, so equivalence capability cannot be
+widened by adding a registry entry.
+
+Bound at both layers: identity_lookup resolves the presented normalizer, and
+the store re-resolves independently at issuance. Both layers are separately
+pinned (N2b / N2c) because under mutation they masked each other.
+
+NORMALIZER_BINDING_GOVERNED = YES
+SUPPORTED_EQUIVALENCE_CLASSES unchanged.
+ALGEBRAIC_EQUIVALENCE remains NOT IMPLEMENTED / NOT VALIDATED.
+
+## CONSTRUCTION AUTHORITY — UNCHANGED AND STILL ABSENT
+
+CONSTRUCTION_AUTHORIZED_PATH_EXISTS = NO
+
+No code path sets authorizes_construction. reserve_claim has no parameter for
+it, so it cannot even be requested. Registration remains FAIL-CLOSED: a genuine
+store-issued claim reaches the terminal gate and is refused with
+CLAIM_NOT_CONSTRUCTION_AUTHORIZED, writing nothing. test_R6 scans package
+source and fails the moment such a path appears.
+
+Authority-gate-last ordering retained per Manager acceptance. Verified: no
+registry or creation mutation occurs before it, each earlier control remains
+independently observable with its own error code, and a refusal at the gate
+consumes no claim (the claim stays ACTIVE).
+
+## TESTS
+
+TARGETED = <PY> -m unittest tests.test_identity_surface  -> Ran 84 — OK
+FULL     = <PY> -m unittest discover -s tests            -> Ran 216 — OK
+  TOTAL=216 PASSED=216 FAILED=0 ERRORS=0 SKIPPED=0
+BASELINE at BASE_SHA was 155 — OK. No baseline test deleted.
+
+### MUTATION SWEEP — INCLUDING WHAT SURVIVED
+
+First sweep: 12 guards mutated, 7 killed, 5 SURVIVED. Reported rather than
+hidden, because a guard no test can kill is not evidence.
+
+  G2  store normalizer re-resolution   SURVIVED -> now killed (test N2c)
+  G9  lookup normalizer binding        SURVIVED -> now killed (test N2b)
+  G11 normalizer entry integrity       SURVIVED -> now killed (test N5)
+  G6  store_issued provenance check    SURVIVES — see below
+  G7  commit-time normalizer binding   SURVIVES — see below
+
+G2 and G9 masked each other: removing either alone still produced
+INCOMPLETE_LOOKUP via the other layer. The new tests assert the specific
+layer's error code, so each is now independently pinned.
+
+G6 and G7 remain unkillable BY DESIGN and this is stated plainly: they are
+redundant defence-in-depth at the commit boundary. Any claim in the issuance
+ledger necessarily carries store-issued provenance with a governed normalizer
+binding, because the store built it — so no public API can produce a claim that
+passes the ledger check and fails these two. They are retained as cheap
+insurance against a future change that separates those facts. They are NOT
+counted as evidence of anything.
+
+Killed mutants: G1 policy re-resolution, G3 scope reachability, G4 absence
+re-derivation, G5 issuance ledger, G8 construction-authority gate, G10 policy
+entry integrity, G12 provenance governed bindings, plus G2/G9/G11.
+
+## SECOND-PASS ADVERSARIAL ATTACK
+
+20 probes. 18 blocked, 2 outside this task's scope.
+
+REVIEW_CODER's exact chain, step by step:
+  RC1 hand-built provenance passes completeness  BLOCKED (normalizer not governed)
+  RC2 reserve_claim accepts caller provenance    BLOCKED (TypeError, no parameter)
+  RC3 public evidence binder exists              BLOCKED (removed)
+  RC4 strongest forgery — every governed binding
+      resolving, completeness_errors() == () —
+      injected into store.claims and redeemed    BLOCKED
+      CLAIM_NOT_ISSUED_BY_THIS_STORE, rows=0
+
+Registry sweep: no module-level dict in either registry; no _BUILT; insert,
+delete, replace, clear and update all refused (AttributeError/TypeError).
+
+Normalizer: self-hashed ungoverned refused; widened equivalence classes refused.
+Genuine path: store-built claim, result id matches, authorizes_construction False.
+Store re-derivation: CLAIM_CONTENT_IDENTITY_ALREADY_PRESENT when the store's own
+records contradict the requested absence.
+
+Not blocked:
+  REG4 gc.get_referents reaches the backing dict — outside the stated threat
+       model, and neutralised in depth by the integrity recheck (A6, N5).
+  A14  store.add()/store.extend() ungated — OUT OF SCOPE, untouched by
+       instruction. importer.py was not modified.
+
+IMPORT_PATH_AUTHORITY_RESIDUAL = OPEN
+
+## COUNTS
+
+NEW_CRITICAL_COUNT = 0
+NEW_HIGH_COUNT     = 0
+NEW_MEDIUM_COUNT   = 0
+NEW_LOW_COUNT      = 1   (gc-reachable backing dict; outside threat model,
+                          neutralised in depth, reported not hidden)
+ARCHITECTURE_REOPEN_REQUIRED = NO
+
+## FENCES — UNCHANGED
+
+GLOBAL_CANONICAL_ABSENCE_PROVEN = NO
+SEMANTIC_UNIQUENESS = UNRESOLVED_NOT_CERTIFIED
+ALGEBRAIC_EQUIVALENCE_IMPLEMENTED = NO
+ALGEBRAIC_EQUIVALENCE_VALIDATED = NO
+CONSTRUCTION_AUTHORIZED_PATH_EXISTS = NO
+IDENTITY_LOOKUP_READY_FOR_GOLD = NO
+FEATURE_ID_CREATION_READY_FOR_MANAGER_DECISION = NO
+CANONICAL_TRACKER_FEATURE_ID = NOT ASSIGNED
+FEATURE_ID_CREATED = NO   FEATURE_VERSION_CREATED = NO
+TRACKER_REGISTRY_ROW_CREATED = NO
+GOLD_FEATURE_ID_CREATION_AUTHORIZED = NO
+GOLD_ADMITTED = YES (unchanged by this patch)
+FW_EXECUTION = NO  ML_TRAINING = NO  TYPE_2 = NO  PRODUCTION = NO
+
+TECHNICALLY_READY_FOR_MANAGER_RECONCILIATION = YES
+PUSH_REQUIRED = YES   PUSH_SUCCEEDED = NO   PR_CREATED = NO   MERGED = NO
+
+DO NOT MERGE.
+DESKTOP_CODER FINDING != REVIEW_CODER FINDING
+DESKTOP_CODER TEST PASS != MANAGER ACCEPTANCE
+CODER FINDING != SALIX DECISION
+NO_STEP_AUTO_AUTHORIZES_THE_NEXT = TRUE

@@ -3,7 +3,7 @@ import unittest
 from tracker_identity import (
     BuiltIdentityCandidate, CanonicalEraBoundary, CanonicalIdentityStore,
     LookupOutcome, MANDATORY_DUPLICATE_CONTROL_SCOPES, NormalizerSpec, SearchPolicy,
-    composer_boundary_outcome, governed_search_policy, identity_lookup,
+    composer_boundary_outcome, governed_normalizer, governed_search_policy, identity_lookup,
     safe_intake_built_identity,
 )
 
@@ -12,8 +12,9 @@ def policy():
     return SearchPolicy(p.policy_id,p.version,p.computed_hash(),p.required_scopes,p.searched_scopes,p.scope_exclusions)
 
 def normalizer():
-    n=NormalizerSpec("safe-intake","1","",("EXACT_STRUCTURAL_IDENTITY",))
-    return NormalizerSpec(n.normalizer_id,n.version,n.computed_hash(),n.equivalence_classes)
+    # Governed normalizer: identity_lookup resolves normalizer authority
+    # against the Tracker-owned registry.
+    return governed_normalizer()
 
 def boundary(**changes):
     vals=dict(

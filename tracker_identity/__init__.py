@@ -6,6 +6,15 @@ or production trading authority is implemented here.
 """
 
 from .models import AbsentClaimToken, ClaimProvenance, ClaimRecord, CLAIMABLE_LOOKUP_OUTCOMES, FeatureIdentity, IdentityLookupResult, LookupOutcome, NormalizerSpec, SearchPolicy
+from .normalizer_registry import (
+    GOVERNED_NORMALIZERS,
+    NORMALIZER_ID,
+    NORMALIZER_VERSION,
+    GovernedNormalizerEntry,
+    governed_normalizer,
+    resolve_governed_normalizer,
+    resolve_governed_normalizer_binding,
+)
 from .policy_registry import (
     GOVERNED_SEARCH_POLICIES,
     MANDATORY_DUPLICATE_CONTROL_SCOPES,

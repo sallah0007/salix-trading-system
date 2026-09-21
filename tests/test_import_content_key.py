@@ -23,6 +23,7 @@ from tracker_identity import (
     NormalizerSpec,
     SearchPolicy,
     SourceUniverseAuthority,
+    governed_normalizer,
     governed_search_policy,
     identity_lookup,
     import_identity_content,
@@ -170,7 +171,7 @@ class ImportContentKey(unittest.TestCase):
         }
         result = identity_lookup(store=store, subject=subject, request_id="REQ-PI",
                                  search_policy=governed_search_policy(),
-                                 normalizer=normalizer())
+                                 normalizer=governed_normalizer())
         self.assertNotIn("CONTENT_KEY_UNRESOLVED_ROWS",
                          " ".join(result.errors))
         self.assertEqual(result.outcome, LookupOutcome.EXACT_CANONICAL_IDENTITY)

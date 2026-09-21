@@ -19,6 +19,7 @@ from tracker_identity import (
     NormalizerSpec,
     SearchPolicy,
     build_content_identity_key,
+    governed_normalizer,
     governed_search_policy,
     identity_lookup,
     safe_intake_built_identity,
@@ -62,8 +63,9 @@ def policy():
 
 
 def normalizer():
-    n = NormalizerSpec("safe-intake", "1", "", ("EXACT_STRUCTURAL_IDENTITY",))
-    return NormalizerSpec(n.normalizer_id, n.version, n.computed_hash(), n.equivalence_classes)
+    # Normalizer authority is governed now: identity_lookup resolves it against
+    # the Tracker-owned registry, so an invented id no longer binds.
+    return governed_normalizer()
 
 
 def boundary():

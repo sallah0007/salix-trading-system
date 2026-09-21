@@ -120,22 +120,45 @@ _ENTRIES:Tuple[GovernedSearchPolicyEntry,...]=(
     ),
 )
 
-_BUILT={e.key:e for e in _ENTRIES}
+def _build_registry()->Mapping[tuple,GovernedSearchPolicyEntry]:
+    """Build the registry from FUNCTION-LOCAL state.
 
-_registry_defects=tuple(
-    f"{e.policy_id}@{e.version}:{x}" for e in _ENTRIES for x in e.registry_errors()
-)
-if len(_BUILT)!=len(_ENTRIES):
-    _registry_defects=_registry_defects+("DUPLICATE_GOVERNED_POLICY_KEY",)
-if _registry_defects:
-    raise RuntimeError("GOVERNED_SEARCH_POLICY_REGISTRY_INVALID:"
-                       +";".join(_registry_defects))
+    A previous revision kept a module-level `_BUILT` dict and exported a
+    MappingProxyType over it. That is not immutability: a proxy is a VIEW, so
+    mutating the backing dict was reflected straight through the exported
+    registry, and an underscore prefix is a naming convention, not access
+    control. The dict now never becomes a module attribute — only the read-only
+    view escapes this function, so there is no backing object left to reach.
 
-# The CONTAINER is frozen, not merely its entries. A read-only mapping is the
-# exported surface, so a runtime caller cannot replace, delete or insert a
-# governed policy entry. New versions arrive by editing _ENTRIES in source and
-# re-importing — never by mutating the registry of a running process.
-GOVERNED_SEARCH_POLICIES:Mapping[tuple,GovernedSearchPolicyEntry]=MappingProxyType(_BUILT)
+    New versions arrive by editing _ENTRIES in source and re-importing, never
+    by mutating the registry of a running process.
+    """
+    built={}
+    defects=[]
+    for entry in _ENTRIES:
+        defects.extend(f"{entry.policy_id}@{entry.version}:{x}"
+                       for x in entry.registry_errors())
+        if entry.key in built:
+            defects.append("DUPLICATE_GOVERNED_POLICY_KEY:"+str(entry.key))
+        built[entry.key]=entry
+    if defects:
+        raise RuntimeError("GOVERNED_SEARCH_POLICY_REGISTRY_INVALID:"+";".join(defects))
+    return MappingProxyType(built)
+
+GOVERNED_SEARCH_POLICIES:Mapping[tuple,GovernedSearchPolicyEntry]=_build_registry()
+
+def _entry_or_errors(policy_id,version):
+    entry=GOVERNED_SEARCH_POLICIES.get((policy_id,version))
+    if entry is None:
+        return None,("SEARCH_POLICY_NOT_GOVERNED:"+str(policy_id)+"@"+str(version),)
+    # Integrity is REVALIDATED here, never assumed from membership alone. An
+    # entry that somehow reached the registry without satisfying the mandatory
+    # scope and hash rules is refused at use time, not trusted because it is
+    # present.
+    entry_defects=entry.registry_errors()
+    if entry_defects:
+        return None,("GOVERNED_POLICY_ENTRY_INTEGRITY_FAILED:"+",".join(entry_defects),)
+    return entry,()
 
 def resolve_governed_search_policy_binding(policy_id,version,policy_hash)->Tuple[str,...]:
     """Resolve a recorded (id, version, hash) triple against the registry.
@@ -144,9 +167,9 @@ def resolve_governed_search_policy_binding(policy_id,version,policy_hash)->Tuple
     object — for example a claim's provenance. Returns () only on an exact
     governed match.
     """
-    entry=GOVERNED_SEARCH_POLICIES.get((policy_id,version))
-    if entry is None:
-        return ("SEARCH_POLICY_NOT_GOVERNED:"+str(policy_id)+"@"+str(version),)
+    entry,entry_errors=_entry_or_errors(policy_id,version)
+    if entry_errors:
+        return entry_errors
     if str(policy_hash)!=entry.policy_hash:
         return ("SEARCH_POLICY_HASH_NOT_GOVERNED",)
     return ()
@@ -173,12 +196,10 @@ def resolve_governed_search_policy(search_policy)->Tuple[str,...]:
     """
     if search_policy is None:
         return ("SEARCH_POLICY_REQUIRED",)
-    entry=GOVERNED_SEARCH_POLICIES.get(
-        (getattr(search_policy,"policy_id",None),getattr(search_policy,"version",None)))
-    if entry is None:
-        return ("SEARCH_POLICY_NOT_GOVERNED:"
-                +str(getattr(search_policy,"policy_id",""))+"@"
-                +str(getattr(search_policy,"version","")),)
+    entry,entry_errors=_entry_or_errors(getattr(search_policy,"policy_id",None),
+                                        getattr(search_policy,"version",None))
+    if entry_errors:
+        return entry_errors
     e=[]
     if tuple(search_policy.required_scopes)!=tuple(entry.required_scopes):
         e.append("SEARCH_POLICY_REQUIRED_SCOPES_NOT_GOVERNED")
