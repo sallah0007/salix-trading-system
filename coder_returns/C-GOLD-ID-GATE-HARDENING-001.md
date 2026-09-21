@@ -833,3 +833,210 @@ DESKTOP_CODER FINDING != REVIEW_CODER FINDING
 DESKTOP_CODER TEST PASS != MANAGER ACCEPTANCE
 CODER FINDING != SALIX DECISION
 NO_STEP_AUTO_AUTHORIZES_THE_NEXT = TRUE
+
+---
+
+# ISSUANCE AUTHENTICITY CORRECTION — DC-ISSUANCE-AUTHENTICITY-BINDING-003
+
+APPENDED. Everything above stands as written and is preserved for audit.
+
+FROM = DESKTOP_CODER
+TASK_ID = DC-ISSUANCE-AUTHENTICITY-BINDING-003
+BASE_FOR_CORRECTION = cd254ce1a498f650352f5e9e43aee6ab45b58222
+IMPLEMENTATION_SHA  = 644b59facbb01c383729172f180593cec6ae0536
+No prior commit was amended, squashed or rebased.
+
+GOVERNED COMMISSION OPENED = YES
+  Drive 1GSFdntr5YHg3qAI7EHRuM9Z29v3jANcmN58uZg-yZcs, read in full, read-only.
+  CR-1, CR-2, the required security property, the 14 mandatory controls and
+  the allowed-file list were taken from that document, not from the chat relay.
+
+## CORRECTION TO MY OWN PRIOR RETURN
+
+The previous section declared:
+  CALLER_CAN_CONSTRUCT_AUTHORITATIVE_PROVENANCE = NO
+  REAL_LOOKUP_ISSUED_CLAIM_DISTINGUISHABLE      = YES
+Both were WRONG under ordinary object mutation, and the severity was CRITICAL,
+not LOW. Reproduced at cd254ce before any edit:
+
+  CR-1  planted synthetic ClaimRecord + store._issued_claim_ids.add(id)
+        -> committed=True, rows=1
+  CR-2  genuine claim; provenance replaced with authorizes_construction=True
+        in the public claims list; its id still "issued"
+        -> committed=True, rows=1
+
+Both were full canonical row writes. The issuance ledger was a mutable set, and
+the authority bit was read from a record the caller could replace.
+
+## DESIGN — SMALLEST ROBUST OPTION
+
+The keyed-MAC candidate was considered and NOT adopted. A MAC needs a signer the
+store can call; in one process that signer is equally callable by caller code,
+so a MAC alone would not close the defect — it would move it to the signer.
+
+Adopted instead — no key, no MAC, no signer:
+
+  * A per-store ledger held ONLY in a closure. It is never a store attribute
+    and never a module-level container, so no container mutation reaches it.
+  * For each claim it records an EXACT canonical snapshot of every bound fact
+    — claim id, content key, request id, issuer, both timestamps, and the full
+    provenance including the authority bit, policy and normalizer bindings,
+    lookup result id and evidence hash — plus the authoritative lifecycle.
+  * AUTHENTIC = current contents reproduce that snapshot exactly AND the
+    lifecycle equals the ledger's.
+  * Registration, validation, expiry, release and one-active-claim-per-key are
+    all decided against the ledger. The public `claims` list is a display
+    mirror only; anything a caller appends or replaces there is inert.
+  * Exactly ONE writer, and it accepts only raw lookup inputs. It re-derives
+    every authority-bearing fact and generates the claim id, lookup result id,
+    both timestamps and the evidence hash itself. No function accepts a
+    caller-built record or provenance to seal. Invoking the writer directly is
+    therefore indistinguishable from a legitimate issuance and cannot mint
+    authority.
+  * `_issued_claim_ids` REMOVED. Underscore naming and id membership are not
+    part of the security argument anywhere.
+  * Ledgers are keyed per store by object identity and released when the store
+    is collected, so a claim is unknown to every store but its issuer.
+
+## STATED BOUNDARY — MEASURED, NOT ASSUMED
+
+DEFENDED (every probe below executed; all refused, rows=0):
+  ordinary mutation of any caller-reachable container or field; in-place
+  mutation of a frozen record or provenance via object.__setattr__; subclassed
+  record/provenance lookalikes; exact copies gaining extra authority; cross-store
+  replay into a fresh store, into copy.copy(store) and into
+  dataclasses.replace(store); lifecycle revival; expiry extension.
+
+NOT DEFENDED — and both were exercised, not assumed:
+  CODE REPLACEMENT  rebinding store_module._authenticate_claim to a function
+                    that always returns authentic      -> rows=1
+  REFLECTION        walking fn.__closure__ reaches the ledger at closure depth
+                    2; rewriting its snapshot           -> rows=1
+
+No pure in-process Python design can prevent either. Neither is claimed.
+
+A first probe reported reflection as "blocked" because it looked only one
+closure level deep. That was a weakness in the probe, not protection. It was
+re-run as a recursive walk before anything was reported, and the corrected
+result is the one given above.
+
+Why module-function rebinding was not "hardened": any rebinding of the module
+name could equally be done to the class method that calls it, so hardening one
+level would only imply a protection that does not exist.
+
+## MANDATORY NEGATIVE CONTROLS — ALL 14
+
+  1  synthetic provenance + synthetic record cannot register         PASS  C01
+  2  synthetic claim + EVERY caller-mutable container stuffed         PASS  C02
+  3  genuine claim, provenance replaced to authority=True (CR-2)      PASS  C03
+  4  post-issuance change of request id, content key, policy binding,
+     normalizer binding, lookup result id, evidence binding,
+     lifecycle state, release reason, authority bit, issuer, both
+     timestamps, semantic uniqueness, outcome, completeness —
+     every one invalidates authenticity                              PASS  C04
+     + in-place frozen mutation (C04b), subclass lookalikes (C04c)
+  5  copy / deepcopy / reconstruction gain no authority              PASS  C05
+  6  Store A claim replay into Store B fails                         PASS  C06
+     + copy.copy(store) and dataclasses.replace(store) (C06b)
+  7  expired / released / consumed stay unusable                     PASS  C07
+     + no revival via API (C07b), expiry cannot be extended (C07c)
+  8  same claim cannot register twice                                PASS  C08b
+     + one-active-claim survives mirror tampering (C08, C08c, C08d)
+  9  direct commit without authentic issued claim fails              PASS  C09
+     + planted lookalike cannot shadow a genuine claim (C09b)
+  10 policy and normalizer integrity remain PASS                     PASS  C10
+  11 construction-authorized path remains absent                     PASS  C11, C11b, R6
+  12 import/direct-mutation residual OPEN, out of scope              PINNED C12
+  13 mutation-test every new guard, report survivors                 DONE  below
+  14 full regression, no safety assertion weakened                   PASS  below
+
+Note on control 8: registration never succeeds today, so "cannot register
+twice" is proven at the claim layer — a claim is consumed at most once, in the
+ledger, and no copy can be presented afterwards.
+
+## MUTATION RESULT
+
+15 new authenticity guards mutated in a scratch copy, never in the repo.
+
+First sweep: 12 killed, 3 SURVIVED.
+  A8  reserve_claim pre-check uses ledger   SURVIVED -> killed by C08c
+  A11 writer enforces one-active via ledger SURVIVED -> killed by C08d
+  A15 consumption recorded in ledger        SURVIVES
+
+A8 and A11 masked each other: each is a separate ledger-backed layer, so
+breaking one alone was still caught by the other. Each is now pinned
+independently.
+
+A15 remains UNKILLABLE BY CONSTRUCTION and is stated plainly: it is the
+consumption step after a successful registration, and registration never
+succeeds because no construction authority exists. It is not counted as
+evidence of anything. It becomes testable the moment a governed construction
+order exists.
+
+FINAL = 15 guards, 14 killed, 1 survivor (A15, unreachable).
+
+Killed: A1 record type, A2 not-issued, A3 provenance type, A4 snapshot
+equality, A5 lifecycle equality, A6 scan past lookalikes, A7 commit
+authenticates, A8, A9 expiry from ledger, A10 monotonic terminate, A11,
+A12 snapshot covers provenance, A13 covers expires_ts, A14 covers request_id.
+
+## TESTS
+
+TARGETED = <PY> -m unittest tests.test_identity_surface  -> Ran 106 — OK
+FULL     = <PY> -m unittest discover -s tests            -> Ran 238 — OK
+  TOTAL=238 PASSED=238 FAILED=0 ERRORS=0 SKIPPED=0
+Baseline at BASE_SHA was 155. No test deleted. No safety assertion weakened.
+The one changed existing assertion (P6/P7) now checks authenticity through the
+public claim_authenticity() instead of the removed set — strictly stronger.
+
+## CHANGED FILES
+
+  tracker_identity/store.py
+  tests/test_identity_surface.py
+  coder_returns/C-GOLD-ID-GATE-HARDENING-001.md   (this append)
+
+Both code files are on the commission's allowed list. models.py, search.py,
+intake.py, both registries, __init__.py and all other tests were not modified.
+test_pre_id_content_identity.py was not modified; its reserve_claim
+introspection invariants are preserved. population/**, .github/**, CLAUDE.md
+and importer.py untouched.
+
+## OBSERVATIONS — NOT FIXED, OUT OF SCOPE
+
+  * reserve_claim still accepts a caller ttl_seconds. It affects claim
+    lifetime only, never authority, and pre-dates this task.
+  * store._clock is a caller-settable field by design (deterministic tests).
+    A caller controlling it controls expiry. Claims confer no authority, so
+    this cannot write a row, but it is a real lever and is recorded here.
+
+## RETURN
+
+CR1_CLOSED = YES
+CR2_CLOSED = YES
+CROSS_STORE_REPLAY_BLOCKED = YES
+POST_ISSUANCE_CONTENT_MUTATION_BLOCKED = YES  (data mutation; see boundary)
+SYNTHETIC_CLAIM_ACCEPTED = NO
+CONSTRUCTION_AUTHORIZED_PATH_EXISTS = NO
+IMPORT_PATH_AUTHORITY_RESIDUAL = OPEN
+FULL_TEST_RESULT = Ran 238 tests — OK
+MUTATION_RESULT = 15 guards, 14 killed, 1 surviving (A15, unreachable by construction)
+
+NEW_CRITICAL_COUNT = 0
+NEW_HIGH_COUNT     = 0
+NEW_MEDIUM_COUNT   = 0
+NEW_LOW_COUNT      = 0
+PRIOR_RETURN_CORRECTED = YES  (cd254ce authenticity claims were wrong; CRITICAL)
+
+TECHNICALLY_READY_FOR_MANAGER_RECONCILIATION = YES
+PR_CREATED = NO   MERGED = NO
+
+GLOBAL_CANONICAL_ABSENCE_PROVEN = NO
+SEMANTIC_UNIQUENESS = UNRESOLVED_NOT_CERTIFIED
+ALGEBRAIC_EQUIVALENCE_VALIDATED = NO
+FEATURE_ID_CREATED = NO   FEATURE_VERSION_CREATED = NO
+TRACKER_REGISTRY_ROW_CREATED = NO
+
+DO NOT MERGE.
+DESKTOP_CODER TEST PASS != MANAGER ACCEPTANCE
+CODER FINDING != SALIX DECISION
+NO_STEP_AUTO_AUTHORIZES_THE_NEXT = TRUE
