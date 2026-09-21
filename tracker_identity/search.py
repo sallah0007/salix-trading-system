@@ -15,7 +15,7 @@ from .models import (
     LOOKUP_ERA_SCOPES,
     SUBJECT_MODES,
 )
-from .content_identity import CONTENT_KEY_ALGORITHM_ID, build_content_identity_key
+from .content_identity import AGNOSTIC_INSTRUMENT_SCOPE, CONTENT_KEY_ALGORITHM_ID, build_content_identity_key
 from .normalizer import normalize_subject
 from .normalizer_registry import resolve_governed_normalizer
 from .policy_registry import resolve_governed_search_policy
@@ -30,6 +30,22 @@ def _subject_key(n: Mapping[str, Any]) -> tuple:
         n["feature_id"],n["feature_version"],n["definition_hash"],
         n["graph_hash"],n["instrument"],n["timeframe"],
     )
+
+def _canonical_matches(r, subject_key: tuple) -> bool:
+    """Exact canonical-key match, or an agnostic canonical row.
+
+    DC-006R (CR015 M-1): a row whose semantic instrument scope is ANY matches a
+    subject bound to any CONCRETE instrument when every other canonical
+    component matches. The subject's binding is never written onto the row; it
+    is reported as IdentityLookupResult.bound_instrument.
+    """
+    if r.canonical_key == subject_key:
+        return True
+    bound = subject_key[4]
+    return (r.instrument == AGNOSTIC_INSTRUMENT_SCOPE
+            and bound not in (None, "", AGNOSTIC_INSTRUMENT_SCOPE)
+            and r.canonical_key[:4] == subject_key[:4]
+            and r.timeframe == subject_key[5])
 
 def _resolve_current_survivor(noncurrent_matches, searched_records):
     survivor_ids={r.canonical_survivor for r in noncurrent_matches if r.canonical_survivor}
@@ -133,6 +149,10 @@ def identity_lookup(
             errors.append("PRE_ID_SUBJECT_MUST_NOT_CARRY_ID_CONTAMINATED_HASHES")
         if content_key is None:
             errors.append("CONTENT_IDENTITY_KEY_UNRESOLVED")
+        # A construction request is always bound to a CONCRETE instrument; ANY
+        # is a canonical-row scope, never a binding. Lineage stays exact.
+        if normalized["instrument"] in (None,"",AGNOSTIC_INSTRUMENT_SCOPE):
+            errors.append("PRE_ID_BOUND_INSTRUMENT_MUST_BE_CONCRETE")
 
     include_validation_scope=bool(subject.get("include_validation_scope",False))
     searched_records=[]
@@ -181,7 +201,7 @@ def identity_lookup(
         errors.append("AMBIGUOUS_CURRENT_CONTENT_IDENTITY")
 
     if subject_mode=="CANONICAL_ID":
-        exact_all=[r for r in searched_records if r.canonical_key==subject_key]
+        exact_all=[r for r in searched_records if _canonical_matches(r,subject_key)]
     else:
         exact_all=[]
     exact_current=[r for r in exact_all if r.is_current]

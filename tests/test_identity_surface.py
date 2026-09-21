@@ -9,7 +9,7 @@ from tracker_identity import (
     MANDATORY_DUPLICATE_CONTROL_SCOPES,
     BuiltIdentityCandidate, CanonicalEraBoundary, ClaimRecord,
     FeatureDefinitionRecord,
-    build_content_identity_key, composer_boundary_outcome,
+    build_content_identity_key, composer_boundary_outcome, instrument_token_leaks,
     governed_normalizer, governed_search_policy,
     resolve_governed_normalizer, resolve_governed_normalizer_binding,
     resolve_governed_search_policy,
@@ -2253,8 +2253,12 @@ class InstrumentIdentityCorrectionA006(unittest.TestCase):
     feature definition"; §7 cross-instrument access is DEFAULT DENY.
     """
 
+    # DC-006R: an agnostic definition must be instrument-neutral in EVERY
+    # identity-bearing field. Time semantics name the server/feed clock.
+    NEUTRAL_TIME="SALIX-BROKER-SERVER-UTC-TRANSITION-V1"
     AGNOSTIC=dict(instrument_applicability="INSTRUMENT_AGNOSTIC",
-                  scope_universe="FX_METALS/ERA_1")
+                  scope_universe="FX_METALS/ERA_1",
+                  causal_time_semantics=NEUTRAL_TIME)
     SPECIFIC=dict(instrument_applicability="INSTRUMENT_SPECIFIC")
     FITTED={"fitted_parameters":{"mu":0.1,"sigma":0.02},"fitting_window":"2020-2024"}
 
@@ -2287,7 +2291,7 @@ class InstrumentIdentityCorrectionA006(unittest.TestCase):
         self.assertEqual(kx.definition_semantics,ke.definition_semantics)
         # End to end: an EURUSD-bound request resolves the SAME canonical
         # identity first registered under XAUUSD — no new identity is minted.
-        store=verified_store([self._row(kx,"XAUUSD")])
+        store=verified_store([self._row(kx,"ANY")])
         r=self._lookup(store,"EURUSD",**self.AGNOSTIC)
         self.assertEqual(r.outcome,LookupOutcome.EXACT_CANONICAL_IDENTITY)
         self.assertIsNone(r.absent_claim_token)
@@ -2310,8 +2314,9 @@ class InstrumentIdentityCorrectionA006(unittest.TestCase):
         self.assertIsNone(r.absent_claim_token)
 
     def test_I2b_declared_applicability_is_itself_scope_content(self):
-        ka,_=self._key(instrument="XAUUSD",instrument_applicability="INSTRUMENT_AGNOSTIC")
-        ks,_=self._key(instrument="XAUUSD",instrument_applicability="INSTRUMENT_SPECIFIC")
+        neutral=dict(scope_universe="FX_METALS/ERA_1",causal_time_semantics=self.NEUTRAL_TIME)
+        ka,_=self._key(instrument="XAUUSD",instrument_applicability="INSTRUMENT_AGNOSTIC",**neutral)
+        ks,_=self._key(instrument="XAUUSD",instrument_applicability="INSTRUMENT_SPECIFIC",**neutral)
         self.assertNotEqual(ka.scope_eligibility,ks.scope_eligibility)
         self.assertEqual(ka.definition_semantics,ks.definition_semantics)
 
@@ -2365,12 +2370,12 @@ class InstrumentIdentityCorrectionA006(unittest.TestCase):
     # I5 ----------------------------------------------------------------
     def test_I5_target_instrument_survives_a_shared_identity(self):
         kx,_=self._key(instrument="XAUUSD",**self.AGNOSTIC)
-        store=verified_store([self._row(kx,"XAUUSD")])
+        store=verified_store([self._row(kx,"ANY")])
         r=self._lookup(store,"EURUSD",**self.AGNOSTIC)
         self.assertEqual(r.outcome,LookupOutcome.EXACT_CANONICAL_IDENTITY)
-        # The canonical row carries its first binding; the REQUEST's target is
-        # reported separately and is never replaced by it.
-        self.assertEqual(r.exact_match.instrument,"XAUUSD")
+        # DC-006R: the agnostic canonical row carries semantic scope ANY, not
+        # its first binding; the REQUEST's target is reported separately.
+        self.assertEqual(r.exact_match.instrument,"ANY")
         self.assertEqual(r.bound_instrument,"EURUSD")
 
     def test_I5b_claim_lineage_retains_the_bound_instrument(self):
@@ -2411,6 +2416,286 @@ class InstrumentIdentityCorrectionA006(unittest.TestCase):
     def test_I7_content_key_algorithm_version_was_bumped(self):
         from tracker_identity import CONTENT_KEY_ALGORITHM_ID
         self.assertEqual(CONTENT_KEY_ALGORITHM_ID,"SALIX-CONTENT-IDENTITY-KEY-V2")
+
+NEUTRAL_AGNOSTIC=dict(instrument_applicability="INSTRUMENT_AGNOSTIC",
+                      scope_universe="FX_METALS/ERA_1",
+                      causal_time_semantics="SALIX-BROKER-SERVER-UTC-TRANSITION-V1",
+                      dependency_closure=("BOUND_ROLE:close","BOUND_ROLE:high"))
+
+class AgnosticLeakage006R(unittest.TestCase):
+    """DC-006R Correction A (CR015 H-1). DC-006 V2 fixed only the DIRECT
+    bound-instrument field. These pin the alternate identity-bearing paths:
+    scope_universe, causal_time_semantics, dependency_closure (and every other
+    identity-bearing field). SEMANTIC_APPLICABILITY_SCOPE is identity content;
+    BOUND_UNIVERSE is binding/lineage."""
+
+    def _key(self,**over):
+        c=dict(GATE_CONTENT); c.update(NEUTRAL_AGNOSTIC); c.update(over)
+        return build_content_identity_key(c)
+
+    def test_L1_equivalent_agnostic_semantics_share_identity(self):
+        kx,ex=self._key(instrument="XAUUSD")
+        ke,ee=self._key(instrument="EURUSD")
+        self.assertEqual((ex,ee),((),()))
+        self.assertEqual(kx.composite,ke.composite)
+
+    def test_L2_bound_universe_alone_does_not_split(self):
+        kx,ex=self._key(instrument="XAUUSD",bound_universe="XAUUSD/ERA_1")
+        ke,ee=self._key(instrument="EURUSD",bound_universe="EURUSD/ERA_1")
+        self.assertEqual((ex,ee),((),()))
+        self.assertEqual(kx.composite,ke.composite)
+        base,_=self._key(instrument="XAUUSD")
+        self.assertEqual(kx.composite,base.composite)   # never hashed at all
+
+    def test_L2b_semantic_applicability_scope_still_splits(self):
+        a,_=self._key(instrument="XAUUSD",scope_universe="FX_METALS/ERA_1")
+        b,_=self._key(instrument="XAUUSD",scope_universe="FX_MAJORS/ERA_1")
+        self.assertNotEqual(a.scope_eligibility,b.scope_eligibility)
+
+    def test_L3_shared_server_feed_time_semantics_share_identity(self):
+        kx,_=self._key(instrument="XAUUSD")
+        ke,_=self._key(instrument="EURUSD")
+        self.assertEqual(kx.causal_time,ke.causal_time)
+        other,_=self._key(instrument="EURUSD",
+                          causal_time_semantics="SALIX-OTHERFEED-UTC-TRANSITION-V1")
+        self.assertNotEqual(kx.causal_time,other.causal_time)   # different feed splits
+
+    def test_L4_role_resolved_dependencies_do_not_split(self):
+        kx,_=self._key(instrument="XAUUSD")
+        ke,_=self._key(instrument="EURUSD")
+        self.assertEqual(kx.definition_semantics,ke.definition_semantics)
+
+    def test_L5_instrument_specific_semantics_still_split(self):
+        spec=dict(instrument_applicability="INSTRUMENT_SPECIFIC")
+        kx,ex=self._key(instrument="XAUUSD",dependency_closure=("XAUUSD.close",),
+                        scope_universe="XAUUSD/ERA_1",
+                        causal_time_semantics="SALIX-XAUUSD-BROKER-UTC-V1",**spec)
+        ke,ee=self._key(instrument="EURUSD",dependency_closure=("EURUSD.close",),
+                        scope_universe="EURUSD/ERA_1",
+                        causal_time_semantics="SALIX-EURUSD-BROKER-UTC-V1",**spec)
+        self.assertEqual((ex,ee),((),()))
+        self.assertNotEqual(kx.composite,ke.composite)
+
+    def test_L6_leaky_agnostic_declarations_fail_review_required(self):
+        cases=(
+            ("scope_universe","XAUUSD/ERA_1"),
+            ("scope_universe","EURUSD_ONLY"),                   # another instrument
+            ("scope_universe","xauusdm-universe"),              # broker suffix, lower case
+            ("causal_time_semantics","SALIX-XAUUSD-BROKER-UTC-TRANSITION-V1"),
+            ("causal_time_semantics","SALIX-XAU/USD-FEED-V1"),  # split pair
+            ("causal_time_semantics","GOLD-SESSION-CLOCK-V1"),  # metal name
+            ("dependency_closure",("XAUUSD.close",)),
+            ("dependency_closure",("BOUND_ROLE:close","EUR_USD.high")),
+            ("normalized_definition_graph","LN(DIV(XAUUSD.C[t],C[t-1]))"),
+            ("parameters",{"symbol":"EURUSD"}),
+            ("parameters",{"XAG_weight":0.5}),                  # metal code as a key
+            ("source_provider","FEED-XAUUSD"),
+        )
+        for field,value in cases:
+            key,errors=self._key(instrument="XAUUSD",**{field:value})
+            self.assertIsNone(key,(field,value))
+            self.assertTrue(any(e.startswith("INSTRUMENT_TOKEN_LEAKAGE_REVIEW_REQUIRED:"+field)
+                                for e in errors),(field,value,errors))
+        # The bound instrument itself is caught in any identity field, even in
+        # an unknown symbology the pair rules would not recognise.
+        # A suffixed pair symbol of ANOTHER instrument (the bound-instrument
+        # rule cannot catch it; the pair-prefix rule must).
+        key,errors=self._key(instrument="EURUSD",scope_universe="xauusdm-universe")
+        self.assertIsNone(key)
+        self.assertIn("INSTRUMENT_TOKEN_LEAKAGE_REVIEW_REQUIRED:scope_universe:XAUUSDM",errors)
+        key,errors=self._key(instrument="GER40",scope_universe="GER40-ONLY")
+        self.assertIsNone(key)
+        self.assertIn("INSTRUMENT_TOKEN_LEAKAGE_REVIEW_REQUIRED:scope_universe:GER40",errors)
+
+    def test_L6b_leak_is_refused_not_stripped(self):
+        """The leaked field is not silently normalised into a neutral key."""
+        leaky,errors=self._key(instrument="XAUUSD",scope_universe="XAUUSD/ERA_1")
+        self.assertIsNone(leaky); self.assertTrue(errors)
+        self.assertEqual(
+            instrument_token_leaks("XAUUSD/ERA_1","XAUUSD"),("XAUUSD",))
+
+    def test_L6c_leaky_agnostic_lookup_issues_no_claim(self):
+        store=verified_store()
+        content=dict(GATE_CONTENT); content.update(NEUTRAL_AGNOSTIC)
+        content.update(scope_universe="XAUUSD/ERA_1")
+        r=identity_lookup(store=store,subject=pre_id_subject(content=content),
+                          request_id="REQ-LEAK",search_policy=governed_search_policy(),
+                          normalizer=governed_normalizer())
+        self.assertEqual(r.outcome,LookupOutcome.INCOMPLETE_LOOKUP)
+        self.assertIsNone(r.absent_claim_token)
+        self.assertEqual(store.claims,[])
+
+    def test_L7_neutral_vocabulary_is_not_a_false_positive(self):
+        for text in ("FX_METALS/ERA_1","SALIX-BROKER-SERVER-UTC-TRANSITION-V1",
+                     "LAST_COMPLETED_BEFORE_T","RECONSTRUCTED_NOT_OBSERVED","BID",
+                     "CURRENT_RECOMPUTED","COMPOSER","LN(DIV(C[t],C[t-1]))","H1",
+                     "BOUND_ROLE:close","NONE"):
+            self.assertEqual(instrument_token_leaks(text,"XAUUSD"),(),text)
+
+    def test_L8_any_scope_rules(self):
+        k_any,e_any=self._key(instrument="ANY")
+        k_x,_=self._key(instrument="XAUUSD")
+        self.assertEqual(e_any,())
+        self.assertEqual(k_any.composite,k_x.composite)
+        _,e=self._key(instrument="ANY",instrument_applicability="INSTRUMENT_SPECIFIC")
+        self.assertIn("INSTRUMENT_SCOPE_ANY_REQUIRES_AGNOSTIC_APPLICABILITY",e)
+        _,e=self._key(instrument="ANY",fitted_state={"fitted_parameters":{"mu":1.0}})
+        self.assertIn("FITTED_STATE_REQUIRES_CONCRETE_INSTRUMENT",e)
+
+
+class CanonicalAgnosticRow006R(unittest.TestCase):
+    """DC-006R Correction B (CR015 M-1): an agnostic canonical row records the
+    semantic instrument scope ANY, never its first runtime binding."""
+
+    # Empty closure: BOUND_ROLE:* references are not canonical rows, so the
+    # stale-state sweep refuses them as dangling at registration (fail closed;
+    # reported residual). Role-dependency sharing is proven at key level (L4).
+    def _content(self,instrument):
+        c=dict(GATE_CONTENT); c.update(NEUTRAL_AGNOSTIC); c["instrument"]=instrument
+        c["dependency_closure"]=()
+        return c
+
+    def _lookup(self,store,instrument,request_id):
+        return identity_lookup(
+            store=store,subject=pre_id_subject(instrument=instrument,
+                                               content=self._content(instrument)),
+            request_id=request_id,search_policy=governed_search_policy(),
+            normalizer=governed_normalizer())
+
+    def _candidate(self,instrument,request_id):
+        return gate_candidate(claim_request_id=request_id,instrument=instrument,
+                              instrument_applicability="INSTRUMENT_AGNOSTIC",
+                              scope_universe=NEUTRAL_AGNOSTIC["scope_universe"],
+                              causal_time_semantics=NEUTRAL_AGNOSTIC["causal_time_semantics"],
+                              dependencies=())
+
+    def _register_xauusd_first(self):
+        """XAUUSD-bound request registers the shared definition. Construction
+        authority is reachable only by code replacement (test instrumentation)."""
+        from unittest import mock
+        from tracker_identity import store as store_module
+        store=verified_store()
+        with mock.patch.object(store_module,"_governed_construction_authority",
+                               return_value=True):
+            first=self._lookup(store,"XAUUSD","REQ-XAU-FIRST")
+        self.assertIsNotNone(first.absent_claim_token,first.errors)
+        self.assertEqual(store.claims[0].provenance.bound_instrument,"XAUUSD")
+        r=gate_intake(store,self._candidate("ANY","REQ-XAU-FIRST"))
+        self.assertTrue(r.accepted,r.errors)
+        return store,r.identity
+
+    def test_R1_first_binding_is_not_stamped_as_ownership(self):
+        store,row=self._register_xauusd_first()
+        self.assertEqual(row.instrument,"ANY")
+        self.assertEqual(store.all()[0].instrument,"ANY")
+        # Lineage keeps the exact binding that caused the registration.
+        self.assertEqual(store.claims[0].provenance.bound_instrument,"XAUUSD")
+
+    def test_R2_agnostic_candidate_stamped_with_binding_is_refused(self):
+        from unittest import mock
+        from tracker_identity import store as store_module
+        store=verified_store()
+        with mock.patch.object(store_module,"_governed_construction_authority",
+                               return_value=True):
+            self._lookup(store,"XAUUSD","REQ-XAU-STAMP")
+        r=gate_intake(store,self._candidate("XAUUSD","REQ-XAU-STAMP"))
+        self.assertFalse(r.accepted)
+        self.assertTrue(any("AGNOSTIC_DEFINITION_ROW_INSTRUMENT_MUST_BE_ANY" in e
+                            for e in r.errors),r.errors)
+        self.assertEqual(store.all(),())
+
+    def test_R3_later_eurusd_binding_pre_id_is_coherent(self):
+        store,row=self._register_xauusd_first()
+        r=self._lookup(store,"EURUSD","REQ-EUR-LATER")
+        self.assertEqual(r.outcome,LookupOutcome.EXACT_CANONICAL_IDENTITY)
+        self.assertIs(r.exact_match,row)
+        self.assertEqual(r.exact_match.instrument,"ANY")
+        self.assertEqual(r.bound_instrument,"EURUSD")
+        self.assertIsNone(r.absent_claim_token)
+        self.assertEqual(len(store.all()),1)            # no new identity minted
+
+    def test_R4_later_eurusd_binding_canonical_id_is_coherent(self):
+        store,row=self._register_xauusd_first()
+        for bound in ("EURUSD","XAUUSD"):
+            s={"subject_mode":"CANONICAL_ID","feature_id":row.feature_id,
+               "feature_version":row.feature_version,"definition_hash":row.definition_hash,
+               "graph_hash":row.graph_hash,"instrument":bound,"timeframe":row.timeframe,
+               "lookup_era_scope":"ERA_1_ONLY","candidate_content":self._content(bound)}
+            r=identity_lookup(store=store,subject=s,request_id="REQ-CID-"+bound,
+                              search_policy=governed_search_policy(),
+                              normalizer=governed_normalizer())
+            self.assertEqual(r.outcome,LookupOutcome.EXACT_CANONICAL_IDENTITY,(bound,r.errors))
+            self.assertIs(r.exact_match,row)
+            self.assertEqual(r.bound_instrument,bound)
+        # Canonical-ID path ALONE (no candidate content, so the content-key
+        # path cannot supply the match): ANY row still resolves EXACT.
+        s={"subject_mode":"CANONICAL_ID","feature_id":row.feature_id,
+           "feature_version":row.feature_version,"definition_hash":row.definition_hash,
+           "graph_hash":row.graph_hash,"instrument":"EURUSD","timeframe":row.timeframe,
+           "lookup_era_scope":"ERA_1_ONLY"}
+        r=identity_lookup(store=store,subject=s,request_id="REQ-CID-ONLY",
+                          search_policy=governed_search_policy(),normalizer=governed_normalizer())
+        self.assertEqual(r.outcome,LookupOutcome.EXACT_CANONICAL_IDENTITY,r.errors)
+        self.assertIs(r.exact_match,row)
+        self.assertEqual(r.bound_instrument,"EURUSD")
+        # Control: ANY matches any binding but NOT a different timeframe.
+        from tracker_identity.search import _canonical_matches
+        key=(row.feature_id,row.feature_version,row.definition_hash,row.graph_hash,"EURUSD","H4")
+        self.assertFalse(_canonical_matches(row,key))
+        self.assertFalse(_canonical_matches(row,key[:4]+("","H1")))
+        # Control: a concrete XAUUSD row is never matched by an EURUSD subject.
+        from dataclasses import replace
+        concrete=replace(row,instrument="XAUUSD")
+        self.assertFalse(_canonical_matches(concrete,key[:4]+("EURUSD",row.timeframe)))
+
+    def test_R4b_role_dependency_registration_fails_closed(self):
+        """PINNED RESIDUAL: BOUND_ROLE:* references share identity at key level
+        but are not canonical rows, so registration refuses them as dangling.
+        No role-resolution semantics are invented here."""
+        from unittest import mock
+        from tracker_identity import store as store_module
+        store=verified_store()
+        content=self._content("XAUUSD"); content["dependency_closure"]=("BOUND_ROLE:close",)
+        with mock.patch.object(store_module,"_governed_construction_authority",
+                               return_value=True):
+            identity_lookup(store=store,subject=pre_id_subject(instrument="XAUUSD",content=content),
+                            request_id="REQ-ROLE",search_policy=governed_search_policy(),
+                            normalizer=governed_normalizer())
+        cand=gate_candidate(claim_request_id="REQ-ROLE",instrument="ANY",
+                            instrument_applicability="INSTRUMENT_AGNOSTIC",
+                            scope_universe=NEUTRAL_AGNOSTIC["scope_universe"],
+                            causal_time_semantics=NEUTRAL_AGNOSTIC["causal_time_semantics"],
+                            dependencies=("BOUND_ROLE:close",))
+        r=gate_intake(store,cand)
+        self.assertFalse(r.accepted)
+        self.assertEqual(r.errors,("STALE_STATE_SWEEP_FAILED",))
+        self.assertTrue(any("DANGLING_DEPENDENCY" in d and "BOUND_ROLE:close" in d
+                            for d in r.stale_sweep.defects),r.stale_sweep.defects)
+        self.assertEqual(store.all(),())
+
+    def test_R5_pre_id_request_must_be_concretely_bound(self):
+        store=verified_store()
+        r=self._lookup(store,"ANY","REQ-ANY")
+        self.assertEqual(r.outcome,LookupOutcome.INCOMPLETE_LOOKUP)
+        self.assertIn("PRE_ID_BOUND_INSTRUMENT_MUST_BE_CONCRETE",r.errors)
+        self.assertEqual(store.claims,[])
+
+    def test_R6_fitted_agnostic_row_stays_instrument_qualified(self):
+        from tracker_identity import FeatureDefinitionRecord
+        fitted={"fitted_parameters":{"mu":0.1}}
+        base=dict(feature_id="f",feature_version="1",semantic_definition="s",formula="x",
+                  dependencies=(),era_id="ERA_1",definition_hash="",graph_hash="",
+                  timeframe="H1",instrument_applicability="INSTRUMENT_AGNOSTIC")
+        def rec(**over):
+            return FeatureDefinitionRecord(**dict(base,**over))
+        ok=rec(instrument="XAUUSD",fitted_state=fitted)
+        self.assertFalse(any("MUST_BE_ANY" in e for e in ok.completeness_errors()))
+        stamped=rec(instrument="XAUUSD",fitted_state="NONE")
+        self.assertTrue(any("AGNOSTIC_DEFINITION_ROW_INSTRUMENT_MUST_BE_ANY" in e
+                            for e in stamped.completeness_errors()))
+        anyrow=rec(instrument="ANY",fitted_state="NONE")
+        self.assertFalse(any("MUST_BE_ANY" in e for e in anyrow.completeness_errors()))
+
 
 class ManagerReAttackM1R(unittest.TestCase):
     """M-1R: the registry CONTAINER must be immutable, not only its entries."""

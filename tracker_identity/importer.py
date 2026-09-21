@@ -11,6 +11,7 @@ from .catalogue import FeatureDefinitionCatalogue
 from .content_identity import CONTENT_KEY_ALGORITHM_ID
 from .stale_sweep import StaleSweepResult, stale_state_sweep
 from .store import CanonicalIdentityStore, _commit_governed_import, _is_staged, _staging_copy
+from . import import_package_registry as _package_registry
 
 PERMITTED_IDENTITY_ROW_AUTHORITY_CLASSES = (
     "CANONICAL",
@@ -226,12 +227,11 @@ def import_identity_content(
     only the rows that contract planned. There is no other import writer:
     store.add / store.extend no longer exist (A14).
 
-    BOUNDARY (declared, not closed here): the contract's authority objects —
-    era boundary, source universe, manifest, catalogue — are self-hashed and
-    caller-constructible. The contract proves internal consistency and
-    catalogue-derived identity, NOT that the package is the Owner-ratified
-    one. No governed import-authority/package-approval object exists to bind
-    against; inventing one is out of commission scope.
+    PACKAGE AUTHORITY (DC-006R). The package objects are self-hashed and
+    caller-constructible, so the contract ALSO requires the exact package (by
+    computed hashes) to be pinned in APPROVED_IMPORT_PACKAGE_REGISTRY with a
+    governed approval reference. The production registry is empty: no governed
+    evidence pins a complete package, so every production import refuses.
     """
     return _commit_governed_import(
         target_store,
@@ -263,6 +263,12 @@ def _plan_identity_import(
     errors = list(era_boundary.completeness_errors())
     if _is_staged(target_store):
         errors.append("STORE_IS_STAGING_COPY")
+    # GOVERNED PACKAGE AUTHORITY (DC-006R). Internal consistency is not
+    # authorization: the exact package, by COMPUTED hashes, must be pinned in
+    # the Tracker-owned APPROVED_IMPORT_PACKAGE_REGISTRY. Production: empty.
+    errors.extend(_package_registry.resolve_approved_import_package(
+        era_boundary=era_boundary, source_universe=source_universe,
+        manifest=manifest, catalogue=catalogue))
     errors.extend(manifest.completeness_errors(source_universe))
     errors.extend(catalogue.completeness_errors())
     incoming = tuple(rows)

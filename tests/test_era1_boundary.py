@@ -68,14 +68,29 @@ def row(era="ERA_1"):
         import_source_authority_class="CURRENT_FEATURE_DEFINITION_CATALOGUE",
     )
 
+def approve_package(*,era_boundary,source_universe,manifest,catalogue,**_ignored):
+    """TEST ONLY (DC-006R). Pin exactly THIS package in the approved-import
+    registry for one block, by code replacement (mock). Production has no such
+    path: its registry is empty and read-only."""
+    from unittest import mock
+    from tracker_identity import import_package_registry as reg
+    entry=reg.ApprovedImportPackageEntry(
+        "TEST-FIXTURE-PACKAGE",
+        *reg.package_hashes(era_boundary=era_boundary,source_universe=source_universe,
+                            manifest=manifest,catalogue=catalogue),
+        approval_ref="TEST-FIXTURE:not-a-governed-approval")
+    return mock.patch.object(reg,"APPROVED_IMPORT_PACKAGE_REGISTRY",reg._build_registry((entry,)))
+
 def do_import(rows=None, store=None, man=None, uni=None, bd=None, cat=None):
     rows=(row(),) if rows is None else tuple(rows)
     store=store or CanonicalIdentityStore()
-    result=import_identity_content(
-        target_store=store,rows=rows,manifest=man or manifest(rows=len(rows)),
-        source_universe=uni or universe(),era_boundary=bd or boundary(),catalogue=cat or catalogue(),
-        search_policy=policy(),normalizer=normalizer(),
-    )
+    package=dict(manifest=man or manifest(rows=len(rows)),source_universe=uni or universe(),
+                 era_boundary=bd or boundary(),catalogue=cat or catalogue())
+    with approve_package(**package):
+        result=import_identity_content(
+            target_store=store,rows=rows,**package,
+            search_policy=policy(),normalizer=normalizer(),
+        )
     return store,result
 
 class Era1BoundaryTests(unittest.TestCase):
@@ -150,6 +165,26 @@ class Era1BoundaryTests(unittest.TestCase):
         )
         store,result=do_import(cat=FeatureDefinitionCatalogue("SALIX-ERA1-FEATURE-CATALOGUE","ERA_1",(tampered,)))
         self.assertTrue(any(x.startswith("CATALOGUE_DEFINITION_HASH_MISMATCH") for x in result.errors))
+        self.assertEqual(store.all(),())
+
+    def test_era1_package_is_not_production_approved(self):
+        """DC-006R: IMPORT_PRODUCTION_PACKAGE_REGISTRATION_BLOCKED = YES. The
+        checked-in Era-1 boundary/universe with this package's manifest and
+        catalogue is not pinned in the governed registry, so it writes nothing
+        without test instrumentation."""
+        bd=CanonicalEraBoundary(**json.loads((ROOT/"population"/"era1_boundary.json").read_text()))
+        un=json.loads((ROOT/"population"/"era1_source_universe.json").read_text())
+        u=SourceUniverseAuthority(
+            source_universe_id=un["source_universe_id"],version=un["version"],
+            source_universe_hash=un["source_universe_hash"],authority_source_id=un["authority_source_id"],
+            expected_source_ids=tuple(un["expected_source_ids"]),universe_complete=un["universe_complete"],
+            era_id=un["era_id"],unresolved_source_classes=tuple(un["unresolved_source_classes"]),
+        )
+        store=CanonicalIdentityStore()
+        result=import_identity_content(
+            target_store=store,rows=(row(),),manifest=manifest(),source_universe=u,
+            era_boundary=bd,catalogue=catalogue(),search_policy=policy(),normalizer=normalizer())
+        self.assertIn("IMPORT_PACKAGE_NOT_APPROVED",result.errors)
         self.assertEqual(store.all(),())
 
     def test_checked_in_boundary_and_universe_hashes(self):

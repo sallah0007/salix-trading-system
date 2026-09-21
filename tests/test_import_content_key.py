@@ -128,15 +128,31 @@ def row(fid="gold.logret", **changes):
     return FeatureIdentity(**vals)
 
 
+def approve_package(*,era_boundary,source_universe,manifest,catalogue,**_ignored):
+    """TEST ONLY (DC-006R). Pin exactly THIS package in the approved-import
+    registry for one block, by code replacement (mock). Production has no such
+    path: its registry is empty and read-only."""
+    from unittest import mock
+    from tracker_identity import import_package_registry as reg
+    entry=reg.ApprovedImportPackageEntry(
+        "TEST-FIXTURE-PACKAGE",
+        *reg.package_hashes(era_boundary=era_boundary,source_universe=source_universe,
+                            manifest=manifest,catalogue=catalogue),
+        approval_ref="TEST-FIXTURE:not-a-governed-approval")
+    return mock.patch.object(reg,"APPROVED_IMPORT_PACKAGE_REGISTRY",reg._build_registry((entry,)))
+
 def do_import(rows, cat=None, store=None):
     store = store or CanonicalIdentityStore(active_era_id=ERA)
-    result = import_identity_content(
-        target_store=store, rows=tuple(rows),
+    package = dict(
         manifest=IdentityImportManifest("M", "1", ERA,
                                         (ImportSourceRef("s", "source", "CANONICAL",
                                                          True, len(rows), ERA),)),
         source_universe=universe(), era_boundary=boundary(),
-        catalogue=cat or catalogue(), search_policy=policy(), normalizer=normalizer())
+        catalogue=cat or catalogue())
+    with approve_package(**package):
+        result = import_identity_content(
+            target_store=store, rows=tuple(rows), **package,
+            search_policy=policy(), normalizer=normalizer())
     return store, result
 
 

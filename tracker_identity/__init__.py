@@ -30,6 +30,8 @@ from .catalogue import FeatureDefinitionCatalogue, FeatureDefinitionRecord
 from .content_identity import (
     CONTENT_KEY_ALGORITHM_ID, REQUIRED_DIMENSIONS, UNFITTED_TOKEN,
     BINDING_DIMENSIONS, INSTRUMENT_AGNOSTIC, INSTRUMENT_SPECIFIC,
+    AGNOSTIC_INSTRUMENT_SCOPE, BOUND_UNIVERSE_DIMENSION,
+    SEMANTIC_APPLICABILITY_SCOPE_DIMENSION, instrument_token_leaks,
     INSTRUMENT_APPLICABILITY_VALUES,
     ContentIdentityKey, build_content_identity_key,
 )

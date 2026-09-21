@@ -5,7 +5,8 @@ import json
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Tuple
 
-from .content_identity import UNFITTED_TOKEN, build_content_identity_key
+from .content_identity import (AGNOSTIC_INSTRUMENT_SCOPE, INSTRUMENT_AGNOSTIC,
+                               UNFITTED_TOKEN, build_content_identity_key)
 
 def _hash(payload) -> str:
     raw=json.dumps(payload,sort_keys=True,separators=(",",":"),ensure_ascii=True)
@@ -101,6 +102,16 @@ class FeatureDefinitionRecord:
             errors.append("CATALOGUE_DEFINITION_HASH_MISMATCH:"+self.feature_id)
         if self.graph_hash != self.computed_graph_hash():
             errors.append("CATALOGUE_GRAPH_HASH_MISMATCH:"+self.feature_id)
+        # DC-006R (CR015 M-1). A canonical definition row for an
+        # INSTRUMENT_AGNOSTIC, UNFITTED definition must carry the semantic
+        # instrument scope ANY. Recording its first runtime binding (e.g.
+        # XAUUSD) would present a shared definition as XAUUSD-owned — and the
+        # definition hash would bind that binding too. Refused, not rewritten:
+        # the builder must declare ANY and keep the binding in lineage.
+        if (self.instrument_applicability == INSTRUMENT_AGNOSTIC
+                and self.fitted_state == UNFITTED_TOKEN
+                and self.instrument != AGNOSTIC_INSTRUMENT_SCOPE):
+            errors.append("AGNOSTIC_DEFINITION_ROW_INSTRUMENT_MUST_BE_ANY:"+self.feature_id)
         return tuple(errors)
 
 @dataclass(frozen=True)
@@ -123,6 +134,23 @@ class FeatureDefinitionCatalogue:
             if d.era_id != self.era_id:
                 errors.append("CATALOGUE_DEFINITION_ERA_MISMATCH:"+d.feature_id)
         return tuple(errors)
+
+    def computed_hash(self) -> str:
+        """Hash of the ENTIRE catalogue: every field of every definition,
+        type-tagged, in (feature_id, feature_version) order. Used to pin an
+        approved import package (DC-006R); a catalogue differing in any
+        declared field is a different package."""
+        from dataclasses import fields
+        from .content_identity import _encode
+        return _hash({
+            "catalogue_id": self.catalogue_id,
+            "era_id": self.era_id,
+            "definitions": [
+                {f.name: _encode(getattr(d, f.name)) for f in fields(d)}
+                for d in sorted(self.definitions,
+                                key=lambda d: (str(d.feature_id), str(d.feature_version)))
+            ],
+        })
 
     def find(self, feature_id: str, feature_version: str):
         matches=[d for d in self.definitions if d.feature_id==feature_id and d.feature_version==feature_version]

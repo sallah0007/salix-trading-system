@@ -521,8 +521,15 @@ def _make_issuance_authority():
         from .importer import _plan_identity_import
         with store._transition_lock:
             planned,result=_plan_identity_import(target_store=store,**contract)
-            if planned is not None and not is_staged(store):
-                _state(store)["records"].extend(planned)
+            if planned is None:
+                return result
+            if is_staged(store):
+                # Commit-stage guard, independent of the planner's own staged
+                # check (DC-006R F6). A refused write must REPORT refusal: the
+                # plan's success result is never returned for rows not written.
+                return replace(result,imported_row_count=0,population_complete=False,
+                               errors=("STORE_IS_STAGING_COPY",))
+            _state(store)["records"].extend(planned)
             return result
 
     def commit_transition(store,*,key,from_state,transition):
