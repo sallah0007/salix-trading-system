@@ -120,18 +120,36 @@ _ENTRIES:Tuple[GovernedSearchPolicyEntry,...]=(
     ),
 )
 
-GOVERNED_SEARCH_POLICIES:Mapping[tuple,GovernedSearchPolicyEntry]={
-    e.key:e for e in _ENTRIES
-}
+_BUILT={e.key:e for e in _ENTRIES}
 
 _registry_defects=tuple(
     f"{e.policy_id}@{e.version}:{x}" for e in _ENTRIES for x in e.registry_errors()
 )
-if len(GOVERNED_SEARCH_POLICIES)!=len(_ENTRIES):
+if len(_BUILT)!=len(_ENTRIES):
     _registry_defects=_registry_defects+("DUPLICATE_GOVERNED_POLICY_KEY",)
 if _registry_defects:
     raise RuntimeError("GOVERNED_SEARCH_POLICY_REGISTRY_INVALID:"
                        +";".join(_registry_defects))
+
+# The CONTAINER is frozen, not merely its entries. A read-only mapping is the
+# exported surface, so a runtime caller cannot replace, delete or insert a
+# governed policy entry. New versions arrive by editing _ENTRIES in source and
+# re-importing — never by mutating the registry of a running process.
+GOVERNED_SEARCH_POLICIES:Mapping[tuple,GovernedSearchPolicyEntry]=MappingProxyType(_BUILT)
+
+def resolve_governed_search_policy_binding(policy_id,version,policy_hash)->Tuple[str,...]:
+    """Resolve a recorded (id, version, hash) triple against the registry.
+
+    Used where only the BINDING was retained rather than the whole policy
+    object — for example a claim's provenance. Returns () only on an exact
+    governed match.
+    """
+    entry=GOVERNED_SEARCH_POLICIES.get((policy_id,version))
+    if entry is None:
+        return ("SEARCH_POLICY_NOT_GOVERNED:"+str(policy_id)+"@"+str(version),)
+    if str(policy_hash)!=entry.policy_hash:
+        return ("SEARCH_POLICY_HASH_NOT_GOVERNED",)
+    return ()
 
 def governed_search_policy(policy_id:str=SEARCH_POLICY_ID,
                            version:str=SEARCH_POLICY_VERSION)->SearchPolicy:

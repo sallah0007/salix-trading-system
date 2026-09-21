@@ -5,7 +5,7 @@ No materialization, eligibility, health, package production, FW/ML execution,
 or production trading authority is implemented here.
 """
 
-from .models import AbsentClaimToken, ClaimRecord, FeatureIdentity, IdentityLookupResult, LookupOutcome, NormalizerSpec, SearchPolicy
+from .models import AbsentClaimToken, ClaimProvenance, ClaimRecord, CLAIMABLE_LOOKUP_OUTCOMES, FeatureIdentity, IdentityLookupResult, LookupOutcome, NormalizerSpec, SearchPolicy
 from .policy_registry import (
     GOVERNED_SEARCH_POLICIES,
     MANDATORY_DUPLICATE_CONTROL_SCOPES,
@@ -14,6 +14,7 @@ from .policy_registry import (
     GovernedSearchPolicyEntry,
     governed_search_policy,
     resolve_governed_search_policy,
+    resolve_governed_search_policy_binding,
 )
 from .search import identity_lookup
 from .catalogue import FeatureDefinitionCatalogue, FeatureDefinitionRecord

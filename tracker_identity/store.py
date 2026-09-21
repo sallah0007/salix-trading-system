@@ -1,9 +1,10 @@
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from threading import RLock
 from typing import Iterable, Optional
-from .models import ClaimRecord, DEFAULT_CLAIM_TTL_SECONDS, FeatureIdentity
+from .models import ClaimProvenance, ClaimRecord, DEFAULT_CLAIM_TTL_SECONDS, FeatureIdentity
+from .policy_registry import resolve_governed_search_policy_binding
 
 @dataclass
 class CanonicalIdentityStore:
@@ -84,7 +85,8 @@ class CanonicalIdentityStore:
         for i,c in enumerate(self.claims):
             if c.state=="ACTIVE" and now_iso >= c.expires_ts:
                 self.claims[i]=ClaimRecord(c.claim_id,c.content_key_composite,
-                    c.request_id,c.issuer,c.issued_ts,c.expires_ts,"EXPIRED","TTL_EXPIRED")
+                    c.request_id,c.issuer,c.issued_ts,c.expires_ts,"EXPIRED","TTL_EXPIRED",
+                    c.provenance)
 
     def _active_claim_at_locked(self,content_key_composite:str,now_iso:str)->Optional[ClaimRecord]:
         """Caller MUST already hold _claim_lock and MUST have obtained now_iso
@@ -106,14 +108,50 @@ class CanonicalIdentityStore:
         with self._claim_lock:
             return self._active_claim_at_locked(content_key_composite,self._now_iso())
 
-    def reserve_claim(self,*,content_key_composite:str,request_id:str,issuer:str="TRACKER",
+    def reserve_claim(self,*,content_key_composite:str,request_id:str,
+                      provenance:Optional[ClaimProvenance]=None,issuer:str="TRACKER",
                       ttl_seconds:int=DEFAULT_CLAIM_TTL_SECONDS):
         """Atomically reserve. Returns (ClaimRecord|None, error|None).
 
         The reservation is PERSISTED inside the lock. A claim that is not
         persisted was never issued. A second active claim on the same content
         key is refused, never granted.
+
+        GOVERNED PROVENANCE IS MANDATORY. This method stays public because
+        privacy by naming convention is not a control, but it can no longer
+        mint registration authority on demand: a caller must present a
+        ClaimProvenance that is internally complete, bound to this exact
+        request_id and content key, and carrying a search-policy binding that
+        resolves against the governed registry. A caller who has not run a
+        governed lookup cannot produce one.
         """
+        if provenance is None:
+            return None,"CLAIM_PROVENANCE_REQUIRED"
+        provenance_errors=provenance.completeness_errors()
+        if provenance_errors:
+            return None,"CLAIM_PROVENANCE_INVALID:"+",".join(provenance_errors)
+        if str(provenance.request_id)!=str(request_id):
+            return None,"CLAIM_PROVENANCE_REQUEST_ID_MISMATCH"
+        if str(provenance.content_key_composite)!=str(content_key_composite):
+            return None,"CLAIM_PROVENANCE_CONTENT_KEY_MISMATCH"
+        binding_errors=resolve_governed_search_policy_binding(
+            provenance.search_policy_id,provenance.search_policy_version,
+            provenance.search_policy_hash)
+        if binding_errors:
+            return None,"CLAIM_PROVENANCE_POLICY_NOT_GOVERNED:"+",".join(binding_errors)
+        if provenance.authorizes_construction:
+            # Construction authority may NOT be asserted by whoever is asking
+            # for the claim. The governed lookup path issues authorizes_
+            # construction=False, so any True arriving here was authored by the
+            # caller — and a policy binding is public knowledge, so binding
+            # alone proves nothing about authority. Without this fence a caller
+            # could forge a construction-authorized provenance, self-bind
+            # evidence and register. Refused at the door instead.
+            #
+            # When a governed construction ORDER exists, this is the single
+            # place that check is replaced: authority must then be verified
+            # against that order, never taken on the caller's word.
+            return None,"CONSTRUCTION_AUTHORITY_NOT_SELF_ASSERTABLE"
         now_iso=self._now_iso()
         now=datetime.fromisoformat(now_iso)
         with self._claim_lock:
@@ -129,9 +167,36 @@ class CanonicalIdentityStore:
                 issued_ts=now_iso,
                 expires_ts=(now+timedelta(seconds=ttl_seconds)).isoformat(),
                 state="ACTIVE",
+                provenance=provenance,
             )
             self.claims.append(rec)
             return rec,None
+
+    def bind_lookup_evidence(self,*,claim_id:str,lookup_result_id:str,
+                             lookup_evidence_hash:str):
+        """Write the issuing lookup RESULT back onto the claim's provenance.
+
+        Called by identity_lookup once the result it is returning exists. Until
+        this has happened the claim is not fully provenance-bound and
+        registration refuses it, so a claim reserved but never tied to a real
+        emitted lookup result cannot be redeemed.
+
+        The binding is write-once: an already-bound claim is never re-pointed
+        at a different lookup result.
+        """
+        with self._claim_lock:
+            for i,c in enumerate(self.claims):
+                if c.claim_id!=claim_id:
+                    continue
+                if c.provenance is None:
+                    return False,"CLAIM_HAS_NO_PROVENANCE"
+                if c.provenance.lookup_evidence_bound:
+                    return False,"CLAIM_LOOKUP_EVIDENCE_ALREADY_BOUND"
+                bound=replace(c.provenance,lookup_result_id=str(lookup_result_id),
+                              lookup_evidence_hash=str(lookup_evidence_hash))
+                self.claims[i]=replace(c,provenance=bound)
+                return True,None
+            return False,"CLAIM_NOT_FOUND"
 
     def validate_claim_for_registration(self,*,content_key_composite:str,
                                         request_id:str):
@@ -159,7 +224,8 @@ class CanonicalIdentityStore:
                     if c.state!="ACTIVE":
                         return False
                     self.claims[i]=ClaimRecord(c.claim_id,c.content_key_composite,
-                        c.request_id,c.issuer,c.issued_ts,c.expires_ts,"RELEASED",reason)
+                        c.request_id,c.issuer,c.issued_ts,c.expires_ts,"RELEASED",reason,
+                        c.provenance)
                     return True
             return False
 
@@ -233,6 +299,39 @@ class CanonicalIdentityStore:
                     if r.canonical_key==identity.canonical_key:
                         return False,"CANONICAL_KEY_ALREADY_REGISTERED:"+r.feature_id
 
+                # GOVERNED CONSTRUCTION AUTHORITY — the last gate before the
+                # registry is written.
+                #
+                # Deliberately evaluated AFTER the claim, duplicate and
+                # canonical-key checks, so each of those remains independently
+                # observable and testable rather than being masked by a blanket
+                # authority refusal. Nothing has been mutated at this point, so
+                # ordering costs no safety.
+                prov=held.provenance
+                if prov is None:
+                    return False,"CLAIM_PROVENANCE_MISSING"
+                prov_errors=prov.completeness_errors()
+                if prov_errors:
+                    return False,"CLAIM_PROVENANCE_INVALID:"+",".join(prov_errors)
+                if not prov.lookup_evidence_bound:
+                    return False,"CLAIM_LOOKUP_EVIDENCE_NOT_BOUND"
+                if str(prov.request_id)!=request_id:
+                    return False,"CLAIM_PROVENANCE_REQUEST_ID_MISMATCH"
+                if str(prov.content_key_composite)!=content_key_composite:
+                    return False,"CLAIM_PROVENANCE_CONTENT_KEY_MISMATCH"
+                binding_errors=resolve_governed_search_policy_binding(
+                    prov.search_policy_id,prov.search_policy_version,
+                    prov.search_policy_hash)
+                if binding_errors:
+                    return False,"CLAIM_PROVENANCE_POLICY_NOT_GOVERNED:"+",".join(binding_errors)
+                if not prov.authorizes_construction:
+                    # An ACTIVE, fully provenance-bound claim still does not
+                    # authorize construction. ERA_1 structural absence is not
+                    # global absence and semantic uniqueness is not certified,
+                    # so the governed lookup path issues no construction
+                    # authority and this fails closed.
+                    return False,"CLAIM_NOT_CONSTRUCTION_AUTHORIZED"
+
                 self.records.append(identity)
                 self.creation_records.append(creation)
 
@@ -241,6 +340,6 @@ class CanonicalIdentityStore:
                         self.claims[i]=ClaimRecord(
                             c.claim_id,c.content_key_composite,c.request_id,
                             c.issuer,c.issued_ts,c.expires_ts,
-                            "RELEASED","REGISTRATION_COMPLETED")
+                            "RELEASED","REGISTRATION_COMPLETED",c.provenance)
                         break
                 return True,None

@@ -8,6 +8,7 @@ from typing import Mapping, Any
 
 from .models import (
     AbsentClaimToken,
+    ClaimProvenance,
     IdentityLookupResult,
     LookupOutcome,
     NormalizerSpec,
@@ -250,9 +251,29 @@ def identity_lookup(
     elif subject_mode=="PRE_ID":
         # Absence is bounded to the certified structural class. Semantic
         # uniqueness is NOT certified and is never implied by this outcome.
+        # The claim carries WHERE it came from and WHAT it permits. Construction
+        # authority is NOT granted here: an ERA_1 structural absence is not a
+        # global absence, GLOBAL_CANONICAL_ABSENCE_PROVEN is NO and semantic
+        # uniqueness is not certified, so authorizes_construction stays False
+        # and downstream registration fails closed. Setting it True here would
+        # manufacture the very authority this gate exists to withhold.
+        provenance=ClaimProvenance(
+            request_id=request_id,
+            content_key_composite=content_key.composite,
+            lookup_outcome=LookupOutcome.ABSENT_EXACT_STRUCTURAL_IN_ERA_1.value,
+            lookup_complete=True,
+            search_policy_id=search_policy.policy_id,
+            search_policy_version=search_policy.version,
+            search_policy_hash=search_policy.policy_hash,
+            normalizer_id=normalizer.normalizer_id,
+            normalizer_version=normalizer.version,
+            normalizer_hash=normalizer.normalizer_hash,
+            semantic_uniqueness="UNRESOLVED_NOT_CERTIFIED",
+            authorizes_construction=False,
+        )
         claim_record,claim_error=store.reserve_claim(
             content_key_composite=content_key.composite,
-            request_id=request_id,issuer=owner,
+            request_id=request_id,issuer=owner,provenance=provenance,
         )
         if claim_error:
             outcome=LookupOutcome.INCOMPLETE_LOOKUP
@@ -310,8 +331,20 @@ def identity_lookup(
         "errors":errors,
     }
 
+    lookup_result_id=str(uuid.uuid4())
+    evidence_hash=_evidence_hash(evidence)
+    if claim_record is not None:
+        # Tie the claim to the lookup result actually being emitted. Until this
+        # write-once binding exists the claim is not redeemable, so a claim that
+        # never came from a real emitted result cannot be presented later.
+        store.bind_lookup_evidence(
+            claim_id=claim_record.claim_id,
+            lookup_result_id=lookup_result_id,
+            lookup_evidence_hash=evidence_hash,
+        )
+
     return IdentityLookupResult(
-        lookup_result_id=str(uuid.uuid4()),
+        lookup_result_id=lookup_result_id,
         request_id=request_id,
         lookup_subject_hash=subject_hash,
         normalized_definition_graph_id_or_hash=normalized["graph_hash"],
@@ -329,7 +362,7 @@ def identity_lookup(
         exact_match=exact_match,
         near_match_candidates=near_matches,
         absent_claim_token=absent_token,
-        lookup_evidence_hash=_evidence_hash(evidence),
+        lookup_evidence_hash=evidence_hash,
         verdict_ts=now.isoformat(),
         lookup_era_scope=lookup_era_scope,
         active_era_id=active_era_id,

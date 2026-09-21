@@ -13,6 +13,11 @@ SCOPE_STATUSES = ("LOADED","EMPTY_VERIFIED","UNREACHABLE","UNKNOWN")
 CLAIM_STATES = ("ACTIVE","RELEASED","EXPIRED","ABANDONED")
 DEFAULT_CLAIM_TTL_SECONDS = 900
 
+# The only lookup outcomes that may cause a claim to be issued at all. An
+# outcome outside this set is not a claimable state, so no claim derived from
+# it can be provenance-valid.
+CLAIMABLE_LOOKUP_OUTCOMES = ("ABSENT_EXACT_STRUCTURAL_IN_ERA_1",)
+
 def _sha256_json(payload) -> str:
     raw=json.dumps(payload,sort_keys=True,separators=(",",":"),ensure_ascii=True)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -133,6 +138,68 @@ class NormalizerSpec:
         return tuple(e)
 
 @dataclass(frozen=True)
+class ClaimProvenance:
+    """Executable proof that a claim came from the governed lookup path.
+
+    An ACTIVE claim is NOT construction authority. Before this record existed a
+    caller could compute a content key, call reserve_claim() directly, and
+    present the resulting claim to registration without any completed
+    identity_lookup ever having run. The claim bound only id/key/request/time —
+    nothing about WHERE it came from or what it permits.
+
+    This binds the missing facts: which lookup result issued it, under which
+    governed search policy and normalizer, whether that lookup was complete,
+    which outcome it reached, what the semantic-uniqueness state was, and —
+    separately from all of that — whether construction is actually authorized.
+
+    authorizes_construction is deliberately NOT implied by any of the others.
+    An ERA_1 structural absence is not a global absence: GLOBAL_CANONICAL_
+    ABSENCE_PROVEN is NO and SEMANTIC_UNIQUENESS is UNRESOLVED_NOT_CERTIFIED,
+    so the lookup path issues claims with authorizes_construction=False and
+    registration fails closed. Construction authority must arrive from a
+    governed construction order, which does not exist in this implementation.
+    """
+    request_id:str
+    content_key_composite:str
+    lookup_outcome:str
+    lookup_complete:bool
+    search_policy_id:str
+    search_policy_version:str
+    search_policy_hash:str
+    normalizer_id:str
+    normalizer_version:str
+    normalizer_hash:str
+    semantic_uniqueness:str
+    authorizes_construction:bool=False
+    lookup_result_id:str=""
+    lookup_evidence_hash:str=""
+
+    def completeness_errors(self)->Tuple[str,...]:
+        e=[]
+        if not str(self.request_id).strip():
+            e.append("PROVENANCE_REQUEST_ID_REQUIRED")
+        if not str(self.content_key_composite).strip():
+            e.append("PROVENANCE_CONTENT_KEY_REQUIRED")
+        if not self.lookup_complete:
+            e.append("PROVENANCE_LOOKUP_NOT_COMPLETE")
+        if str(self.lookup_outcome) not in CLAIMABLE_LOOKUP_OUTCOMES:
+            e.append("PROVENANCE_OUTCOME_NOT_CLAIMABLE:"+str(self.lookup_outcome))
+        if not (self.search_policy_id and self.search_policy_version and self.search_policy_hash):
+            e.append("PROVENANCE_SEARCH_POLICY_BINDING_REQUIRED")
+        if not (self.normalizer_id and self.normalizer_version and self.normalizer_hash):
+            e.append("PROVENANCE_NORMALIZER_BINDING_REQUIRED")
+        if not str(self.semantic_uniqueness).strip():
+            e.append("PROVENANCE_SEMANTIC_UNIQUENESS_REQUIRED")
+        return tuple(e)
+
+    @property
+    def lookup_evidence_bound(self)->bool:
+        """A claim is only fully provenance-bound once the lookup RESULT that
+        issued it exists and its evidence hash has been written back."""
+        return bool(str(self.lookup_result_id).strip()
+                    and str(self.lookup_evidence_hash).strip())
+
+@dataclass(frozen=True)
 class ClaimRecord:
     """A persisted, atomically reserved claim on a CONTENT_IDENTITY_KEY."""
     claim_id:str
@@ -143,6 +210,7 @@ class ClaimRecord:
     expires_ts:str
     state:str="ACTIVE"
     release_reason:Optional[str]=None
+    provenance:Optional[ClaimProvenance]=None
 
     def is_active_at(self,now_iso:str)->bool:
         return self.state=="ACTIVE" and now_iso < self.expires_ts

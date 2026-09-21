@@ -15,9 +15,12 @@ from tracker_identity import (
     CanonicalIdentityStore,
     FeatureDefinitionRecord,
     FeatureIdentity,
+    MANDATORY_DUPLICATE_CONTROL_SCOPES,
     NormalizerSpec,
     SearchPolicy,
     build_content_identity_key,
+    governed_search_policy,
+    identity_lookup,
     safe_intake_built_identity,
 )
 
@@ -128,6 +131,28 @@ def content_key(**overrides):
     return key
 
 
+def governed_lookup(store, request_id, **content_overrides):
+    """Run the governed lookup. reserve_claim() no longer mints authority on
+    demand, so this is the only way a test can obtain a real claim."""
+    for sc in MANDATORY_DUPLICATE_CONTROL_SCOPES:
+        store.declare_scope(sc, "EMPTY_VERIFIED")
+    payload = dict(CONTENT)
+    payload.update(content_overrides)
+    subject = {"subject_mode": "PRE_ID", "feature_id": "", "feature_version": "",
+               "definition_hash": "", "graph_hash": "", "instrument": "XAUUSD",
+               "timeframe": "H1", "lookup_era_scope": "ERA_1_ONLY",
+               "candidate_content": payload}
+    return identity_lookup(store=store, subject=subject, request_id=request_id,
+                           search_policy=governed_search_policy(),
+                           normalizer=normalizer())
+
+
+def governed_claim(store, request_id, **content_overrides):
+    result = governed_lookup(store, request_id, **content_overrides)
+    assert result.absent_claim_token is not None, result.errors
+    return result
+
+
 def imported_row(key, feature_id="gold.logret.other"):
     """A content identity introduced by the governed IMPORT path.
 
@@ -158,40 +183,48 @@ class RegistrationAtomicity(unittest.TestCase):
         key = content_key()
         clock = FrozenClock(datetime.now(timezone.utc))
         store._clock = clock
-        store.reserve_claim(content_key_composite=key.composite, request_id="REQ-A")
-        # A's claim expires; B takes the key and registers first.
+        governed_claim(store, "REQ-A")
+        # A's claim expires; B takes the key.
         clock.advance(10_000)
-        store.reserve_claim(content_key_composite=key.composite, request_id="REQ-B")
+        governed_claim(store, "REQ-B")
         b = intake(store, candidate("gold.logret.b", claim_request_id="REQ-B"))
-        self.assertTrue(b.accepted, b.errors)
-
         a = intake(store, candidate("gold.logret.a", claim_request_id="REQ-A"))
+
+        # Neither registers: registration is fail-closed (C-1R). What this test
+        # still proves is that they fail for DIFFERENT reasons — B reaches the
+        # terminal authority gate, A dies earlier on its own expiry. The ABA
+        # control is therefore still exercised, not masked.
+        self.assertFalse(b.accepted)
+        self.assertTrue(any("CLAIM_NOT_CONSTRUCTION_AUTHORIZED" in e for e in b.errors), b.errors)
         self.assertFalse(a.accepted)
-        self.assertTrue(any(e.startswith("REGISTRATION_REFUSED") for e in a.errors), a.errors)
-        self.assertEqual(len([r for r in store.all() if r.is_current]), 1)
+        self.assertTrue(any("CLAIM_NOT_ACTIVE" in e for e in a.errors), a.errors)
+        self.assertEqual(store.all(), ())
 
     def test_B_two_workers_same_content_key_cannot_both_register(self):
         store = CanonicalIdentityStore()
-        key = content_key()
-        first, err1 = store.reserve_claim(content_key_composite=key.composite,
-                                          request_id="REQ-1")
-        second, err2 = store.reserve_claim(content_key_composite=key.composite,
-                                           request_id="REQ-2")
-        self.assertIsNotNone(first)
-        self.assertIsNone(second)
-        self.assertTrue(err2.startswith("PENDING_CLAIM_EXISTS"))
+        first = governed_claim(store, "REQ-1")
+        second = governed_lookup(store, "REQ-2")
+        self.assertIsNotNone(first.absent_claim_token)
+        # The second governed lookup on the same content key gets NO claim.
+        self.assertIsNone(second.absent_claim_token)
+        self.assertTrue(any("PENDING_CLAIM_EXISTS" in e for e in second.errors),
+                        second.errors)
+        self.assertEqual(len([c for c in store.claims if c.state == "ACTIVE"]), 1)
 
         one = intake(store, candidate("gold.logret.one", claim_request_id="REQ-1"))
         two = intake(store, candidate("gold.logret.two", claim_request_id="REQ-2"))
-        self.assertTrue(one.accepted, one.errors)
+        self.assertFalse(one.accepted)
+        self.assertTrue(any("CLAIM_NOT_CONSTRUCTION_AUTHORIZED" in e for e in one.errors),
+                        one.errors)
         self.assertFalse(two.accepted)
-        self.assertEqual(len(store.all()), 1)
+        self.assertTrue(any("CLAIM_NOT_FOUND" in e for e in two.errors), two.errors)
+        self.assertEqual(store.all(), ())
 
     def test_C_identity_appearing_after_claim_blocks_stale_claimant(self):
         """Content identity registered by another path between claim and intake."""
         store = CanonicalIdentityStore()
         key = content_key()
-        store.reserve_claim(content_key_composite=key.composite, request_id="REQ-STALE")
+        governed_claim(store, "REQ-STALE")
         # The same content identity arrives by the governed import path while
         # this worker holds its claim. It cannot arrive by a second intake:
         # only one active claim per content key can exist, which is the point.
@@ -199,6 +232,8 @@ class RegistrationAtomicity(unittest.TestCase):
 
         stale = intake(store, candidate("gold.logret.stale", claim_request_id="REQ-STALE"))
         self.assertFalse(stale.accepted)
+        # Fires BEFORE the terminal authority gate, so the duplicate control
+        # remains independently observable rather than masked by it.
         self.assertTrue(any("IDENTITY_APPEARED_SINCE_CLAIM" in e for e in stale.errors),
                         stale.errors)
 
@@ -213,7 +248,7 @@ class RegistrationAtomicity(unittest.TestCase):
         key = content_key()
         clock = FrozenClock(datetime.now(timezone.utc))
         store._clock = clock
-        store.reserve_claim(content_key_composite=key.composite, request_id="REQ-OLD")
+        governed_claim(store, "REQ-OLD")
         self.assertEqual(store.claims[0].state, "ACTIVE")
 
         clock.advance(10_000)   # real time passes; record still says ACTIVE
@@ -240,7 +275,7 @@ class RegistrationAtomicity(unittest.TestCase):
         key = content_key()
         clock = FrozenClock(datetime.now(timezone.utc))
         store._clock = clock
-        store.reserve_claim(content_key_composite=key.composite, request_id="REQ-SC")
+        governed_claim(store, "REQ-SC")
         issued_at = clock.at
         clock.advance(10_000)
         # A plausible side channel: an old timestamp parked on the store.
@@ -251,21 +286,31 @@ class RegistrationAtomicity(unittest.TestCase):
         self.assertFalse(ok)
         self.assertTrue(error.startswith("CLAIM_NOT_ACTIVE"), error)
 
-    def test_E_success_consumes_exactly_its_own_claim(self):
+    def test_E_fail_closed_registration_consumes_no_claim(self):
+        """Was: test_E_success_consumes_exactly_its_own_claim.
+
+        Claim consumption ON SUCCESS is UNREACHABLE while registration is
+        fail-closed (C-1R): no code path grants construction authority. What
+        remains verifiable is the converse, and it is the safety-relevant half
+        — a registration refused at the authority gate consumes NOTHING, and
+        leaves an unrelated worker's claim untouched.
+        """
         store = CanonicalIdentityStore()
-        key = content_key()
-        store.reserve_claim(content_key_composite=key.composite, request_id="REQ-MINE")
-        store.reserve_claim(content_key_composite="unrelated-key", request_id="REQ-OTHER")
+        governed_claim(store, "REQ-MINE")
+        governed_claim(store, "REQ-OTHER", price_basis="ASK")
         result = intake(store, candidate(claim_request_id="REQ-MINE"))
-        self.assertTrue(result.accepted, result.errors)
+        self.assertFalse(result.accepted)
+        self.assertTrue(any("CLAIM_NOT_CONSTRUCTION_AUTHORIZED" in e for e in result.errors),
+                        result.errors)
         states = {c.request_id: c.state for c in store.claims}
-        self.assertEqual(states["REQ-MINE"], "RELEASED")
+        self.assertEqual(states["REQ-MINE"], "ACTIVE")
         self.assertEqual(states["REQ-OTHER"], "ACTIVE")
+        self.assertEqual(store.all(), ())
 
     def test_F_failed_intake_does_not_consume_another_workers_claim(self):
         store = CanonicalIdentityStore()
         key = content_key()
-        store.reserve_claim(content_key_composite=key.composite, request_id="REQ-HOLDER")
+        governed_claim(store, "REQ-HOLDER")
         # A different request presents no valid claim and must fail without
         # touching the holder's claim.
         result = intake(store, candidate("gold.logret.x", claim_request_id="REQ-GHOST"))
@@ -282,31 +327,28 @@ class RegistrationAtomicity(unittest.TestCase):
         end-to-end refusal, and the inner check in isolation.
         """
         store = CanonicalIdentityStore()
-        store.reserve_claim(content_key_composite=content_key().composite,
-                            request_id="REQ-DUP1")
-        first = intake(store, candidate("gold.logret.dup", claim_request_id="REQ-DUP1"))
-        self.assertTrue(first.accepted, first.errors)
+        # End-to-end double registration is UNREACHABLE while registration is
+        # fail-closed, so the first identity is placed by the governed import
+        # path instead. The canonical-key control itself is what this test is
+        # about, and it remains fully exercisable.
+        # Unrelated CONTENT (different definition graph), so it does not route
+        # the claimant's lookup to related-version review — but the SAME
+        # canonical key, which is what must refuse the write.
+        existing = imported_row(
+            content_key(normalized_definition_graph="SUB(LN(C[t]),LN(C[t-1]))"),
+            feature_id="gold.logret.dup")
+        store.add(existing)
+        governed_claim(store, "REQ-DUP")
 
-        # Same canonical key, different governed content (ASK vs BID), so it
-        # carries its own content key and its own valid claim. It must still be
-        # refused — on the duplicate canonical key, not on the claim gate.
-        ask_key = content_key(price_basis="ASK")
-        store.reserve_claim(content_key_composite=ask_key.composite,
-                            request_id="REQ-DUP2")
-        second = intake(store, candidate("gold.logret.dup", price_basis="ASK",
-                                         claim_request_id="REQ-DUP2"))
-        self.assertFalse(second.accepted)
-        self.assertNotIn("CLAIM_REQUEST_ID_REQUIRED", second.errors)
-        self.assertEqual(len(store.all()), 1)
-
-        # Inner check in isolation: a VALID active claim, but the canonical key
-        # is already registered. The claim gate must not be what stops this —
-        # the canonical-key check itself must.
+        # A VALID active, fully provenance-bound claim, presented against a
+        # canonical key that already exists. The canonical-key check must be
+        # what refuses this — it fires before the terminal authority gate.
         ok, error = store.commit_registration(
-            identity=first.identity, creation=object(),
-            content_key_composite=ask_key.composite, request_id="REQ-DUP2")
+            identity=existing, creation=object(),
+            content_key_composite=content_key().composite, request_id="REQ-DUP")
         self.assertFalse(ok)
         self.assertTrue(error.startswith("CANONICAL_KEY_ALREADY_REGISTERED"), error)
+        self.assertEqual(len(store.all()), 1)
 
     def test_claim_without_derivable_content_key_is_refused(self):
         store = CanonicalIdentityStore()
