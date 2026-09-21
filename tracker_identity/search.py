@@ -17,6 +17,8 @@ from .models import (
 )
 from .content_identity import CONTENT_KEY_ALGORITHM_ID, build_content_identity_key
 from .normalizer import normalize_subject
+from .normalizer_registry import resolve_governed_normalizer
+from .policy_registry import resolve_governed_search_policy
 from .store import CanonicalIdentityStore
 
 def _evidence_hash(payload: Mapping[str, Any]) -> str:
@@ -53,7 +55,18 @@ def identity_lookup(
     now=now or datetime.now(timezone.utc)
 
     errors=list(search_policy.completeness_errors())
+    # Self-consistency is not authority. The presented policy must ALSO bind to
+    # a Tracker-owned governed policy version, so a caller cannot redefine what
+    # duplicate-control completeness means by constructing its own policy and
+    # self-hashing it. Any mismatch lands in `errors`, which forces
+    # INCOMPLETE_LOOKUP below and issues no claim.
+    errors.extend(resolve_governed_search_policy(search_policy))
     errors.extend(normalizer.completeness_errors())
+    # Normalizer authority is governed exactly like search-policy authority.
+    # A self-hashed name/version triple is not authority: it is computed
+    # from the caller's own values, so any caller could name a normalizer
+    # and claim whatever equivalence classes it liked.
+    errors.extend(resolve_governed_normalizer(normalizer))
 
     lookup_era_scope=str(subject.get("lookup_era_scope","ALL_ERAS")).strip().upper() or "ALL_ERAS"
     if lookup_era_scope not in LOOKUP_ERA_SCOPES:
@@ -243,9 +256,17 @@ def identity_lookup(
     elif subject_mode=="PRE_ID":
         # Absence is bounded to the certified structural class. Semantic
         # uniqueness is NOT certified and is never implied by this outcome.
+        # The STORE issues the claim and builds its provenance. identity_lookup
+        # hands over only what it wants looked up — no lookup_complete, no
+        # outcome, no policy/normalizer binding, no result id, and no
+        # construction flag. Everything that could confer authority is
+        # re-derived by the store from its own records, so this call site has
+        # no more power to mint a claim than any other caller does.
         claim_record,claim_error=store.reserve_claim(
             content_key_composite=content_key.composite,
             request_id=request_id,issuer=owner,
+            search_policy=search_policy,normalizer=normalizer,
+            include_validation_scope=include_validation_scope,
         )
         if claim_error:
             outcome=LookupOutcome.INCOMPLETE_LOOKUP
@@ -303,8 +324,16 @@ def identity_lookup(
         "errors":errors,
     }
 
+    # When a claim was issued, the result carries the STORE-generated id, so the
+    # emitted result and the claim's provenance refer to the same issuance. When
+    # no claim was issued there is no authority to tie, and a local id is used.
+    lookup_result_id=(claim_record.provenance.lookup_result_id
+                      if claim_record is not None and claim_record.provenance is not None
+                      else str(uuid.uuid4()))
+    evidence_hash=_evidence_hash(evidence)
+
     return IdentityLookupResult(
-        lookup_result_id=str(uuid.uuid4()),
+        lookup_result_id=lookup_result_id,
         request_id=request_id,
         lookup_subject_hash=subject_hash,
         normalized_definition_graph_id_or_hash=normalized["graph_hash"],
@@ -322,7 +351,7 @@ def identity_lookup(
         exact_match=exact_match,
         near_match_candidates=near_matches,
         absent_claim_token=absent_token,
-        lookup_evidence_hash=_evidence_hash(evidence),
+        lookup_evidence_hash=evidence_hash,
         verdict_ts=now.isoformat(),
         lookup_era_scope=lookup_era_scope,
         active_era_id=active_era_id,

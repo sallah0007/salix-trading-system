@@ -11,6 +11,7 @@ from dataclasses import replace
 
 from tracker_identity import (
     CONTENT_KEY_ALGORITHM_ID,
+    MANDATORY_DUPLICATE_CONTROL_SCOPES,
     CanonicalEraBoundary,
     CanonicalIdentityStore,
     FeatureDefinitionCatalogue,
@@ -22,6 +23,8 @@ from tracker_identity import (
     NormalizerSpec,
     SearchPolicy,
     SourceUniverseAuthority,
+    governed_normalizer,
+    governed_search_policy,
     identity_lookup,
     import_identity_content,
     stale_state_sweep,
@@ -149,7 +152,10 @@ class ImportContentKey(unittest.TestCase):
         store, result = do_import([row()])
         self.assertEqual(result.errors, ())
         self.assertEqual(store.rows_without_content_key(ERA), ())
-        for sc in SCOPES:
+        # A PRE_ID lookup now runs under the Tracker-owned governed policy, so
+        # every mandatory duplicate-control scope must be proven reachable —
+        # not just the one scope this import fixture happens to populate.
+        for sc in MANDATORY_DUPLICATE_CONTROL_SCOPES:
             store.declare_scope(sc, "EMPTY_VERIFIED")
         subject = {
             "subject_mode": "PRE_ID",
@@ -164,7 +170,8 @@ class ImportContentKey(unittest.TestCase):
             },
         }
         result = identity_lookup(store=store, subject=subject, request_id="REQ-PI",
-                                 search_policy=policy(), normalizer=normalizer())
+                                 search_policy=governed_search_policy(),
+                                 normalizer=governed_normalizer())
         self.assertNotIn("CONTENT_KEY_UNRESOLVED_ROWS",
                          " ".join(result.errors))
         self.assertEqual(result.outcome, LookupOutcome.EXACT_CANONICAL_IDENTITY)

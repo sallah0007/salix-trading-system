@@ -2,8 +2,9 @@ import unittest
 
 from tracker_identity import (
     BuiltIdentityCandidate, CanonicalEraBoundary, CanonicalIdentityStore,
-    LookupOutcome, NormalizerSpec, SearchPolicy,
-    composer_boundary_outcome, safe_intake_built_identity,
+    LookupOutcome, MANDATORY_DUPLICATE_CONTROL_SCOPES, NormalizerSpec, SearchPolicy,
+    composer_boundary_outcome, governed_normalizer, governed_search_policy, identity_lookup,
+    safe_intake_built_identity,
 )
 
 def policy():
@@ -11,8 +12,9 @@ def policy():
     return SearchPolicy(p.policy_id,p.version,p.computed_hash(),p.required_scopes,p.searched_scopes,p.scope_exclusions)
 
 def normalizer():
-    n=NormalizerSpec("safe-intake","1","",("EXACT_STRUCTURAL_IDENTITY",))
-    return NormalizerSpec(n.normalizer_id,n.version,n.computed_hash(),n.equivalence_classes)
+    # Governed normalizer: identity_lookup resolves normalizer authority
+    # against the Tracker-owned registry.
+    return governed_normalizer()
 
 def boundary(**changes):
     vals=dict(
@@ -40,6 +42,19 @@ def candidate(**changes):
         creation_reason_ref="decision:approved-definition",
         created_by="SALIX_MANAGER",authority_ref="owner:era1-intake",
         creation_evidence_ref="evidence:definition-review",
+        # Governed content dimensions. Required because ordinary registration is
+        # claim-gated and a claim is validated against the candidate's
+        # recomputed CONTENT_IDENTITY_KEY: a candidate whose content key cannot
+        # be derived can no longer be registered at all. None of these feed
+        # computed_definition_hash/computed_graph_hash, so the hash fixtures
+        # below are unaffected.
+        declared_normalization="NONE",
+        causal_time_semantics="SALIX-XAUUSD-BROKER-UTC-TRANSITION-V1",
+        completion_semantics="LAST_COMPLETED_BEFORE_T",
+        availability_class="RECONSTRUCTED_NOT_OBSERVED",
+        price_basis="BID",data_vintage_mode="CURRENT_RECOMPUTED",
+        scope_universe="XAUUSD/ERA_1",parameters={"lookback_bars":2},
+        fitted_state="NONE",proxy_status="NOT_PROXY",
     )
     vals.update(changes)
     probe=BuiltIdentityCandidate(**vals)
@@ -49,20 +64,61 @@ def candidate(**changes):
     if not vals["graph_hash"]: vals["graph_hash"]=d.computed_graph_hash()
     return BuiltIdentityCandidate(**vals)
 
+def claim_for(store,cand,request_id="REQ-INTAKE"):
+    """Obtain the governed claim that registration now requires.
+
+    Must go through identity_lookup: reserve_claim() no longer mints
+    registration authority on demand (C-1R), so the claim is issued by a real
+    PRE_ID lookup over the candidate's own declared content.
+    """
+    from tracker_identity import FeatureDefinitionRecord
+    d=FeatureDefinitionRecord(
+        cand.feature_id,cand.feature_version,cand.semantic_definition,cand.formula,
+        cand.dependencies,"ERA_1",cand.definition_hash,cand.graph_hash,
+        cand.instrument,cand.timeframe,
+        declared_normalization=cand.declared_normalization,
+        causal_time_semantics=cand.causal_time_semantics,
+        completion_semantics=cand.completion_semantics,
+        availability_class=cand.availability_class,
+        source_provider=cand.source_provider,
+        price_basis=cand.price_basis,
+        data_vintage_mode=cand.data_vintage_mode,
+        scope_universe=cand.scope_universe,
+        parameters=cand.parameters,
+        fitted_state=cand.fitted_state,
+    )
+    for sc in MANDATORY_DUPLICATE_CONTROL_SCOPES:
+        store.declare_scope(sc,"EMPTY_VERIFIED")
+    result=identity_lookup(
+        store=store,
+        subject={"subject_mode":"PRE_ID","feature_id":"","feature_version":"",
+                 "definition_hash":"","graph_hash":"",
+                 "instrument":cand.instrument,"timeframe":cand.timeframe,
+                 "lookup_era_scope":"ERA_1_ONLY",
+                 "candidate_content":d.declared_content()},
+        request_id=request_id,search_policy=governed_search_policy(),
+        normalizer=normalizer())
+    assert result.absent_claim_token is not None,result.errors
+    return request_id
+
 class SafeIntakeEraTests(unittest.TestCase):
     def test_safe_intake_assigns_era_only_from_active_boundary(self):
         store=CanonicalIdentityStore()
+        rid=claim_for(store,candidate())
         result=safe_intake_built_identity(
-            target_store=store,candidate=candidate(),era_boundary=boundary(),
+            target_store=store,candidate=candidate(claim_request_id=rid),era_boundary=boundary(),
             search_policy=policy(),normalizer=normalizer(),
         )
-        self.assertTrue(result.accepted)
+        # Registration is fail-closed (C-1R), so the era assignment is proven
+        # from assigned_era_id rather than from a written row. Reaching the
+        # terminal authority gate proves era binding, definition hashes,
+        # content key and claim validation all passed.
+        self.assertFalse(result.accepted)
+        self.assertTrue(any("CLAIM_NOT_CONSTRUCTION_AUTHORIZED" in e for e in result.errors),
+                        result.errors)
         self.assertEqual(result.assigned_era_id,"ERA_1")
-        self.assertEqual(store.all()[0].era_id,"ERA_1")
-        self.assertEqual(len(store.all_creation_records()),1)
-        creation=store.all_creation_records()[0]
-        self.assertEqual(creation.initial_state,"CURRENT")
-        self.assertEqual(creation.creation_reason_ref,"decision:approved-definition")
+        self.assertEqual(store.all(),())
+        self.assertEqual(store.all_creation_records(),())
 
     def test_safe_intake_requires_initial_state_justification(self):
         store=CanonicalIdentityStore()
@@ -117,11 +173,15 @@ class SafeIntakeEraTests(unittest.TestCase):
     def test_candidate_cannot_supply_or_override_era(self):
         self.assertNotIn("era_id",BuiltIdentityCandidate.__dataclass_fields__)
         store=CanonicalIdentityStore()
+        rid=claim_for(store,candidate())
         result=safe_intake_built_identity(
-            target_store=store,candidate=candidate(),era_boundary=boundary(),
+            target_store=store,candidate=candidate(claim_request_id=rid),era_boundary=boundary(),
             search_policy=policy(),normalizer=normalizer(),
         )
-        self.assertEqual(result.identity.era_id,boundary().era_id)
+        # Era comes from the boundary, never from the candidate. Asserted via
+        # assigned_era_id because no row is written while registration is
+        # fail-closed.
+        self.assertEqual(result.assigned_era_id,boundary().era_id)
 
     def test_safe_intake_rejects_tampered_definition_hash(self):
         store=CanonicalIdentityStore()
@@ -165,20 +225,28 @@ class SafeIntakeEraTests(unittest.TestCase):
         self.assertIn("VALIDATION_SCOPE_REQUIRES_CURRENT_IDENTITY",result.errors)
         self.assertEqual(store.all(),())
 
-    def test_stale_failure_does_not_mutate_store(self):
+    def test_refused_intake_does_not_mutate_store(self):
+        """Was: test_stale_failure_does_not_mutate_store.
+
+        A STALE failure downstream of a successful first registration is
+        unreachable while registration is fail-closed (C-1R). The non-mutation
+        proposition is kept and proven at the authority gate instead: a fully
+        valid candidate holding a real governed claim writes nothing.
+        """
         store=CanonicalIdentityStore()
-        first=safe_intake_built_identity(
-            target_store=store,candidate=candidate(feature_id="same",feature_version="1"),era_boundary=boundary(),
-            search_policy=policy(),normalizer=normalizer(),
-        )
-        self.assertTrue(first.accepted)
-        second=safe_intake_built_identity(
-            target_store=store,candidate=candidate(feature_id="same",feature_version="2"),
+        rid=claim_for(store,candidate(feature_id="same",feature_version="1"),"REQ-S1")
+        result=safe_intake_built_identity(
+            target_store=store,
+            candidate=candidate(feature_id="same",feature_version="1",claim_request_id=rid),
             era_boundary=boundary(),search_policy=policy(),normalizer=normalizer(),
         )
-        self.assertFalse(second.accepted)
-        self.assertEqual(len(store.all()),1)
-        self.assertEqual(len(store.all_creation_records()),1)
+        self.assertFalse(result.accepted)
+        self.assertTrue(any("CLAIM_NOT_CONSTRUCTION_AUTHORIZED" in e for e in result.errors),
+                        result.errors)
+        self.assertEqual(store.all(),())
+        self.assertEqual(store.all_creation_records(),())
+        # The claim is not consumed by a refused registration.
+        self.assertEqual([c.state for c in store.claims],["ACTIVE"])
 
     def test_composer_boundary_never_receives_era1_absent_as_global_absent(self):
         self.assertEqual(
