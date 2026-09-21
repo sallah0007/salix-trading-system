@@ -361,3 +361,265 @@ CODER FINDING != SALIX DECISION
 TEST PASS != GOVERNANCE CLOSURE
 A successful patch does NOT authorize FEATURE_ID creation.
 NO_STEP_AUTO_AUTHORIZES_THE_NEXT = TRUE
+
+---
+
+# MANAGER RE-ATTACK CORRECTION — C-1R / M-1R
+
+APPENDED, not replacing. Everything above stands as written at HEAD ba72b78
+and is preserved for audit. This section records the correction only.
+
+BASE_FOR_CORRECTION = e5fdc61be95eeddb8c4fa138d5291b283ad9d685
+ba72b78 and e5fdc61 were NOT amended, rebased or squashed.
+
+## C-1R — ACTIVE CLAIM WAS NOT GOVERNED CONSTRUCTION AUTHORITY
+
+Manager finding CONFIRMED and reproduced. At ba72b78, reserve_claim() was
+publicly callable with no provenance: a caller could compute a content key,
+mint an ACTIVE claim, and redeem it at registration with no completed
+identity_lookup anywhere in the chain. ClaimRecord bound only
+claim_id/content_key/request_id/issuer/time — nothing about origin or
+permission. AbsentClaimToken.authorizes_construction existed but was never
+read by safe_intake or commit_registration.
+
+CORRECTION
+  models.py       new ClaimProvenance; ClaimRecord.provenance;
+                  CLAIMABLE_LOOKUP_OUTCOMES
+  store.py        reserve_claim requires provenance; new bind_lookup_evidence
+                  (write-once); commit_registration enforces the full binding
+  search.py       identity_lookup builds provenance and binds the emitted
+                  lookup result back onto the claim
+
+Registration now proves all seven required facts:
+  1 exact lookup result identity   lookup_result_id, write-once bound
+  2 lookup evidence identity       lookup_evidence_hash of the emitted result
+  3 request_id binding             provenance.request_id == presented id
+  4 content-key binding            provenance key == recomputed candidate key
+  5 governed policy binding        resolved against the governed registry
+  6 lookup completeness + outcome  lookup_complete AND outcome in
+                                   CLAIMABLE_LOOKUP_OUTCOMES
+  7 construction authority         explicit, never inferred from 1-6
+
+### R6 = NOT YET AVAILABLE — REGISTRATION IS FAIL-CLOSED
+
+This is the material consequence and it is deliberate.
+
+No code path in tracker_identity sets authorizes_construction=True. An ERA_1
+structural absence is not a global absence: GLOBAL_CANONICAL_ABSENCE_PROVEN is
+NO and SEMANTIC_UNIQUENESS is UNRESOLVED_NOT_CERTIFIED. Per the commission, no
+construction-authorized outcome was invented to make a test pass. Therefore:
+
+  ORDINARY CANONICAL REGISTRATION CANNOT CURRENTLY SUCCEED.
+
+A fully valid candidate holding a real, fully provenance-bound governed claim
+reaches the terminal gate and is refused with CLAIM_NOT_CONSTRUCTION_AUTHORIZED.
+Nothing is written. test_R6 asserts this by scanning the package source and
+FAILS the moment any construction-authorized path is introduced — which is
+exactly when Manager must re-decide.
+
+### ORDERING DECISION — AUTHORITY GATE IS LAST
+
+The construction-authority check sits AFTER claim existence/active/binding and
+after the duplicate and canonical-key checks, immediately before mutation.
+
+Rationale: every upstream control stays independently observable instead of
+being masked by a blanket authority refusal. Expiry still reports
+CLAIM_NOT_ACTIVE, a duplicate still reports IDENTITY_APPEARED_SINCE_CLAIM, a
+canonical collision still reports CANONICAL_KEY_ALREADY_REGISTERED. Nothing is
+mutated before the gate, so the ordering costs no safety and preserves
+auditability. Raised explicitly because it is a judgement call.
+
+### PROPOSITIONS NOW UNVERIFIABLE END-TO-END
+
+Reported rather than quietly dropped. Fail-closed registration makes these
+unreachable; the tests were re-pointed at the reachable, safety-relevant half:
+
+  claim consumption ON SUCCESS        was test_E_success_consumes_exactly_its_
+                                      own_claim. Now proves the converse: a
+                                      refused registration consumes nothing.
+  stale failure AFTER a successful
+  first registration                  was test_stale_failure_does_not_mutate_
+                                      store. Now proves non-mutation at the
+                                      authority gate.
+  written-row era assignment          era binding now asserted via
+                                      result.assigned_era_id, which IS returned
+                                      on refusal.
+  end-to-end double registration      canonical-key control still fully
+                                      exercised via the import path plus a
+                                      valid claim.
+
+These become verifiable again the moment a governed construction order exists.
+
+## M-1R — REGISTRY CONTAINER WAS MUTABLE
+
+Manager finding CONFIRMED. Entries were immutable after the A13 fix, but
+GOVERNED_SEARCH_POLICIES was an ordinary exported dict: a caller could replace,
+delete or insert entries at runtime.
+
+CORRECTION: the container is now MappingProxyType over a private _BUILT dict,
+built and validated at import. New versions arrive by editing _ENTRIES in
+source, never by mutating a running process. Added
+resolve_governed_search_policy_binding() for callers that retained only the
+(id, version, hash) triple, such as a claim's provenance.
+
+## SECOND-PASS ATTACK — RE-ATTACK ROUND
+
+10 probes. First run: 8 blocked, 2 bypassed. After correction: 9 blocked, 1
+residual (the pre-existing A14).
+
+  B1  direct reserve_claim, no provenance      CLAIM_PROVENANCE_REQUIRED
+  B2  forged provenance, ungoverned policy     CLAIM_PROVENANCE_POLICY_NOT_GOVERNED
+  B3  forged CONSTRUCTION-AUTHORIZED provenance  *** BYPASSED, then CLOSED ***
+  B4  re-binding evidence on a governed claim  CLAIM_LOOKUP_EVIDENCE_ALREADY_BOUND
+  B5  governed claim redeemed at registration  CLAIM_NOT_CONSTRUCTION_AUTHORIZED
+  B6  registry insertion                       TypeError
+  B7  registry deletion                        TypeError
+  B8  entry permitted_exclusions mutation      TypeError
+  B9  NEAR_MATCH issues no claim               no token, no claim persisted
+  B10 store.add() ungated                      RESIDUAL — pre-existing A14
+
+### B3 — A COMPLETE BYPASS FOUND AND CLOSED IN THIS ROUND
+
+The first correction was NOT sufficient. A search-policy binding is PUBLIC
+knowledge, so presenting one proves nothing about authority. A caller could:
+  1 forge a ClaimProvenance with a correct governed policy binding and
+    authorizes_construction=True;
+  2 reserve the claim — accepted, because the binding checked out;
+  3 self-call bind_lookup_evidence with fabricated ids — accepted;
+  4 call commit_registration — SUCCEEDED, rows=1.
+
+Measured, not theorised: the probe registered a row.
+
+FIX: reserve_claim now refuses ANY provenance asserting
+authorizes_construction=True — CONSTRUCTION_AUTHORITY_NOT_SELF_ASSERTABLE. The
+governed path issues False, so a True arriving at reservation was authored by
+the caller. That single fence is the designated replacement point: when a
+governed construction ORDER exists, authority gets verified against that order
+there, never taken on the caller's word. Pinned by test_R5c.
+
+## NEGATIVE CONTROLS ADDED
+
+  R1  direct reserve_claim + intake                     FAIL   PASS
+  R2  direct reserve_claim + direct commit_registration FAIL   PASS
+  R3  claim from INCOMPLETE_LOOKUP                      FAIL   PASS
+  R4  Era-1 absence claim, authorizes_construction=False FAIL  PASS
+  R5  fabricated lookup-result/evidence binding         FAIL   PASS
+  R5b evidence binding is write-once                    FAIL   PASS
+  R5c construction authority self-assertion (B3)        FAIL   PASS
+  R6  construction-authorized path                      NOT YET AVAILABLE,
+                                                        asserted by source scan
+  R7  assignment to GOVERNED_SEARCH_POLICIES            FAIL   PASS
+  R8  deletion                                          FAIL   PASS
+  R9  insertion of rogue version                        FAIL   PASS
+  R10 governed V1 remains usable                               PASS
+  R11 mandatory-scope defence survives a rogue entry           PASS
+
+## TESTS AFTER CORRECTION
+
+TARGETED  = <PY> -m unittest tests.test_identity_surface   -> Ran 69 — OK
+FULL      = <PY> -m unittest discover -s tests             -> Ran 201 — OK
+  TOTAL=201 PASSED=201 FAILED=0 ERRORS=0 SKIPPED=0 XFAILED=0
+BASELINE at BASE_SHA was 155 — OK. No baseline test deleted.
+
+MUTATION SWEEP — every guard broken deliberately in a scratch copy:
+  M1 CLAIM_REQUEST_ID_REQUIRED                -> 4 failures
+  M2 governed-policy binding                  -> 3 failures
+  M3 claim gate (commit_registration)         -> 1 failure
+  M4 MANDATORY_SCOPE_NOT_SEARCHED             -> 4 failures
+  M5 CLAIM_NOT_CONSTRUCTION_AUTHORIZED        -> 7 failures
+  M6 CLAIM_PROVENANCE_REQUIRED                -> 2 errors
+  M7 lookup-evidence binding required         -> 1 failure
+  M8 registry container frozen                -> 24 failures, 15 errors
+  M9 self-assert authority fence (B3)         -> 1 failure
+All nine caught.
+
+## CHANGED EXISTING TESTS — CORRECTION ROUND
+
+ TEST_NAME = test_E_success_consumes_exactly_its_own_claim
+             -> test_E_fail_closed_registration_consumes_no_claim
+ OLD = successful registration consumes exactly its own claim.
+ NEW = a registration refused at the authority gate consumes NOTHING and leaves
+       an unrelated worker's claim ACTIVE.
+ WHY = fixture invalid, not unsafe: consumption-on-success is unreachable while
+       registration is fail-closed. The converse is the safety-relevant half.
+
+ TEST_NAME = test_stale_failure_does_not_mutate_store
+             -> test_refused_intake_does_not_mutate_store
+ OLD = a stale failure after a successful first registration mutates nothing.
+ NEW = a valid candidate holding a real governed claim writes nothing.
+ WHY = fixture invalid: the first registration can no longer succeed. The
+       non-mutation proposition is preserved.
+
+ TEST_NAME = test_A_stalled_worker_with_expired_claim_cannot_register
+ OLD = B registers, A's expired claim then fails.
+ NEW = neither registers; B fails at the AUTHORITY gate, A fails earlier on
+       CLAIM_NOT_ACTIVE. Asserted as different errors.
+ WHY = fixture invalid. The ABA control is strengthened, not weakened: it now
+       proves expiry fires independently of the authority gate.
+
+ TEST_NAME = test_B_two_workers_same_content_key_cannot_both_register
+ OLD = two direct reserve_claim calls; one registers.
+ NEW = two governed lookups; the second gets NO claim (PENDING_CLAIM_EXISTS);
+       neither registers, for different reasons.
+ WHY = fixture invalid: reserve_claim no longer mints claims on demand.
+
+ TEST_NAME = test_same_canonical_key_cannot_be_registered_twice
+ OLD = first identity registered via intake.
+ NEW = first identity placed by the governed import path with unrelated
+       content; the canonical-key check still refuses a valid claim.
+ WHY = fixture invalid. The canonical-key control remains fully exercised.
+       Content deliberately made unrelated so the claimant's lookup is not
+       routed to related-version review instead.
+
+ TEST_NAME = test_safe_intake_assigns_era_only_from_active_boundary
+ TEST_NAME = test_candidate_cannot_supply_or_override_era
+ OLD = asserted era on the written row / returned identity.
+ NEW = asserted via result.assigned_era_id, which IS returned on refusal.
+ WHY = fixture invalid; proposition unchanged.
+
+ TEST_NAME = NC05, NC06, NC07, NC08, NC22, NC23, and the claim_for helpers in
+             test_safe_intake_era and test_registration_atomicity
+ OLD = obtained claims by calling store.reserve_claim directly.
+ NEW = obtain claims through a real governed identity_lookup.
+ WHY = fixture invalid, and the invalidity IS the defect: direct reservation
+       was the C-1R bypass. NC22 and NC23 additionally now assert that expiry
+       and duplicate detection fire BEFORE the authority gate.
+
+## COUNTS — CORRECTION ROUND
+
+NEW_CRITICAL_COUNT = 1   (B3, found by this round's own second pass, CLOSED)
+NEW_HIGH_COUNT     = 0
+NEW_MEDIUM_COUNT   = 0   (A14 unchanged and still open, counted in round 1)
+NEW_LOW_COUNT      = 0
+ARCHITECTURE_REOPEN_REQUIRED = NO
+FROZEN_TRACKER_CORE_REOPENED = NO
+
+## RESIDUAL — UNCHANGED, NOT TOUCHED THIS ROUND
+
+A14 / B10 store.add() and store.extend() remain un-claim-gated.
+importer.py:365 writes through target_store.extend(). Left exactly as reported,
+per instruction. Still recommended for its own bounded segment.
+
+## FENCES — STILL UNCHANGED
+
+GLOBAL_CANONICAL_ABSENCE_PROVEN = NO
+ALGEBRAIC_EQUIVALENCE_IMPLEMENTED = NO
+ALGEBRAIC_EQUIVALENCE_VALIDATED = NO
+SEMANTIC_UNIQUENESS = UNRESOLVED_NOT_CERTIFIED
+CONSTRUCTION_AUTHORIZED_PATH_EXISTS = NO
+IDENTITY_LOOKUP_READY_FOR_GOLD = NO
+FEATURE_ID_CREATION_READY_FOR_MANAGER_DECISION = NO
+CANONICAL_TRACKER_FEATURE_ID = NOT ASSIGNED
+FEATURE_ID_CREATED = NO   FEATURE_VERSION_CREATED = NO
+TRACKER_REGISTRY_ROW_CREATED = NO
+GOLD_FEATURE_ID_CREATION_AUTHORIZED = NO
+GOLD_ADMITTED = YES (unchanged by this patch)
+FW_EXECUTION = NO  ML_TRAINING = NO  TYPE_2 = NO  PRODUCTION = NO
+
+TECHNICALLY_READY_FOR_MANAGER_RECONCILIATION = YES
+PR_CREATED = NO   MERGED = NO
+
+DO NOT MERGE.
+CODER FINDING != SALIX DECISION
+TEST PASS != GOVERNANCE CLOSURE
+NO_STEP_AUTO_AUTHORIZES_THE_NEXT = TRUE
