@@ -1447,3 +1447,389 @@ DESKTOP_CODER TEST PASS != MANAGER ACCEPTANCE
 REVIEW_CODER FINDING != MANAGER DECISION
 NO_STEP_AUTO_AUTHORIZES_THE_NEXT = TRUE
 DO NOT MERGE.
+
+
+---
+
+# DC-TYPE1-CROSS-INSTRUMENT-CONSTRUCTION-GATE-006 — DESKTOP CODER RETURN
+
+COMMISSION     = Drive 1zPSNh475RGe5H1sLxKZ1mlvYc0RHHdcoRvmsMiwGNtw (opened, read in full)
+GOVERNED BASIS = Composer V9 §39.4 (Drive 1aMYAmh5…, line 2054 opened and quoted);
+                 Frozen Tracker Core (Drive 1eZThdek…, five-dimension model and
+                 §7 cross-instrument firewall, opened); Owner Era-1 activation
+                 (Drive 13ltUNSo…, opened). CR014 reconciliation (1atPPMI0…) was
+                 relied on only through the commission's citation of it.
+BASE           = 441a3d22914656ba9e4d084c2a4c84030fb28ea9. Re-verified
+                 immediately before commit: HEAD == origin/main after
+                 `git fetch`. Base NOT stale.
+BRANCH         = type1/cross-instrument-construction-gate (new, from base)
+
+## CORRECTION D — READ THIS FIRST (governs every earlier section of this file)
+
+The governed threat boundary is:
+
+    Type-1 in-process authority = INTEGRITY-AGAINST-ACCIDENT,
+    NOT security against adversarial same-process Python code.
+
+Earlier sections in this file use phrases like "held ONLY in a closure", "no
+container mutation reaches it" and "unreachable". Read each of them as
+"not reachable by ordinary caller APIs or data mutation". None of them claims
+resistance to closure-cell reflection (fn.__closure__), gc traversal, ctypes,
+or code replacement. Those remain a DECLARED OUT-OF-BOUNDARY residual. The
+same narrowing is applied in code:
+
+- the `_make_issuance_authority` docstring;
+- the NC01 test docstring;
+- the IssuanceAuthenticityCR1CR2 class docstring;
+- the `transition_authority_state` docstring.
+
+Earlier sections are left verbatim (history preserved) and corrected here.
+
+## CORRECTION A — INSTRUMENT IDENTITY SEMANTICS
+
+**Rule implemented.** It follows the frozen five-dimension model and Composer
+§39.4. No new identity authority was introduced.
+
+- **SCOPE_ELIGIBILITY content.** It is `instrument_applicability`, `timeframe`
+  and `scope_universe`. The bound `instrument` is added only when
+  `instrument_applicability == "INSTRUMENT_SPECIFIC"`. That is the case where
+  applicability is "encoded in the governed feature definition".
+- **Unclear applicability.** `instrument_applicability` is a required
+  dimension, and exactly `INSTRUMENT_AGNOSTIC` or `INSTRUMENT_SPECIFIC` is
+  accepted. Any other value produces no key and the error
+  `INSTRUMENT_APPLICABILITY_REVIEW_REQUIRED:<value>`. This covers: missing,
+  blank, lower-case, padded, abbreviated, bool, int. Lookup then returns
+  INCOMPLETE_LOOKUP and no claim is issued. It never silently shares and never
+  silently splits.
+- **Fitted state.** FITTED_LEARNED_STATE appends `instrument` whenever
+  `fitted_state != "NONE"`, whatever the applicability. Learned state never
+  crosses instruments (§7 default deny).
+- **Binding instrument.** `instrument` stays a required declared dimension
+  (`BINDING_DIMENSIONS`) even when it is not identity content. It is carried
+  as `ClaimProvenance.bound_instrument` and
+  `IdentityLookupResult.bound_instrument`, which is lineage, not authority.
+- **Algorithm id.** `CONTENT_KEY_ALGORITHM_ID` was bumped from V1 to V2
+  because the derivation changed. Searching population/** for `content_key`
+  and `SALIX-CONTENT-IDENTITY-KEY` found nothing (INDEPENDENTLY_DERIVED), so
+  no persisted V1 key is invalidated.
+- **Fixture change.** Existing fixtures now declare INSTRUMENT_SPECIFIC. That
+  preserves their prior (V1) split semantics, and no assertion was weakened.
+
+**Tests.** Class `InstrumentIdentityCorrectionA006` in
+tests/test_identity_surface.py:
+
+| Test | What it proves |
+|---|---|
+| I1 | Same key for XAUUSD and EURUSD under AGNOSTIC. End to end, an EURUSD lookup gets EXACT on the XAUUSD row, and no claim is issued. |
+| I2 | SPECIFIC splits the SCOPE key. Same definition gives NEAR_MATCH with RELATED_VERSION_CONTENT_REVIEW_REQUIRED, never a silent merge. |
+| I2b | The declared applicability is itself scope content. |
+| I3 | Missing or ambiguous applicability gives no key, INCOMPLETE_LOOKUP and no claim. |
+| I3b | A missing `instrument` still fails, under both AGNOSTIC and SPECIFIC. |
+| I4 / I4b | Fitted state differs by instrument even when the definition is AGNOSTIC; an EURUSD lookup is not EXACT on the XAUUSD fitted row. Control: with no fitted state, the fitted subkey is equal. |
+| I5 / I5b | The request's target instrument survives a shared identity, in both the result and the claim provenance. One pending claim spans all bindings. |
+| I6 | Source/provider, timeframe, causal/time, normalization, definition and price basis still split identity. |
+| I7 | The algorithm id is V2. |
+
+## CORRECTION B — D10/D11/D12/D13/A15
+
+- `store._governed_construction_authority(verified)` is a module function that
+  returns False in production. It is the single point where authority is
+  resolved.
+- `issue()` sets `authorizes_construction = (source(...) is True)`. A truthy
+  non-True value is not authority (test B0b).
+- There is no constructor argument, field, flag or API parameter for
+  authority.
+- Tests reach consumption only by replacing that function with
+  `unittest.mock`, which is code replacement. The patch is scoped to issuance.
+- The R6-style source scan still finds no literal `authorizes_construction=True`.
+  The function body is asserted to be `return False`.
+- **CONSTRUCTION_AUTHORIZED_PATH_EXISTS = NO.**
+
+Also moved: the registration transaction, including the only
+registered-identity append, is now the store-owned
+`_commit_governed_registration`, and `commit_registration` delegates to it.
+The terminal gate is now `authorizes_construction is not True`, not
+`not authorizes_construction`.
+
+Tests are in class `ConstructionConsumptionKillB006`:
+
+- B0, B0b.
+- A15: an authorized intake is accepted, the ledger moves to
+  RELEASED/REGISTRATION_COMPLETED, and the claim can't be reused.
+- A positive control: direct consume succeeds when every precondition holds.
+  This shows the D-tests are not vacuous.
+- D10: an EXPIRED authorized claim is not consumed.
+- D11: a tampered mirror is not consumed.
+- D12: an equal-but-different object, or None, is not consumed.
+- D13: a different content key is not consumed.
+- The source scan.
+
+## CORRECTION C — A14 WRITE-PATH INVENTORY
+
+| # | Path | Class |
+|---|------|-------|
+| 1 | `CanonicalIdentityStore.commit_registration` → `_commit_governed_registration` (claim, authenticity, ACTIVE, duplicate, canonical key, provenance, construction authority, consume; one lock order) | GOVERNED REGISTRATION |
+| 2 | `import_identity_content` → `_commit_governed_import`. The store-owned writer RE-RUNS the whole import contract (`_plan_identity_import`) under the transition lock and appends only what that plan returns. | GOVERNED IMPORT / MIGRATION (authority QUALIFIED, see F-1) |
+| 3 | `transition_authority_state` → `_commit_governed_transition`. It takes a transition record, never a row, re-checks type, key, from/to, known state, unique match, from_state, prior chain and duplicate id, and derives the replacement row itself. | GOVERNED TRANSITION (state replacement, not identity creation) |
+| 4 | `_fixture_write_records`. It raises PermissionError unless `_fixture_seeding_permitted()` (production: False; only exact True counts) is code-replaced under test. | TEST / FIXTURE ONLY |
+| 5 | `_staging_copy`. Ephemeral sweep copy; refuses claim issue, registration, import and transition; never the registry. | TEST/VALIDATION-INTERNAL (non-authoritative) |
+| – | `store.add`, `store.extend` | REMOVED |
+| – | `CanonicalIdentityStore(records=[...])` / positional seeding | REMOVED: no `records` field; `kw_only=True` makes positional misuse a TypeError |
+| – | `store.records[...] = …` / `.append` | REMOVED: `records` is a read-only property returning a tuple snapshot |
+| – | closure reflection / gc / ctypes / code replacement | UNGOVERNED, DECLARED OUT OF BOUNDARY (Correction D) |
+
+Nothing reachable by ordinary calls is classed UNGOVERNED BYPASS.
+
+**Tests.**
+
+- `ClaimlessWritePathsClosedA14006` (surface), controls A14_1 to A14_9:
+  - add/extend absent; records read-only;
+  - constructor seeding rejected;
+  - seeder refuses in production, including a truthy non-True permission;
+  - seeder available to tests and scoped;
+  - snapshot view;
+  - staging copy refuses every authority operation;
+  - registration commit refused without a claim and without authority;
+  - transition commit can't inject a row, plus separate chain, duplicate and
+    uniqueness kills with a positive control;
+  - a live source scan finds no records writer outside store.py.
+- `ImportAuthorityBoundaryA14006` (tests/test_identity_import.py):
+  - a valid import writes through the governed commit;
+  - generator rows are materialized once;
+  - planning alone never writes;
+  - a direct store import commit can't skip the contract (row count,
+    authority class, provenance, era, catalogue);
+  - a supplied content key is never trusted;
+  - duplicate/currentness is not weakened: a second identical import is
+    refused by the sweep;
+  - a staging copy can't be imported into;
+  - there is no extend escape hatch;
+  - a pinned residual test (see F-1).
+- The earlier A14-OPEN pins (C12, W12_W13_W14, NC14_NC15_NC16) were
+  deliberately inverted to CLOSED.
+- The fixtures in 5 test files moved to `fixture_store` / `seed_fixture`,
+  which are test-only helpers built on code replacement.
+- The three raw `store.records[0]=…` lines in test_transition_history became
+  `seed_fixture(..., replace_all=True)`.
+
+## M-2 (non-blocking) — FIXED (small, isolated)
+
+Release reasons are also compared after NFKC, casefold and dropping
+non-alphanumerics against the reserved set. The following are refused:
+
+- ttl_expired
+- TTL-EXPIRED
+- Ttl Expired
+- full-width forms
+- a zero-width-suffixed form
+- registration.completed
+- a tab-suffixed form
+
+Ordinary reasons still release, including "TTL expired early - withdrawn".
+Test: `ReservedReasonLookalikesM2006`.
+
+## FINDINGS
+
+**F-1 — MEDIUM — import authority objects are self-certifying**
+
+- **Where:**
+  - tracker_identity/importer.py `_plan_identity_import`;
+  - `CanonicalEraBoundary.computed_hash`, `SourceUniverseAuthority.computed_hash`,
+    `IdentityImportManifest.evidence_hash`, `FeatureDefinitionCatalogue`;
+  - pinned by test `ImportAuthorityBoundaryA14006.test_declared_residual_self_certifying_authority_objects`.
+- **Scenario:** a caller builds a mutually consistent boundary, universe,
+  manifest and catalogue (each self-hashed), plus rows that match them.
+  `import_identity_content` accepts it and writes canonical rows without any
+  claim. The contract proves internal consistency and catalogue-derived
+  identity. It does NOT prove that the package is the Owner-ratified one.
+- **Why not fixed:** no frozen or current governance defines an
+  import-authority or package-approval object to bind against. The commission
+  forbids inventing one.
+- **Smallest safe correction (needs governance):** a Manager/Owner-issued
+  approved-package fingerprint, or a registry resolved Tracker-side (the same
+  pattern as the governed policy/normalizer registries), checked inside
+  `_plan_identity_import`.
+- **Frozen authority reopen:** NO for the frozen core. It needs a NEW governed
+  definition of import authority.
+- → A14_STATUS = BLOCKED_BY_MISSING_GOVERNANCE (import-authority sub-part
+  only; ordinary claimless paths are CLOSED).
+
+**F-2 — MEDIUM — UNIVERSE is still identity content**
+
+- **Where:** content_identity.py `SUBKEY_DIMENSIONS["SCOPE_ELIGIBILITY"]` includes
+  `scope_universe`.
+- **Scenario:** §39.4 routes a UNIVERSE difference to PAYLOAD_BINDING unless
+  semantics change. Here any `scope_universe` difference splits identity.
+  Worse, a universe string that names the instrument (a fixture uses
+  "XAUUSD/ERA_1") re-introduces instrument splitting for a definition declared
+  INSTRUMENT_AGNOSTIC. The I1 tests use an instrument-neutral universe, so they
+  do not catch this.
+- **Smallest safe correction:** Manager decides whether `scope_universe` is
+  definition semantics (keep) or binding (move to BINDING_DIMENSIONS with its
+  own applicability declaration). A validation rule could also refuse a
+  universe that names the bound instrument under AGNOSTIC.
+- **Why not fixed:** not changed here, because the frozen model lists
+  "regime/population/applicability" under SCOPE. Choosing between the two is a
+  governance reading, not a Coder decision.
+- **Frozen authority reopen:** POSSIBLY. The frozen SCOPE wording and §39.4
+  pull in different directions for UNIVERSE.
+
+**F-3 — LOW — canonical row identity still carries instrument**
+
+- **Where:** models.py `FeatureIdentity.canonical_key` includes `instrument`.
+  Catalogue `FeatureDefinitionRecord` hashes and importer check
+  `ROW_CATALOGUE_INSTRUMENT_MISMATCH`.
+- **Scenario:** a shared AGNOSTIC identity's canonical row records its first
+  binding. A CANONICAL_ID-mode lookup with another instrument misses the
+  canonical-key match, although the PRE_ID content path resolves correctly
+  (I1). The catalogue cannot yet express one agnostic definition bound to
+  many instruments.
+- **Smallest safe correction:** a governed design for agnostic catalogue rows.
+  Out of Correction A's "smallest clean" scope.
+- **Frozen authority reopen:** NO. It needs Manager design.
+
+**F-4 — LOW — history lists stay publicly mutable**
+
+- **Where:** store.py `creation_records`, `transitions`, `claims` stay public
+  lists. `add_creation` / `add_transition` remain.
+- **Scenario:** raw appends can fabricate creation or transition history, but
+  cannot write a canonical identity. `claims` is an inert mirror checked
+  against the ledger. A forged creation record could satisfy the transition
+  prior-chain check for a tracked row.
+- **Smallest safe correction:** move creation/transition history into the same
+  store-owned state, in a later bounded commission.
+- **Frozen authority reopen:** NO.
+
+**F-5 — LOW — scope disclosure**
+
+The changed files outside the commission's "expected likely files" list are:
+
+- tracker_identity/search.py (+2 lines: bound_instrument lineage, needed for I5);
+- tracker_identity/catalogue.py (+6: `instrument_applicability` declared on the
+  governed definition, needed for A2);
+- tracker_identity/__init__.py (+2: exports);
+- tracker_identity/transition.py (writes through the store-owned transition
+  commit, needed for A14 because it performed a raw `store.records[i]=`).
+
+None of these is a fenced path. models.py was touched only for the two lineage
+fields (I5). population/**, .github/**, FW, ML, Composer and CLAUDE.md are
+untouched.
+
+**F-6 — LOW — mutation survivor `IMP_commit_staged_check_removed`**
+
+- **Where:** store.py `commit_import` guard `not is_staged(store)`.
+- **Why it survives:** it is an equivalent mutant today. `_plan_identity_import`
+  already refuses a staged target (that mutant is killed), so this second
+  guard is defence in depth and cannot be observed.
+- **Smallest safe correction:** none needed. Either keep it (it protects
+  against a future plan regression) or delete it. Reported, not hidden.
+
+Withdrawn / corrected from earlier returns: none new. The DC004/DC005
+"unreachable" phrasing is narrowed by Correction D above.
+
+## EVIDENCE
+
+- **TARGETED_TEST_RESULTS**
+  - DERIVATION_CLASS = INDEPENDENTLY_DERIVED; EXACT_INPUTS = IMPLEMENTATION_SHA
+    tree; Python 3.12.10.
+  - tests.test_identity_surface: Ran 163, OK.
+  - tests.test_pre_id_content_identity: Ran 59, OK.
+  - tests.test_registration_atomicity: Ran 11, OK.
+  - tests.test_import_content_key: Ran 13, OK.
+- **FULL_TEST_RESULT**
+  - `python -m unittest discover -s tests`: Ran 304, OK (0 failed, 0 errors).
+  - Baseline at 441a3d2 was 263 OK.
+- **MUTATION_RESULT**
+  - Totals: 49 mutants, 48 killed, 1 surviving (F-6, equivalent).
+  - METHOD: scratchpad driver `mutate006.py`. For each mutant it applies one
+    exact-anchor source replacement (the anchor must be unique or
+    occurrence-indexed), runs the full discover suite, restores the source,
+    and asserts the restored baseline is green (it was).
+  - First pass: 5 survivors. Four were killed by new tests (I3b,
+    transition unique-match, prior-chain, duplicate-id). The re-run gave 48
+    of 49.
+  - Groups:
+    - **I-guards (11, all killed):** I1 (scope-always), I2 (scope-never),
+      I2b, I3, I3b, I4 (fitted-never), I4b (fitted-always), I7, and three
+      I5 variants.
+    - **Correction B (10, all killed):** D10, D11, D12, D12b (== for is),
+      D13, Dx (authority check in consume), A15, commit authority gate,
+      truthy-authority at issue, production authority True.
+    - **A14 (21, all killed):** fixture gate removed/truthy/permitted;
+      records live list; kw_only removed; add restored; staging unmarked;
+      three staged guards; eight transition re-checks; dead-writer scan;
+      registration duplicate and canonical checks.
+    - **Import discriminator (6, 5 killed):** plan-errors-still-write,
+      sweep-fail-still-writes, plan staged check, commit-skips-plan (writes
+      caller rows), supplied key trusted; SURVIVED: commit staged check (F-6).
+    - **M-2 (1, killed):** fold removed.
+  - REPRODUCIBLE_BY_MANAGER = YES (driver available on request; every anchor
+    and its replacement is listed in it).
+
+## RETURN
+
+- BASE_FOR_CORRECTION = 441a3d22914656ba9e4d084c2a4c84030fb28ea9
+- IMPLEMENTATION_SHA = 6f97f098d94c75728a3b4b7ec941f3e44be4ea5a
+- REPORT_SHA = (the commit adding this section; stated in the relay message)
+- PUSH_SUCCEEDED = (stated in the relay message)
+- PR_CREATED = NO
+- MERGED = NO
+
+Instrument identity:
+
+- INSTRUMENT_BINDING_SPLITS_CANONICAL_IDENTITY_BY_DEFAULT = NO
+  - Qualified by F-2: a universe string that names the instrument still splits.
+- INSTRUMENT_SPECIFIC_SEMANTICS_REMAIN_IDENTITY_CONTENT = YES
+- UNCLEAR_INSTRUMENT_APPLICABILITY_FAILS_CLOSED = YES
+- CROSS_INSTRUMENT_FITTED_STATE_REUSE_BLOCKED = YES
+  - At content-identity level. Actual fitted caches are not implemented in
+    Type-1.
+
+Consumption mutants:
+
+- D10_KILLED = YES
+- D11_KILLED = YES
+- D12_KILLED = YES
+- D13_KILLED = YES
+- A15_KILLED = YES
+
+Write paths:
+
+- A14_STATUS = BLOCKED_BY_MISSING_GOVERNANCE
+  - The ordinary claimless paths are CLOSED.
+  - The import-authority sub-part needs governance (F-1).
+- PRODUCTION_STORE_ADD_EXTEND_BYPASS = NO
+- IMPORT_AUTHORITY_BOUNDARY_SOUND = QUALIFIED
+  - The contract can't be bypassed, but its authority objects are
+    self-certifying (F-1).
+
+Boundaries:
+
+- CONSTRUCTION_AUTHORIZED_PATH_EXISTS = NO
+- SAME_PROCESS_INTROSPECTION_RESIDUAL = DECLARED_OUT_OF_BOUNDARY
+
+Results:
+
+- TARGETED_TEST_RESULTS = surface 163 OK; pre_id 59 OK; atomicity 11 OK;
+  import_content_key 13 OK
+- FULL_TEST_RESULT = Ran 304 — OK
+- MUTATION_RESULT = 49 mutated, 48 killed, 1 surviving (equivalent, F-6)
+
+New finding counts:
+
+- NEW_CRITICAL_COUNT = 0
+- NEW_HIGH_COUNT = 0
+- NEW_MEDIUM_COUNT = 2 (F-1, F-2)
+- NEW_LOW_COUNT = 4 (F-3, F-4, F-5, F-6)
+
+TECHNICALLY_READY_FOR_MANAGER_RECONCILIATION = YES
+  - F-1 and F-2 are governance decisions, not code defects in this change.
+
+No FEATURE_ID, FEATURE_VERSION, Tracker registry row, EURUSD fit, FW
+execution, holdout exposure, ML training, Type-2 or production artifact was
+created. Drive was read only.
+
+DESKTOP_CODER TEST PASS != MANAGER ACCEPTANCE
+REVIEW_CODER FINDING != MANAGER DECISION
+NO_STEP_AUTO_AUTHORIZES_THE_NEXT = TRUE
+DO NOT MERGE.
