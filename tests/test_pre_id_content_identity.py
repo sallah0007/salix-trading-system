@@ -24,6 +24,23 @@ from tracker_identity import (
     identity_lookup,
 )
 
+import importlib as _importlib
+from unittest import mock as _fixture_mock
+_store_module=_importlib.import_module("tracker_identity.store")
+
+def seed_fixture(store,rows,replace_all=False):
+    """TEST / FIXTURE ONLY (A14). Canonical records have no public writer;
+    this enables the fixture seeder by code replacement for one call."""
+    with _fixture_mock.patch.object(_store_module,"_fixture_seeding_permitted",
+                                    return_value=True):
+        _store_module._fixture_write_records(store,list(rows),replace_all=replace_all)
+    return store
+
+def fixture_store(rows=(),**kw):
+    return seed_fixture(CanonicalIdentityStore(**kw),rows)
+
+
+
 REQUIRED_SCOPES = (
     "current_active", "active_on_demand", "validation", "experimental_unclassified",
     "quarantined", "dormant", "suppressed", "deprecated", "retired", "rejected_invalid",
@@ -63,6 +80,7 @@ def content(graph=GRAPH_A, deps=("xauusd.h1.close",), instrument="XAUUSD",
         "timeframe": timeframe,
         "scope_universe": "XAUUSD/ERA_1",
         "fitted_state": fitted,
+        "instrument_applicability": "INSTRUMENT_SPECIFIC",
     }
 
 
@@ -71,7 +89,7 @@ def verified_store(*rows):
     for sc in REQUIRED_SCOPES:
         store.declare_scope(sc, "EMPTY_VERIFIED")
     for r in rows:
-        store.add(r)
+        seed_fixture(store,[r])
     return store
 
 
@@ -287,6 +305,7 @@ class ContentKeyDerivation(unittest.TestCase):
             source_provider="ICMARKETSAU-LIVE-V1", price_basis="BID",
             data_vintage_mode="CURRENT_RECOMPUTED", scope_universe="XAUUSD/ERA_1",
             parameters={"lookback_bars": 2}, fitted_state="NONE",
+            instrument_applicability="INSTRUMENT_SPECIFIC",
         )
         from_record, errors = record.content_identity_key()
         self.assertFalse(errors)

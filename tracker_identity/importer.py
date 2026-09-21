@@ -10,7 +10,7 @@ from .models import FeatureIdentity, NormalizerSpec, SearchPolicy
 from .catalogue import FeatureDefinitionCatalogue
 from .content_identity import CONTENT_KEY_ALGORITHM_ID
 from .stale_sweep import StaleSweepResult, stale_state_sweep
-from .store import CanonicalIdentityStore
+from .store import CanonicalIdentityStore, _commit_governed_import, _is_staged, _staging_copy
 
 PERMITTED_IDENTITY_ROW_AUTHORITY_CLASSES = (
     "CANONICAL",
@@ -219,7 +219,50 @@ def import_identity_content(
     search_policy: SearchPolicy,
     normalizer: NormalizerSpec,
 ) -> IdentityImportResult:
+    """GOVERNED IMPORT / MIGRATION of canonical identity rows.
+
+    The write itself is performed by the store-owned import commit, which
+    RE-RUNS this whole contract under the store's transition lock and appends
+    only the rows that contract planned. There is no other import writer:
+    store.add / store.extend no longer exist (A14).
+
+    BOUNDARY (declared, not closed here): the contract's authority objects —
+    era boundary, source universe, manifest, catalogue — are self-hashed and
+    caller-constructible. The contract proves internal consistency and
+    catalogue-derived identity, NOT that the package is the Owner-ratified
+    one. No governed import-authority/package-approval object exists to bind
+    against; inventing one is out of commission scope.
+    """
+    return _commit_governed_import(
+        target_store,
+        rows=tuple(rows),
+        manifest=manifest,
+        source_universe=source_universe,
+        era_boundary=era_boundary,
+        catalogue=catalogue,
+        search_policy=search_policy,
+        normalizer=normalizer,
+    )
+
+def _plan_identity_import(
+    *,
+    target_store: CanonicalIdentityStore,
+    rows: Iterable[FeatureIdentity],
+    manifest: IdentityImportManifest,
+    source_universe: SourceUniverseAuthority,
+    era_boundary: CanonicalEraBoundary,
+    catalogue: FeatureDefinitionCatalogue,
+    search_policy: SearchPolicy,
+    normalizer: NormalizerSpec,
+) -> tuple:
+    """Validate the full import contract WITHOUT writing.
+
+    Returns (planned_rows, result) on success, (None, result) on refusal.
+    Only the store-owned import commit acts on planned_rows.
+    """
     errors = list(era_boundary.completeness_errors())
+    if _is_staged(target_store):
+        errors.append("STORE_IS_STAGING_COPY")
     errors.extend(manifest.completeness_errors(source_universe))
     errors.extend(catalogue.completeness_errors())
     incoming = tuple(rows)
@@ -307,7 +350,7 @@ def import_identity_content(
             search_policy=search_policy,
             normalizer=normalizer,
         )
-        return IdentityImportResult(
+        return None, IdentityImportResult(
             import_manifest_hash=manifest.evidence_hash(),
             source_universe_hash=source_universe.source_universe_hash,
             era_boundary_hash=era_boundary.boundary_hash,
@@ -337,11 +380,8 @@ def import_identity_content(
 
     incoming = tuple(_with_content_key(r) for r in incoming)
 
-    staged = CanonicalIdentityStore(
-        list(target_store.all()) + list(incoming),
-        registry_id=target_store.registry_id,
-        active_era_id=target_store.active_era_id,
-    )
+    # Ephemeral, non-authoritative copy: it refuses every authority operation.
+    staged = _staging_copy(target_store, extra_records=incoming)
     sweep = stale_state_sweep(
         store=staged,
         search_policy=search_policy,
@@ -350,7 +390,7 @@ def import_identity_content(
     )
 
     if not sweep.clean:
-        return IdentityImportResult(
+        return None, IdentityImportResult(
             import_manifest_hash=manifest.evidence_hash(),
             source_universe_hash=source_universe.source_universe_hash,
             era_boundary_hash=era_boundary.boundary_hash,
@@ -362,15 +402,13 @@ def import_identity_content(
             errors=("STALE_STATE_SWEEP_FAILED",),
         )
 
-    target_store.extend(incoming)
-
     population_complete = (
         source_universe.universe_complete
         and not source_universe.unresolved_source_classes
         and len(incoming) == manifest.expected_importable_rows
     )
 
-    return IdentityImportResult(
+    return incoming, IdentityImportResult(
         import_manifest_hash=manifest.evidence_hash(),
         source_universe_hash=source_universe.source_universe_hash,
         era_boundary_hash=era_boundary.boundary_hash,

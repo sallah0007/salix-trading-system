@@ -100,9 +100,11 @@ def transition_authority_state(
 ) -> TransitionResult:
     """Atomically mutate a tracked Type-1 identity state and append its history record.
 
-    This is the governed path. Type-1 remains an in-memory reference implementation:
-    callers can still bypass it through raw store mutation. stale_state_sweep detects
-    divergence for tracked objects; Type-2 storage/permissions must prevent the bypass.
+    This is the governed path. Canonical records are held in store-owned state with
+    no public writer (A14): store.records is a read-only view, so raw list mutation
+    is no longer an ordinary bypass. The declared residual is same-process code
+    replacement / closure reflection, which is outside the Type-1 boundary
+    (integrity-against-accident, not adversarial same-process security).
     """
     errors: list[str] = []
     for value, code in (
@@ -179,11 +181,13 @@ def transition_authority_state(
             prior_transition_id=expected_prior,
         )
 
-        new_is_current = lifecycle_currentness(to_state)
-        updated = replace(current, lifecycle_state=to_state, is_current=new_is_current)
-
-        # Atomic in this reference store: validation occurs before either mutation,
-        # and both object-state replacement and history append happen under one lock.
-        store.records[index] = updated
-        store.transitions.append(transition)
+        # The write is store-owned: it re-checks the structural invariants,
+        # derives the replacement record itself from the transition, and
+        # performs object-state replacement and history append under this
+        # same (re-entrant) lock. Canonical records have no public writer.
+        from .store import _commit_governed_transition
+        ok, updated, commit_errors = _commit_governed_transition(
+            store, key=key, from_state=from_state, transition=transition)
+        if not ok:
+            return TransitionResult(False, None, None, tuple(sorted(set(commit_errors))))
         return TransitionResult(True, updated, transition, ())

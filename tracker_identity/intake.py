@@ -7,7 +7,7 @@ from .importer import CanonicalEraBoundary
 from .catalogue import FeatureDefinitionRecord
 from .models import FeatureIdentity, LookupOutcome, NormalizerSpec, SearchPolicy
 from .stale_sweep import StaleSweepResult, stale_state_sweep
-from .store import CanonicalIdentityStore
+from .store import CanonicalIdentityStore, _staging_copy
 from .transition import CreationProvenanceRecord
 
 @dataclass(frozen=True)
@@ -43,6 +43,8 @@ class BuiltIdentityCandidate:
     fitted_state: Optional[object] = None
     proxy_status: Optional[str] = None
     claim_request_id: Optional[str] = None
+    # See FeatureDefinitionRecord.instrument_applicability. Undeclared = unclear.
+    instrument_applicability: Optional[str] = None
 
 @dataclass(frozen=True)
 class SafeIntakeResult:
@@ -118,6 +120,7 @@ def safe_intake_built_identity(
         parameters=candidate.parameters,
         fitted_state=candidate.fitted_state,
         proxy_status=candidate.proxy_status,
+        instrument_applicability=candidate.instrument_applicability,
     )
     definition_errors=definition.completeness_errors()
     if definition_errors:
@@ -195,13 +198,8 @@ def safe_intake_built_identity(
         evidence_ref=candidate.creation_evidence_ref,
     )
 
-    staged=CanonicalIdentityStore(
-        list(target_store.all())+[identity],
-        registry_id=target_store.registry_id,
-        active_era_id=target_store.active_era_id,
-        creation_records=list(target_store.all_creation_records())+[creation],
-        transitions=list(target_store.all_transitions()),
-    )
+    # Ephemeral, non-authoritative copy: it refuses every authority operation.
+    staged=_staging_copy(target_store,extra_records=(identity,),extra_creation=(creation,))
     sweep=stale_state_sweep(store=staged,search_policy=search_policy,normalizer=normalizer)
     if not sweep.clean:
         return SafeIntakeResult(False,era_boundary.era_id,None,None,sweep,("STALE_STATE_SWEEP_FAILED",))

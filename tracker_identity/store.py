@@ -80,9 +80,46 @@ def _governed_claim_ttl_seconds():
 CLAIM_TTL_MIN_SECONDS=1
 CLAIM_TTL_MAX_SECONDS=DEFAULT_CLAIM_TTL_SECONDS
 
+def _governed_construction_authority(verified):
+    """Resolve construction authority for a claim being issued.
+
+    PRODUCTION: ALWAYS False. No governed construction ORDER exists, ERA_1
+    structural absence is not global absence, and semantic uniqueness is not
+    certified. `verified` holds only facts the store itself established; no
+    caller data reaches this function.
+
+    This is the single designated point where a future governed construction
+    order will be resolved. Until then, the construction-consumption path is
+    reachable ONLY by replacing this FUNCTION under test instrumentation
+    (unittest.mock) — code replacement, outside the declared boundary. No
+    constructor argument, field, flag, environment variable or API parameter
+    grants construction authority.
+    """
+    return False
+
+def _fixture_seeding_permitted():
+    """PRODUCTION: ALWAYS False.
+
+    Canonical records have no public claimless writer. Test fixtures that need
+    pre-populated stores replace THIS FUNCTION under unittest.mock (code
+    replacement) to enable _fixture_write_records for the duration of a call.
+    It is test instrumentation, not a production data or API surface.
+    """
+    return False
+
 # Lifecycle reasons only the store may assign. A caller releasing a claim may
 # not claim it timed out or was consumed by a registration.
 RESERVED_LIFECYCLE_REASONS=frozenset({"TTL_EXPIRED","REGISTRATION_COMPLETED"})
+
+def _reason_fold(reason:str)->str:
+    """M-2: compare reasons after NFKC, casefold and dropping every
+    non-alphanumeric, so lookalikes (ttl_expired, TTL-EXPIRED, full-width,
+    zero-width-joined) cannot record a store-reserved outcome."""
+    import unicodedata
+    return "".join(ch for ch in unicodedata.normalize("NFKC",reason).casefold()
+                   if ch.isalnum())
+
+_RESERVED_REASON_FOLDS=frozenset(_reason_fold(r) for r in RESERVED_LIFECYCLE_REASONS)
 
 def _make_issuance_authority():
     """Build the store-owned issuance authority from FUNCTION-LOCAL state.
@@ -115,11 +152,14 @@ def _make_issuance_authority():
     expires_ts and the high-water mark arbitrarily far forward — and that
     poisoning outlived the field's removal for the life of the store.
 
-    STATED BOUNDARY. Defends against ordinary mutation of any caller-reachable
-    DATA and against the public weakref registry route. Does NOT defend against
-    replacing CODE (rebinding store methods or module functions) or against
-    reflection on closure cells (fn.__closure__), gc, or ctypes. No pure
-    in-process Python design can; none is claimed.
+    STATED BOUNDARY (governed, DC-006 Correction D). Type-1 in-process
+    authority = INTEGRITY-AGAINST-ACCIDENT, NOT security against adversarial
+    same-process Python code. It defends against ordinary mutation of
+    caller-reachable DATA (including canonical records, which now live here)
+    and against the public weakref registry route. It does NOT resist, and no
+    claim is made that it resists: replacing CODE (rebinding store methods or
+    module functions), reflection on closure cells (fn.__closure__), gc
+    traversal, or ctypes. Those are a DECLARED OUT-OF-BOUNDARY residual.
     """
     states={}
 
@@ -133,7 +173,12 @@ def _make_issuance_authority():
         key=id(store)
         st=states.get(key)
         if st is None:
-            st={"ledger":{},"last_effective":None,"last_monotonic":None}
+            # "records" holds this store's CANONICAL identities. They live
+            # here, not in a public list field, so no ordinary container
+            # mutation can write one. "staged" marks an ephemeral,
+            # non-authoritative validation copy.
+            st={"ledger":{},"last_effective":None,"last_monotonic":None,
+                "records":[],"staged":False}
             states[key]=st
             weakref.finalize(store,_drop,key)
         return st
@@ -220,7 +265,8 @@ def _make_issuance_authority():
         """
         if not isinstance(reason,str) or not reason.strip():
             return False
-        if reason.strip() in RESERVED_LIFECYCLE_REASONS:
+        if (reason.strip() in RESERVED_LIFECYCLE_REASONS
+                or _reason_fold(reason) in _RESERVED_REASON_FOLDS):
             return False
         st=states.get(id(store))
         entry=(st["ledger"] if st else {}).get(claim_id)
@@ -269,7 +315,9 @@ def _make_issuance_authority():
         return None
 
     def issue(store,*,content_key_composite,request_id,search_policy,normalizer,
-              include_validation_scope,issuer):
+              include_validation_scope,issuer,bound_instrument=None):
+        if is_staged(store):
+            return None,"STORE_IS_STAGING_COPY"
         content_key_composite=str(content_key_composite or "").strip()
         request_id=str(request_id or "").strip()
         if not content_key_composite:
@@ -317,6 +365,7 @@ def _make_issuance_authority():
             "searched_scopes":list(search_policy.searched_scopes),
             "include_validation_scope":bool(include_validation_scope),
             "outcome":CLAIMABLE_LOOKUP_OUTCOMES[0],
+            "bound_instrument":str(bound_instrument or ""),
         }
         provenance=ClaimProvenance(
             request_id=request_id,
@@ -330,14 +379,15 @@ def _make_issuance_authority():
             normalizer_version=normalizer.version,
             normalizer_hash=normalizer.normalizer_hash,
             semantic_uniqueness="UNRESOLVED_NOT_CERTIFIED",
-            # Construction authority is never granted here. ERA_1 structural
-            # absence is not global absence and semantic uniqueness is not
-            # certified. When a governed construction ORDER exists, THIS is the
-            # single place it is resolved — from the order, never from a
-            # caller-supplied flag, which is why no such parameter exists.
-            authorizes_construction=False,
+            # Construction authority is resolved ONLY by the module-level
+            # _governed_construction_authority(), which returns False in
+            # production: ERA_1 structural absence is not global absence and
+            # semantic uniqueness is not certified. Only an exact `True` counts.
+            # No caller-supplied flag or parameter exists.
+            authorizes_construction=(_governed_construction_authority(dict(verified)) is True),
             lookup_result_id=str(uuid.uuid4()),
             issuance_evidence_hash=_hash_facts(verified),
+            bound_instrument=str(bound_instrument or ""),
         )
         with store._claim_lock:
             expire_due(store)
@@ -367,17 +417,188 @@ def _make_issuance_authority():
             store.claims.append(rec)
             return rec,None
 
+    # ---------------------------------------------------------------- records
+    def records_of(store):
+        st=states.get(id(store))
+        return tuple(st["records"]) if st else ()
+
+    def is_staged(store):
+        st=states.get(id(store))
+        return bool(st and st["staged"])
+
+    def staging_copy(base,*,extra_records=(),extra_creation=()):
+        """EPHEMERAL STAGING — a non-authoritative copy for sweep validation.
+
+        It refuses every authority operation (claim issuance, registration,
+        import, transition), so it cannot serve as a registry. It exists only
+        so a candidate write can be swept BEFORE the real store is touched.
+        """
+        copy=CanonicalIdentityStore(
+            registry_id=base.registry_id,active_era_id=base.active_era_id,
+            creation_records=list(base.creation_records)+list(extra_creation),
+            transitions=list(base.transitions))
+        st=_state(copy)
+        st["staged"]=True
+        st["records"].extend(records_of(base))
+        st["records"].extend(extra_records)
+        return copy
+
+    def commit_registration_txn(store,*,identity,creation,content_key_composite,request_id):
+        """GOVERNED REGISTRATION — the whole transaction, owned by the store.
+
+        The append lives HERE so no exported function can append a registered
+        identity without the claim, authenticity, liveness, duplicate,
+        canonical-key and construction-authority checks around it.
+        """
+        request_id=str(request_id or "").strip()
+        content_key_composite=str(content_key_composite or "").strip() or None
+        with store._transition_lock:
+            with store._claim_lock:
+                if is_staged(store):
+                    return False,"STORE_IS_STAGING_COPY"
+                if not request_id:
+                    return False,"CLAIM_REQUIRED_FOR_REGISTRATION"
+                if content_key_composite is None:
+                    return False,"CONTENT_KEY_REQUIRED_FOR_REGISTRATION"
+                expire_due(store)
+                held,auth_error=store._authentic_match_locked(
+                    content_key_composite,request_id)
+                if held is None:
+                    return False,auth_error
+                state=ledger_state(store,held.claim_id)
+                if state!="ACTIVE":
+                    return False,"CLAIM_NOT_ACTIVE:"+str(state)
+                records=_state(store)["records"]
+                for r in records:
+                    if r.content_key_composite==content_key_composite and r.is_current:
+                        return False,"IDENTITY_APPEARED_SINCE_CLAIM:"+r.feature_id
+                for r in records:
+                    if r.canonical_key==identity.canonical_key:
+                        return False,"CANONICAL_KEY_ALREADY_REGISTERED:"+r.feature_id
+                # GOVERNED CONSTRUCTION AUTHORITY — the last gate before the
+                # registry is written. Evaluated after the claim, duplicate and
+                # canonical-key checks so each stays independently observable.
+                # The provenance re-checks below restate facts authenticity
+                # already bound; they are defence in depth, not the proof.
+                prov=held.provenance
+                if prov is None:
+                    return False,"CLAIM_PROVENANCE_MISSING"
+                if not prov.store_issued:
+                    return False,"CLAIM_PROVENANCE_NOT_STORE_ISSUED"
+                prov_errors=prov.completeness_errors()
+                if prov_errors:
+                    return False,"CLAIM_PROVENANCE_INVALID:"+",".join(prov_errors)
+                if str(prov.request_id)!=request_id:
+                    return False,"CLAIM_PROVENANCE_REQUEST_ID_MISMATCH"
+                if str(prov.content_key_composite)!=content_key_composite:
+                    return False,"CLAIM_PROVENANCE_CONTENT_KEY_MISMATCH"
+                binding_errors=resolve_governed_search_policy_binding(
+                    prov.search_policy_id,prov.search_policy_version,prov.search_policy_hash)
+                if binding_errors:
+                    return False,"CLAIM_PROVENANCE_POLICY_NOT_GOVERNED:"+",".join(binding_errors)
+                normalizer_errors=resolve_governed_normalizer_binding(
+                    prov.normalizer_id,prov.normalizer_version,prov.normalizer_hash)
+                if normalizer_errors:
+                    return False,"CLAIM_PROVENANCE_NORMALIZER_NOT_GOVERNED:"+",".join(normalizer_errors)
+                if prov.authorizes_construction is not True:
+                    return False,"CLAIM_NOT_CONSTRUCTION_AUTHORIZED"
+                records.append(identity)
+                store.creation_records.append(creation)
+                # Consumption goes through the ledger, so a consumed claim is
+                # terminal there and cannot be presented again by any copy.
+                consume(store,held.claim_id,identity)
+                return True,None
+
+    def commit_import(store,**contract):
+        """GOVERNED IMPORT WRITE. Re-runs the ENTIRE import contract itself and
+        appends only what that contract planned, under the transition lock.
+
+        Calling this directly is therefore exactly as strong as calling
+        import_identity_content — never stronger. The contract's authority
+        objects remain caller-constructible and self-hashed: see the report's
+        IMPORT_AUTHORITY_BOUNDARY_SOUND = QUALIFIED.
+        """
+        from .importer import _plan_identity_import
+        with store._transition_lock:
+            planned,result=_plan_identity_import(target_store=store,**contract)
+            if planned is not None and not is_staged(store):
+                _state(store)["records"].extend(planned)
+            return result
+
+    def commit_transition(store,*,key,from_state,transition):
+        """GOVERNED TRANSITION WRITE. Re-checks the structural invariants.
+
+        The replacement record is derived HERE from the transition, never
+        supplied by the caller, so this is no stronger than the public
+        transition_authority_state().
+        """
+        from .transition import (GovernedStateTransitionRecord,
+                                 identity_object_key,lifecycle_currentness)
+        from .lifecycle import KNOWN_LIFECYCLES
+        with store._transition_lock:
+            if is_staged(store):
+                return False,None,("STORE_IS_STAGING_COPY",)
+            if type(transition) is not GovernedStateTransitionRecord:
+                return False,None,("TRANSITION_RECORD_TYPE_INVALID",)
+            if (transition.object_id,transition.object_version,transition.era_id)!=key:
+                return False,None,("TRANSITION_OBJECT_KEY_MISMATCH",)
+            if transition.from_state!=from_state or transition.from_state==transition.to_state:
+                return False,None,("TRANSITION_FROM_TO_STATE_INVALID",)
+            if str(transition.to_state).upper() not in KNOWN_LIFECYCLES:
+                return False,None,("UNKNOWN_TO_STATE",)
+            records=_state(store)["records"]
+            matches=[i for i,r in enumerate(records) if identity_object_key(r)==key]
+            if len(matches)!=1:
+                return False,None,("TRACKED_OBJECT_NOT_UNIQUE_OR_NOT_FOUND",)
+            index=matches[0]
+            current=records[index]
+            if current.lifecycle_state!=from_state:
+                return False,None,("FROM_STATE_MISMATCH",)
+            prior=store.latest_transition_for_key(key)
+            creation=store.creation_for_key(key)
+            expected_prior=(prior.transition_id if prior is not None else
+                            creation.creation_record_id if creation is not None else None)
+            if expected_prior is None or transition.prior_transition_id!=expected_prior:
+                return False,None,("PRIOR_TRANSITION_ID_MISMATCH",)
+            if any(t.transition_id==transition.transition_id for t in store.transitions):
+                return False,None,("DUPLICATE_TRANSITION_ID",)
+            updated=replace(current,lifecycle_state=transition.to_state,
+                            is_current=lifecycle_currentness(transition.to_state))
+            records[index]=updated
+            store.transitions.append(transition)
+            return True,updated,()
+
+    def fixture_write(store,rows,*,replace_all=False):
+        """TEST / FIXTURE ONLY. Refuses unless _fixture_seeding_permitted() has
+        been replaced under test instrumentation."""
+        if _fixture_seeding_permitted() is not True:
+            raise PermissionError("FIXTURE_RECORD_WRITE_NOT_PERMITTED")
+        st=_state(store)
+        if replace_all:
+            st["records"][:]=list(rows)
+        else:
+            st["records"].extend(rows)
+
     return (issue,authenticate,release,consume,expire_due,active_claim_id,
-            transaction_time,ledger_state)
+            transaction_time,ledger_state,records_of,is_staged,staging_copy,
+            commit_registration_txn,commit_import,commit_transition,fixture_write)
 
 (_issue_claim,_authenticate_claim,_release_claim,_consume_claim,
- _expire_due_claims,_active_claim_id,_transaction_time,
- _ledger_state)=_make_issuance_authority()
+ _expire_due_claims,_active_claim_id,_transaction_time,_ledger_state,
+ _records_of,_is_staged,_staging_copy,_commit_governed_registration,
+ _commit_governed_import,_commit_governed_transition,
+ _fixture_write_records)=_make_issuance_authority()
 
 
-@dataclass
+@dataclass(kw_only=True)
 class CanonicalIdentityStore:
-    records:list[FeatureIdentity]=field(default_factory=list)
+    # A14. There is NO `records` field: canonical identities are not seeded
+    # through the constructor and not held in a public mutable list. They live
+    # in the store-owned closure state and are written only by governed
+    # registration, governed import, governed transition, or a test fixture
+    # seeder that production cannot enable. kw_only makes a stale positional
+    # CanonicalIdentityStore([rows]) fail loudly instead of silently binding
+    # the list to registry_id.
     registry_id:str="SALIX-ERA1-REGISTRY"
     active_era_id:str="ERA_1"
     creation_records:list[object]=field(default_factory=list)
@@ -390,8 +611,12 @@ class CanonicalIdentityStore:
     transitions:list[object]=field(default_factory=list)
     _transition_lock:RLock=field(default_factory=RLock,repr=False,compare=False)
 
-    def add(self,record:FeatureIdentity)->None: self.records.append(record)
-    def extend(self,records:Iterable[FeatureIdentity])->None: self.records.extend(records)
+    @property
+    def records(self)->tuple:
+        """READ-ONLY view of the canonical identities. There is no public
+        writer: store.add and store.extend were removed (A14)."""
+        return _records_of(self)
+
     def add_creation(self,record)->None: self.creation_records.append(record)
     def add_transition(self,record)->None: self.transitions.append(record)
     def list_scope(self,scope:str,era_id:str|None=None):
@@ -487,7 +712,8 @@ class CanonicalIdentityStore:
     def reserve_claim(self,*,content_key_composite:str,request_id:str,
                       search_policy=None,normalizer=None,
                       include_validation_scope:bool=False,
-                      issuer:str="TRACKER"):
+                      issuer:str="TRACKER",
+                      bound_instrument:Optional[str]=None):
         """Store-owned claim ISSUANCE. Returns (ClaimRecord|None, error|None).
 
         The caller supplies only what it wants looked up. Every fact that could
@@ -514,7 +740,7 @@ class CanonicalIdentityStore:
                 request_id=request_id,search_policy=search_policy,
                 normalizer=normalizer,
                 include_validation_scope=include_validation_scope,
-                issuer=issuer)
+                issuer=issuer,bound_instrument=bound_instrument)
 
     def claim_authenticity(self,rec):
         """Read-only. (True, None) only for an unaltered claim THIS store issued."""
@@ -582,109 +808,16 @@ class CanonicalIdentityStore:
                             request_id:str|None):
         """Re-check, append and consume the claim as ONE atomic transition.
 
-        Validation and registry mutation must not be separable. Splitting them
-        permits the stale-worker duplicate: A validates, stalls, its claim
-        expires, B claims and registers, A resumes and appends on a validation
-        that is no longer true.
-
-        A valid active claim is MANDATORY. It is enforced here, not only in
-        safe_intake, because a direct caller must not be able to reach the
-        registry by skipping the lookup/claim gate entirely. No claim means no
+        Delegates to the store-owned registration transaction, which holds the
+        only registered-identity append. A valid, authentic, active,
+        construction-authorized claim is MANDATORY; no claim means no
         registration, whatever route the caller took.
 
-        Inside a single acquisition of _transition_lock this method:
-          1. requires a non-blank request_id and content key — None, "" and
-             whitespace are the absence of a claim, never a claim;
-          2. re-checks that the presented claim is still ACTIVE and still bound
-             to request_id, evaluated at the CURRENT time;
-          3. re-checks that no canonical identity for this content key or
-             canonical key appeared since the claim was issued;
-          4. appends identity and creation provenance;
-          5. terminally consumes the claim.
-
         LOCK ORDER is fixed and total: _transition_lock is ALWAYS acquired
-        before _claim_lock, never the reverse. No public method acquires
-        _claim_lock and then _transition_lock, so the two cannot deadlock.
+        before _claim_lock, never the reverse.
 
         Returns (True, None) or (False, error).
         """
-        request_id=str(request_id or "").strip()
-        content_key_composite=str(content_key_composite or "").strip() or None
-        with self._transition_lock:
-            with self._claim_lock:
-                if not request_id:
-                    return False,"CLAIM_REQUIRED_FOR_REGISTRATION"
-                if content_key_composite is None:
-                    return False,"CONTENT_KEY_REQUIRED_FOR_REGISTRATION"
-
-                self._expire_due()
-                # AUTHENTICITY FIRST (CR-1 / CR-2). The claim must reproduce,
-                # exactly, the contents this store recorded when it issued it,
-                # and its lifecycle must match the ledger. Membership of an id
-                # in any caller-reachable container proves nothing; a record
-                # whose provenance was replaced after issuance fails here.
-                held,auth_error=self._authentic_match_locked(
-                    content_key_composite,request_id)
-                if held is None:
-                    return False,auth_error
-                # Liveness is the LEDGER's verdict at store time. Expiry was
-                # applied just above, so ACTIVE here means genuinely unexpired.
-                ledger_state=_ledger_state(self,held.claim_id)
-                if ledger_state!="ACTIVE":
-                    return False,"CLAIM_NOT_ACTIVE:"+str(ledger_state)
-
-                # A competing worker may have registered while this one paused.
-                for r in self.records:
-                    if r.content_key_composite==content_key_composite and r.is_current:
-                        return False,"IDENTITY_APPEARED_SINCE_CLAIM:"+r.feature_id
-                for r in self.records:
-                    if r.canonical_key==identity.canonical_key:
-                        return False,"CANONICAL_KEY_ALREADY_REGISTERED:"+r.feature_id
-
-                # GOVERNED CONSTRUCTION AUTHORITY — the last gate before the
-                # registry is written.
-                #
-                # Deliberately evaluated AFTER the claim, duplicate and
-                # canonical-key checks, so each of those remains independently
-                # observable and testable rather than being masked by a blanket
-                # authority refusal. Nothing has been mutated at this point, so
-                # ordering costs no safety.
-                # Everything below re-checks facts the authenticity check has
-                # already bound to the issuance record. It is retained as
-                # defence in depth, not relied upon as the proof.
-                prov=held.provenance
-                if prov is None:
-                    return False,"CLAIM_PROVENANCE_MISSING"
-                if not prov.store_issued:
-                    return False,"CLAIM_PROVENANCE_NOT_STORE_ISSUED"
-                prov_errors=prov.completeness_errors()
-                if prov_errors:
-                    return False,"CLAIM_PROVENANCE_INVALID:"+",".join(prov_errors)
-                if str(prov.request_id)!=request_id:
-                    return False,"CLAIM_PROVENANCE_REQUEST_ID_MISMATCH"
-                if str(prov.content_key_composite)!=content_key_composite:
-                    return False,"CLAIM_PROVENANCE_CONTENT_KEY_MISMATCH"
-                binding_errors=resolve_governed_search_policy_binding(
-                    prov.search_policy_id,prov.search_policy_version,
-                    prov.search_policy_hash)
-                if binding_errors:
-                    return False,"CLAIM_PROVENANCE_POLICY_NOT_GOVERNED:"+",".join(binding_errors)
-                normalizer_errors=resolve_governed_normalizer_binding(
-                    prov.normalizer_id,prov.normalizer_version,prov.normalizer_hash)
-                if normalizer_errors:
-                    return False,"CLAIM_PROVENANCE_NORMALIZER_NOT_GOVERNED:"+",".join(normalizer_errors)
-                if not prov.authorizes_construction:
-                    # An ACTIVE, fully provenance-bound claim still does not
-                    # authorize construction. ERA_1 structural absence is not
-                    # global absence and semantic uniqueness is not certified,
-                    # so the governed lookup path issues no construction
-                    # authority and this fails closed.
-                    return False,"CLAIM_NOT_CONSTRUCTION_AUTHORIZED"
-
-                self.records.append(identity)
-                self.creation_records.append(creation)
-
-                # Consumption goes through the ledger, so a consumed claim is
-                # terminal there and cannot be presented again by any copy.
-                _consume_claim(self,held.claim_id,identity)
-                return True,None
+        return _commit_governed_registration(
+            self,identity=identity,creation=creation,
+            content_key_composite=content_key_composite,request_id=request_id)

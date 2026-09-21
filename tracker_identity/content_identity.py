@@ -48,7 +48,12 @@ from typing import Any, Mapping, Tuple
 
 ENCODING_ID = "SALIX-TYPED-CONTENT-ENCODING"
 ENCODING_VERSION = "1"
-CONTENT_KEY_ALGORITHM_ID = "SALIX-CONTENT-IDENTITY-KEY-V1"
+# V2: instrument is SCOPE identity content only where the governed definition
+# declares instrument-specific applicability. V1 hashed the bound instrument
+# unconditionally, over-splitting instrument-agnostic definitions. The id is
+# bumped because the derivation changed: a V1-labelled key must never be
+# silently reinterpreted. No V1 key is persisted in population/**.
+CONTENT_KEY_ALGORITHM_ID = "SALIX-CONTENT-IDENTITY-KEY-V2"
 
 UNFITTED_TOKEN = "NONE"
 
@@ -70,7 +75,7 @@ SUBKEY_DIMENSIONS = {
         "data_vintage_mode",
     ),
     "SCOPE_ELIGIBILITY": (
-        "instrument",
+        "instrument_applicability",
         "timeframe",
         "scope_universe",
     ),
@@ -79,9 +84,26 @@ SUBKEY_DIMENSIONS = {
     ),
 }
 
+# INSTRUMENT IDENTITY RULE — frozen Tracker five-dimension model + Composer
+# §39.4 (verified at source, Composer V9 line 2054):
+#   "INSTRUMENT / UNIVERSE / SCOPE difference = PAYLOAD_BINDING unless
+#    semantics change; if semantics change or are unclear, REVIEW_REQUIRED."
+# Frozen Tracker Core: SCOPE / ELIGIBILITY-DEFINITION holds instrument only
+# "where encoded in the governed feature definition".
+#
+# So the bound instrument is ALWAYS declared (it is binding/lineage), but it
+# becomes identity content only when the definition itself declares that its
+# semantics are instrument-specific. Unclear applicability yields no key.
+INSTRUMENT_AGNOSTIC = "INSTRUMENT_AGNOSTIC"
+INSTRUMENT_SPECIFIC = "INSTRUMENT_SPECIFIC"
+INSTRUMENT_APPLICABILITY_VALUES = (INSTRUMENT_AGNOSTIC, INSTRUMENT_SPECIFIC)
+
+# Declared on every payload, but identity content only conditionally.
+BINDING_DIMENSIONS = ("instrument",)
+
 REQUIRED_DIMENSIONS = tuple(
     name for dims in SUBKEY_DIMENSIONS.values() for name in dims
-)
+) + BINDING_DIMENSIONS
 
 # Dimensions whose collection semantics are declared UNORDERED. A dependency
 # closure is a set: two orderings of the same closure are the same content and
@@ -266,6 +288,14 @@ def completeness_errors(payload: Mapping[str, Any]) -> Tuple[str, ...]:
     if "fitted_state" in declared:
         errors.extend(_fitted_errors(payload.get("fitted_state")))
 
+    if "instrument_applicability" in declared:
+        applicability = payload.get("instrument_applicability")
+        if applicability not in INSTRUMENT_APPLICABILITY_VALUES:
+            # Unclear applicability must never silently choose a shared or a
+            # split identity. It yields no key, so lookup cannot resolve and
+            # the candidate is routed to review.
+            errors.append("INSTRUMENT_APPLICABILITY_REVIEW_REQUIRED:" + str(applicability))
+
     _scan_forbidden(payload, errors)
 
     # Encoding rules are part of completeness: a payload that cannot be
@@ -286,8 +316,21 @@ def build_content_identity_key(payload: Mapping[str, Any]):
     if errors:
         return None, tuple(errors)
 
-    def sub(name: str) -> str:
+    def _identity_fields(name: str) -> Tuple[str, ...]:
         dims = SUBKEY_DIMENSIONS[name]
+        if name == "SCOPE_ELIGIBILITY" and payload.get("instrument_applicability") == INSTRUMENT_SPECIFIC:
+            # Applicability is encoded in the governed definition: instrument
+            # IS scope identity content.
+            dims = dims + ("instrument",)
+        if name == "FITTED_LEARNED_STATE" and payload.get("fitted_state") != UNFITTED_TOKEN:
+            # Learned state is ALWAYS instrument-qualified, whatever the
+            # definition's applicability: a fitted transform, calibrator or
+            # cache may never silently cross instruments.
+            dims = dims + ("instrument",)
+        return dims
+
+    def sub(name: str) -> str:
+        dims = _identity_fields(name)
         try:
             body = {
                 d: _encode(payload.get(d), unordered=(d in UNORDERED_DIMENSIONS))

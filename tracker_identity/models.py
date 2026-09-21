@@ -173,6 +173,10 @@ class ClaimProvenance:
     authorizes_construction:bool=False
     lookup_result_id:str=""
     issuance_evidence_hash:str=""
+    # LINEAGE, not authority. The instrument this construction request was
+    # bound to. Kept explicit even when the definition is instrument-agnostic
+    # and the canonical identity is therefore shared across instruments.
+    bound_instrument:str=""
 
     def completeness_errors(self)->Tuple[str,...]:
         e=[]
@@ -268,3 +272,7 @@ class IdentityLookupResult:
     semantic_uniqueness:str="UNRESOLVED_NOT_CERTIFIED"
     scope_status:Tuple[Tuple[str,str],...]=()
     errors:Tuple[str,...]=()
+    # The instrument the REQUEST was bound to. For an instrument-agnostic
+    # definition, exact_match may be a canonical row first registered under a
+    # different instrument; the requested target must never be lost to that.
+    bound_instrument:Optional[str]=None

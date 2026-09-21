@@ -267,6 +267,7 @@ def identity_lookup(
             request_id=request_id,issuer=owner,
             search_policy=search_policy,normalizer=normalizer,
             include_validation_scope=include_validation_scope,
+            bound_instrument=normalized["instrument"],
         )
         if claim_error:
             outcome=LookupOutcome.INCOMPLETE_LOOKUP
@@ -361,4 +362,5 @@ def identity_lookup(
         semantic_uniqueness="UNRESOLVED_NOT_CERTIFIED",
         scope_status=tuple(scope_status),
         errors=tuple(errors),
+        bound_instrument=normalized["instrument"],
     )

@@ -48,6 +48,7 @@ CONTENT_DIMS=dict(
     availability_class="RECONSTRUCTED_NOT_OBSERVED",source_provider="P1",
     price_basis="BID",data_vintage_mode="CURRENT_RECOMPUTED",
     scope_universe="U/ERA_1",parameters={},fitted_state="NONE",
+    instrument_applicability="INSTRUMENT_SPECIFIC",
 )
 
 def catalogue(fid="f1", version="1", era="ERA_1"):
@@ -116,6 +117,100 @@ class ImportBoundaryTests(unittest.TestCase):
         store,result=run((row(current=True,lifecycle="SUPERSEDED"),),man)
         self.assertIn("STALE_STATE_SWEEP_FAILED",result.errors)
         self.assertEqual(store.all(),())
+
+class ImportAuthorityBoundaryA14006(unittest.TestCase):
+    """DC-006 Correction C — the GOVERNED IMPORT write path.
+
+    The import is NOT forced through the construction claim. It writes only
+    through the store-owned import commit, which re-runs the whole contract;
+    store.extend no longer exists as an escape hatch.
+    """
+
+    def _ok_contract(self,store):
+        return dict(rows=(row(),),manifest=manifest((ref(),)),source_universe=universe(),
+                    era_boundary=boundary(),catalogue=catalogue("f1"),
+                    search_policy=policy(),normalizer=normalizer())
+
+    def test_valid_import_writes_through_the_governed_commit(self):
+        store,result=run((row(),),manifest((ref(),)))
+        self.assertEqual(result.errors,())
+        self.assertEqual(result.imported_row_count,1)
+        self.assertEqual(len(store.all()),1)
+        self.assertTrue(store.all()[0].content_key_composite)   # catalogue-derived
+
+    def test_generator_rows_are_materialized_once(self):
+        store=CanonicalIdentityStore()
+        c=self._ok_contract(store); c["rows"]=(r for r in (row(),))
+        result=import_identity_content(target_store=store,**c)
+        self.assertEqual(result.errors,())
+        self.assertEqual(len(store.all()),1)
+
+    def test_planning_alone_never_writes(self):
+        from tracker_identity.importer import _plan_identity_import
+        store=CanonicalIdentityStore()
+        planned,result=_plan_identity_import(target_store=store,**self._ok_contract(store))
+        self.assertEqual(len(planned),1)
+        self.assertEqual(result.errors,())
+        self.assertEqual(store.all(),())
+
+    def test_direct_store_import_commit_cannot_skip_the_contract(self):
+        """Calling the store-owned import writer directly is exactly as strong
+        as import_identity_content: it re-runs every check itself."""
+        from tracker_identity import store as store_module
+        store=CanonicalIdentityStore()
+        bad=[
+            dict(manifest=manifest((ref(rows=2),))),                       # row count
+            dict(rows=(row(authority="MANAGER_RECORD"),),
+                 manifest=manifest((ref(authority="MANAGER_RECORD"),))),     # authority class
+            dict(rows=(row(source_id=""),)),                                # provenance
+            dict(rows=(row(era="ERA_0"),)),                                 # era
+            dict(catalogue=catalogue("other")),                             # not in catalogue
+        ]
+        for over in bad:
+            c=self._ok_contract(store); c.update(over)
+            result=store_module._commit_governed_import(store,**c)
+            self.assertTrue(result.errors,over)
+            self.assertEqual(result.imported_row_count,0)
+            self.assertEqual(store.all(),(),over)
+
+    def test_supplied_content_key_is_never_trusted(self):
+        from dataclasses import replace
+        store=CanonicalIdentityStore()
+        c=self._ok_contract(store); c["rows"]=(replace(row(),content_key_composite="FORGED"),)
+        result=import_identity_content(target_store=store,**c)
+        self.assertTrue(any("ROW_SUPPLIED_CONTENT_KEY_REJECTED" in e for e in result.errors))
+        self.assertEqual(store.all(),())
+
+    def test_duplicate_and_currentness_checks_not_weakened(self):
+        store,first=run((row(),),manifest((ref(),)))
+        self.assertEqual(len(store.all()),1)
+        _,second=run((row(),),manifest((ref(),)),store=store)
+        self.assertIn("STALE_STATE_SWEEP_FAILED",second.errors)
+        self.assertEqual(len(store.all()),1)
+
+    def test_staging_copy_cannot_be_imported_into(self):
+        from tracker_identity import store as store_module
+        staged=store_module._staging_copy(CanonicalIdentityStore())
+        result=import_identity_content(target_store=staged,**self._ok_contract(staged))
+        self.assertIn("STORE_IS_STAGING_COPY",result.errors)
+        self.assertEqual(staged.all(),())
+
+    def test_import_has_no_extend_escape_hatch(self):
+        store=CanonicalIdentityStore()
+        self.assertFalse(hasattr(store,"extend"))
+        self.assertFalse(hasattr(store,"add"))
+
+    def test_declared_residual_self_certifying_authority_objects(self):
+        """PINNED RESIDUAL (not closed): the contract's authority objects are
+        caller-constructible and self-hashed. A caller who builds a mutually
+        consistent boundary/universe/manifest/catalogue package imports it.
+        No governed package-approval object exists to bind against, so this is
+        reported as IMPORT_AUTHORITY_BOUNDARY_SOUND = QUALIFIED /
+        A14 import-authority sub-part BLOCKED_BY_MISSING_GOVERNANCE. A future
+        fix must make this test fail deliberately."""
+        store,result=run((row(),),manifest((ref(),)))
+        self.assertEqual(result.errors,())
+        self.assertEqual(len(store.all()),1)
 
 if __name__=="__main__":
     unittest.main()

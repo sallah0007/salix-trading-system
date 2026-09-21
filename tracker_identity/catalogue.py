@@ -36,6 +36,11 @@ class FeatureDefinitionRecord:
     parameters: Optional[Mapping[str, Any]] = None
     fitted_state: Optional[Any] = None
     proxy_status: Optional[str] = None
+    # Governed declaration of whether this definition's SEMANTICS are specific
+    # to its instrument. INSTRUMENT_AGNOSTIC: the bound instrument is payload
+    # binding only. INSTRUMENT_SPECIFIC: instrument is scope identity content.
+    # Undeclared (None) is unclear and yields no content key.
+    instrument_applicability: Optional[str] = None
 
     def declared_content(self) -> dict:
         """Governed content with NO identity and NO process provenance.
@@ -59,6 +64,7 @@ class FeatureDefinitionRecord:
             "timeframe": self.timeframe,
             "scope_universe": self.scope_universe,
             "fitted_state": self.fitted_state,
+            "instrument_applicability": self.instrument_applicability,
         }
         return {k: v for k, v in declared.items() if v is not None}
 
