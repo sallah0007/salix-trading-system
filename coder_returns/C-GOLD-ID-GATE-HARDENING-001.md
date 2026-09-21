@@ -1223,3 +1223,227 @@ DESKTOP_CODER TEST PASS != MANAGER ACCEPTANCE
 REVIEW_CODER FINDING != MANAGER DECISION
 NO_STEP_AUTO_AUTHORIZES_THE_NEXT = TRUE
 DO NOT MERGE.
+
+---
+
+# CLOCK ISOLATION + PUBLIC WEAKREF CORRECTION — DC-CLOCK-ISOLATION-WEAKREF-TEST-005
+
+APPENDED. Everything above is preserved as written.
+
+FROM = DESKTOP_CODER — IMPLEMENTATION ENGINEER
+TASK_ID = DC-CLOCK-ISOLATION-WEAKREF-TEST-005
+BASE_FOR_CORRECTION = 259149f8d979132858d164f7810789f1c14f4ea9
+IMPLEMENTATION_SHA  = 90f31ce050d2683484212cd9809089b035138b34
+No prior commit was amended, squashed or rebased.
+
+GOVERNED COMMISSION OPENED = YES
+  Drive 15PPVvRR4oyGkLyAqdSv6wx78WH0zWxr6cV9ZjD6YzE4, read in full, read-only.
+
+## WHAT THE DC004 CHALLENGE ESTABLISHED, AND WHAT CHANGED
+
+The DC004 challenge return (read-only) corrected two overstated DC004 fields:
+STORE_OWNED_TIME_RESTORED was QUALIFIED, not YES; CALLER_SELECTED_TTL_BLOCKED
+was NO, not YES. This task closes both in the strong sense.
+
+## 1. PUBLIC WEAKREF ROUTE — NOW PERMANENTLY TESTED
+
+test_NC01_NC02_exact_public_weakref_route uses documented public APIs only:
+    weakref.getweakrefs(store)   -> ref
+    ref.__callback__             -> weakref.finalize
+    finalize.peek()              -> (obj, func, args, kwargs)
+    func.__self__                -> asserted None
+weakref.finalize._registry is not used anywhere in that test. It asserts one
+cleanup finalizer, no bound-method owner, no mutable container reachable from
+func/args/kwargs, args == (id(store),), and that the former forgery chain now
+fails with CLAIM_CONTENT_ALTERED_SINCE_ISSUANCE and writes nothing.
+
+Executed evidence from the DC004 challenge on the same route:
+  BASE aaec2c4    func=dict.pop   __self__=dict (the ledger)  forgery rows=1
+  CURRENT         func=_drop      __self__=None               ledger not reached
+
+## 2. PRODUCTION CLOCK AUTHORITY REMOVED
+
+The `_clock` dataclass field is deleted. It was init=True, so the production
+constructor accepted it, and it was an ordinary field. Through it a caller
+could push authoritative time, issued_ts, expires_ts and last_effective
+arbitrarily forward; the poisoning outlived its removal for the life of the
+store, and near datetime.max forced permanent CLAIM_EXPIRY_OVERFLOW refusals.
+
+Store time now derives ONLY from two dedicated source functions:
+    _wall_now()       real UTC wall clock
+    _monotonic_now()  real monotonic clock
+    effective = max(_wall_now(), last_effective + monotonic elapsed)
+No constructor argument, store field, flag, environment variable or API
+parameter reaches either.
+
+## 3. EXACT TEST-ONLY MECHANISM
+
+Deterministic tests replace those source FUNCTIONS with unittest.mock via
+install_test_clock() / patch_store_source(), restored by addCleanup. This is
+test instrumentation by code replacement — the same class as rebinding any
+store method, which has been outside the stated boundary for production
+callers since DC-003. It is not production data and not an API.
+
+NC-08 proves it both ways in one test: setting fifteen clock-like attributes on
+a store has NO effect (time stays < 2100); replacing the source function DOES
+(time == 2999). Data cannot steer time; only code replacement can.
+
+## 4. STORE-OWNED LIFETIME
+
+reserve_claim and _issue_claim no longer accept any lifetime. Passing
+ttl_seconds, issued_ts or expires_ts to either raises TypeError. Every claim
+takes _governed_claim_ttl_seconds() (the governed default, 900 s), and
+expires - issued is exactly that. The CLAIM_TTL_* structured refusals now guard
+the store's OWN policy source — defence in depth in case it is ever mis-edited
+or mis-patched — rather than a caller input.
+
+## 5. MODULE HELPERS ALIGNED TO THE PUBLIC BOUNDARY
+
+  _terminate_claim   REMOVED. It let a caller mark a live claim EXPIRED with
+                     any reason (proven in the DC004 challenge).
+  _release_claim     exactly release_claim(): ACTIVE -> RELEASED, non-blank,
+                     non-reserved reason only.
+  _consume_claim     requires an authentic, ACTIVE, construction-authorized
+                     claim whose identity is really in the records under the
+                     claim's content key. No construction authority exists, so
+                     it always refuses — even with the identity planted by the
+                     A14 route (NC-13b).
+  _issue_claim       no time and no lifetime inputs; equivalent to reserve_claim.
+  _transaction_time  no parameter; records only real time.
+  _expire_due_claims no parameter; applies only expiry already due.
+
+RESERVED_LIFECYCLE_REASONS = {TTL_EXPIRED, REGISTRATION_COMPLETED} are refused
+at BOTH the public release_claim and _release_claim, so no caller can record
+that a claim timed out or was consumed by a registration when it was not.
+EXPIRED is assigned only by genuine store-time expiry: NC-13c calls every
+exported store-first helper with EXPIRED-style arguments and the live claim
+never becomes EXPIRED.
+
+## 6. NARROW SCOPE EXPANSION — test_pre_id_content_identity.py
+
+Exactly the six `store._clock = clock` lines were replaced with
+`install_test_clock(self, clock)`, plus one test-only helper. Diff: +22 / -6.
+Verified mechanically that no other line of that file changed. All 59 tests in
+the file pass, including C2, C2b, C3 and the M-series expiry tests.
+
+test_registration_atomicity.py was also required: its three `store._clock`
+sites would otherwise have silently stopped steering time. Migrated the same
+way. test_safe_intake_era.py was not needed and was not modified.
+
+## MANDATORY NEGATIVE CONTROLS — ALL PASS
+
+  NC-1  exact public weakref path permanently tested         NC01_NC02
+  NC-2  former public route cannot obtain the ledger         NC01_NC02
+  NC-3  constructor has no caller clock authority            NC03, NC03b
+  NC-4  no caller-mutable store field controls time          NC04
+  NC-5  reserve_claim cannot choose transaction timestamp    NC05_NC06_NC07
+  NC-6  reserve_claim cannot choose issued_ts / expires_ts   NC05_NC06_NC07, NC06b
+  NC-7  ordinary caller cannot choose TTL                    NC05_NC06_NC07, NC06b
+  NC-8  test-only mechanism unreachable as data/API          NC08
+  NC-9  expired / released claims cannot revive              NC09_to_NC12, W10
+  NC-10 one-active-claim-per-key intact                      NC09_to_NC12, W11
+  NC-11 cross-store replay blocked                           NC09_to_NC12
+  NC-12 post-issuance content mutation blocked               NC09_to_NC12
+  NC-13 _terminate_claim cannot falsify expiry/state         NC13, NC13b, NC13c
+  NC-14 construction-authorized path absent                  NC14_NC15_NC16, R6
+  NC-15 policy + normalizer registries PASS                  NC14_NC15_NC16
+  NC-16 A14 OPEN and untouched                               NC14_NC15_NC16, C12
+  NC-17 full regression + mutation testing                   below
+
+## TESTS
+
+PYTHON = 3.12.10
+  targeted  <PY> -m unittest tests.test_identity_surface          Ran 131 — OK
+  pre-ID    <PY> -m unittest tests.test_pre_id_content_identity   Ran 59  — OK
+  full      <PY> -m unittest discover -s tests                    Ran 263 — OK
+  TOTAL=263 PASSED=263 FAILED=0 ERRORS=0 SKIPPED=0
+Baseline at BASE_SHA was 155. No test deleted. No safety assertion weakened.
+The pre-ID file still holds exactly 59 tests.
+
+Superseded 004 tests, each with its proposition preserved:
+  W06  caller TTL over maximum     -> now NC05_NC06_NC07: no TTL input at all
+  W06b far-future clock, removed   -> wall-clock step BACK cannot extend a
+                                      claim; still measured in real time
+  W07/W08 caller TTL bounds        -> bounds now guard the store's own policy
+                                      source (W07_W08)
+  W09/W09a injected-clock semantics-> removed: the injected clock no longer
+                                      exists; replaced by NC03, NC04, NC08
+
+## MUTATION RESULT
+
+38 guards mutated in a scratch copy, never in the repo.
+
+  DC-005 new guards       18 mutated, 13 killed, 5 surviving
+  retained DC-004 time     7 mutated,  7 killed
+  prior authenticity      13 mutated, 12 killed, 1 surviving
+
+First sweep had 6 survivors. D3 (bypassing the _monotonic_now source) was a
+REAL TEST GAP: existing tests asserted only inequalities that still held on
+the real monotonic clock. test_NC03b now pins an exact 10,000 s advance from
+the dedicated source; D3 is killed.
+
+COMBINED = 38 mutated, 33 killed, 5 surviving.
+
+ALL SURVIVING MUTANTS — every one is in the registration-consumption path:
+  D10 _consume_claim: drop ACTIVE check
+  D11 _consume_claim: drop authenticity check
+  D12 _consume_claim: drop identity-in-records check
+  D13 _consume_claim: drop content-key match
+  A15 commit_registration: skip consumption
+
+These are UNKILLABLE BY CONSTRUCTION, and I state it plainly rather than
+counting them as evidence. The authority check in _consume_claim (D9) is killed
+and always refuses, because no construction authority exists. So every consume
+returns False whatever the other guards do. Reordering does not help: while
+authority always refuses, no scenario can make any other guard decisive. A15
+is the same path at commit. They become testable when a governed construction
+order exists.
+
+## STATED BOUNDARY
+
+DEFENDED: mutation of any caller-reachable DATA; the public weakref route;
+every production time, issuance-timestamp and lifetime input.
+NOT DEFENDED, not claimed: CODE replacement (rebinding store methods, module
+functions, or the time/lifetime source functions) and reflection on closure
+cells, gc, ctypes. Replacing the source functions is exactly the test
+mechanism, and exactly why it is not a production surface.
+
+## CHANGED FILES
+
+  tracker_identity/store.py
+  tests/test_identity_surface.py
+  tests/test_pre_id_content_identity.py   (narrow: six clock lines + helper)
+  tests/test_registration_atomicity.py    (required: three clock sites)
+  coder_returns/C-GOLD-ID-GATE-HARDENING-001.md   (this append)
+All on the allowed list. models.py, importer.py, population/**, .github/**,
+CLAUDE.md untouched. store.add, store.extend and records.append unchanged.
+
+## RETURN
+
+PUBLIC_WEAKREF_ROUTE_PERMANENTLY_TESTED = YES
+PRODUCTION_CALLER_CAN_SET_TRANSACTION_TIME = NO
+PRODUCTION_CALLER_CAN_SET_ISSUED_TS = NO
+PRODUCTION_CALLER_CAN_SET_EXPIRES_TS = NO
+TEST_CLOCK_PRODUCTION_REACHABLE = NO
+CALLER_SELECTED_TTL_BLOCKED = YES
+ARBITRARY_OR_OVERMAX_TTL_BLOCKED = YES
+STORE_OWNED_TIME_RESTORED = YES
+  Meaning, precisely: no production data or API input reaches transaction
+  time, issued_ts, expires_ts or lifetime; time derives only from the store's
+  own wall and monotonic sources, never decreases, and never runs slower than
+  real time. Only code replacement can steer it — the stated boundary.
+TERMINATE_HELPER_CAPABILITY_ALIGNED = YES
+CROSS_STORE_REPLAY_BLOCKED = YES
+POST_ISSUANCE_CONTENT_MUTATION_BLOCKED = YES
+CONSTRUCTION_AUTHORIZED_PATH_EXISTS = NO
+IMPORT_PATH_AUTHORITY_RESIDUAL = OPEN
+FULL_TEST_RESULT = Ran 263 tests — OK (0 failed, 0 errors, 0 skipped)
+MUTATION_RESULT = 38 mutated, 33 killed, 5 surviving (all in the consumption
+                  path, unreachable while construction authority is absent)
+TECHNICALLY_READY_FOR_MANAGER_RECONCILIATION = YES
+PR_CREATED = NO   MERGED = NO
+
+DESKTOP_CODER TEST PASS != MANAGER ACCEPTANCE
+REVIEW_CODER FINDING != MANAGER DECISION
+NO_STEP_AUTO_AUTHORIZES_THE_NEXT = TRUE
+DO NOT MERGE.
