@@ -25,6 +25,23 @@ from tracker_identity import (
     safe_intake_built_identity,
 )
 
+import importlib as _importlib
+from unittest import mock as _fixture_mock
+_store_module=_importlib.import_module("tracker_identity.store")
+
+def seed_fixture(store,rows,replace_all=False):
+    """TEST / FIXTURE ONLY (A14). Canonical records have no public writer;
+    this enables the fixture seeder by code replacement for one call."""
+    with _fixture_mock.patch.object(_store_module,"_fixture_seeding_permitted",
+                                    return_value=True):
+        _store_module._fixture_write_records(store,list(rows),replace_all=replace_all)
+    return store
+
+def fixture_store(rows=(),**kw):
+    return seed_fixture(CanonicalIdentityStore(**kw),rows)
+
+
+
 CONTENT = {
     "normalized_definition_graph": "LN(DIV(C[t],C[t-1]))",
     "dependency_closure": (),  # empty but DECLARED; dangling dep ids fail the sweep
@@ -40,6 +57,7 @@ CONTENT = {
     "timeframe": "H1",
     "scope_universe": "XAUUSD/ERA_1",
     "fitted_state": "NONE",
+    "instrument_applicability": "INSTRUMENT_SPECIFIC",
 }
 
 
@@ -114,6 +132,7 @@ def candidate(feature_id="gold.logret", claim_request_id=None, **changes):
         price_basis="BID", data_vintage_mode="CURRENT_RECOMPUTED",
         scope_universe="XAUUSD/ERA_1", parameters={"lookback_bars": 2},
         fitted_state="NONE", proxy_status="NOT_PROXY",
+        instrument_applicability="INSTRUMENT_SPECIFIC",
         claim_request_id=claim_request_id,
     )
     vals.update(changes)
@@ -168,9 +187,10 @@ def governed_claim(store, request_id, **content_overrides):
 def imported_row(key, feature_id="gold.logret.other"):
     """A content identity introduced by the governed IMPORT path.
 
-    import_identity_content() writes through store.extend(), not through
-    commit_registration(), so it is a legitimate way for an identity to appear
-    between a claim being issued and that claim being presented.
+    import_identity_content() writes through the store-owned import commit, not
+    through commit_registration(), so it is a legitimate way for an identity to
+    appear between a claim being issued and that claim being presented. Tests
+    stand it in with the test-only fixture seeder.
     """
     return FeatureIdentity(
         feature_id=feature_id, feature_version="1",
@@ -240,7 +260,7 @@ class RegistrationAtomicity(unittest.TestCase):
         # The same content identity arrives by the governed import path while
         # this worker holds its claim. It cannot arrive by a second intake:
         # only one active claim per content key can exist, which is the point.
-        store.add(imported_row(key))
+        seed_fixture(store,[imported_row(key)])
 
         stale = intake(store, candidate("gold.logret.stale", claim_request_id="REQ-STALE"))
         self.assertFalse(stale.accepted)
@@ -349,7 +369,7 @@ class RegistrationAtomicity(unittest.TestCase):
         existing = imported_row(
             content_key(normalized_definition_graph="SUB(LN(C[t]),LN(C[t-1]))"),
             feature_id="gold.logret.dup")
-        store.add(existing)
+        seed_fixture(store,[existing])
         governed_claim(store, "REQ-DUP")
 
         # A VALID active, fully provenance-bound claim, presented against a

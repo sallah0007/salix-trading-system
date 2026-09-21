@@ -55,6 +55,7 @@ def candidate(**changes):
         price_basis="BID",data_vintage_mode="CURRENT_RECOMPUTED",
         scope_universe="XAUUSD/ERA_1",parameters={"lookback_bars":2},
         fitted_state="NONE",proxy_status="NOT_PROXY",
+        instrument_applicability="INSTRUMENT_SPECIFIC",
     )
     vals.update(changes)
     probe=BuiltIdentityCandidate(**vals)
@@ -86,6 +87,7 @@ def claim_for(store,cand,request_id="REQ-INTAKE"):
         scope_universe=cand.scope_universe,
         parameters=cand.parameters,
         fitted_state=cand.fitted_state,
+        instrument_applicability=cand.instrument_applicability,
     )
     for sc in MANDATORY_DUPLICATE_CONTROL_SCOPES:
         store.declare_scope(sc,"EMPTY_VERIFIED")

@@ -42,13 +42,22 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import unicodedata
 from dataclasses import dataclass
 from typing import Any, Mapping, Tuple
 
 ENCODING_ID = "SALIX-TYPED-CONTENT-ENCODING"
 ENCODING_VERSION = "1"
-CONTENT_KEY_ALGORITHM_ID = "SALIX-CONTENT-IDENTITY-KEY-V1"
+# V2 (DC-006): the DIRECT bound-instrument field is SCOPE identity content only
+# where the governed definition declares instrument-specific applicability. V1
+# hashed it unconditionally, over-splitting instrument-agnostic definitions.
+# V2 alone did NOT close alternate leakage through other identity fields
+# (scope_universe, causal_time_semantics, dependency_closure, ...); DC-006R
+# addresses those with the fail-closed leakage guard below. The id is
+# bumped because the derivation changed: a V1-labelled key must never be
+# silently reinterpreted. No V1 key is persisted in population/**.
+CONTENT_KEY_ALGORITHM_ID = "SALIX-CONTENT-IDENTITY-KEY-V2"
 
 UNFITTED_TOKEN = "NONE"
 
@@ -70,7 +79,7 @@ SUBKEY_DIMENSIONS = {
         "data_vintage_mode",
     ),
     "SCOPE_ELIGIBILITY": (
-        "instrument",
+        "instrument_applicability",
         "timeframe",
         "scope_universe",
     ),
@@ -79,9 +88,110 @@ SUBKEY_DIMENSIONS = {
     ),
 }
 
+# INSTRUMENT IDENTITY RULE — frozen Tracker five-dimension model + Composer
+# §39.4 (verified at source, Composer V9 line 2054):
+#   "INSTRUMENT / UNIVERSE / SCOPE difference = PAYLOAD_BINDING unless
+#    semantics change; if semantics change or are unclear, REVIEW_REQUIRED."
+# Frozen Tracker Core: SCOPE / ELIGIBILITY-DEFINITION holds instrument only
+# "where encoded in the governed feature definition".
+#
+# So the bound instrument is ALWAYS declared (it is binding/lineage), but it
+# becomes identity content only when the definition itself declares that its
+# semantics are instrument-specific. Unclear applicability yields no key.
+INSTRUMENT_AGNOSTIC = "INSTRUMENT_AGNOSTIC"
+INSTRUMENT_SPECIFIC = "INSTRUMENT_SPECIFIC"
+INSTRUMENT_APPLICABILITY_VALUES = (INSTRUMENT_AGNOSTIC, INSTRUMENT_SPECIFIC)
+
+# Declared on every payload, but identity content only conditionally.
+BINDING_DIMENSIONS = ("instrument",)
+
+# DC-006R (CR015 H-1). DC-006 V2 fixed only the DIRECT bound-instrument field.
+# An instrument token could still enter identity through other fields, so:
+#
+#   SEMANTIC_APPLICABILITY_SCOPE = identity content. Carried by the existing
+#       `scope_universe` dimension (name kept for catalogue compatibility):
+#       the population a definition's SEMANTICS apply to, e.g. "FX_METALS".
+#   BOUND_UNIVERSE = binding / lineage. Optional `bound_universe`: the concrete
+#       runtime universe a request is bound to. Never hashed into any subkey.
+SEMANTIC_APPLICABILITY_SCOPE_DIMENSION = "scope_universe"
+BOUND_UNIVERSE_DIMENSION = "bound_universe"
+
+# Governed canonical-row representation of an INSTRUMENT_AGNOSTIC, UNFITTED
+# definition (CR015 M-1): the row's semantic instrument scope is ANY, never
+# the first runtime binding. The concrete bound instrument lives in lookup and
+# claim lineage (bound_instrument).
+AGNOSTIC_INSTRUMENT_SCOPE = "ANY"
+
+# INSTRUMENT-TOKEN LEAKAGE (fail closed, never stripped).
+# For INSTRUMENT_AGNOSTIC definitions every identity-bearing field below must
+# be instrument-neutral. Time semantics must name the server/feed clock, not a
+# symbol ("SALIX-BROKER-UTC-TRANSITION-V1", not "...-XAUUSD-..."); dependencies
+# must be role references ("BOUND_ROLE:close"), not "XAUUSD.close". A leaked
+# token is REVIEW_REQUIRED: the field is NOT rewritten, because silently
+# stripping it could erase meaningful semantics.
+#
+# DETECTOR BOUNDARY (declared): lexical. It catches the payload's own bound
+# instrument anywhere in a field, any currency/metal PAIR symbol (6-letter
+# token, 6-letter prefix of a longer token such as "XAUUSDm", or two adjacent
+# code tokens such as "XAU/USD"), metal codes and metal names. It cannot catch
+# an arbitrary alias ("CABLE") or an unknown symbology.
+LEAKAGE_CHECKED_DIMENSIONS = (
+    "normalized_definition_graph", "dependency_closure", "parameters",
+    "declared_normalization", "causal_time_semantics", "completion_semantics",
+    "availability_class", "source_provider", "price_basis",
+    "data_vintage_mode", "timeframe", "scope_universe",
+)
+_CURRENCY_CODES = frozenset("""
+USD EUR JPY GBP AUD NZD CAD CHF SEK NOK DKK PLN HUF CZK TRY ZAR MXN BRL CNY CNH
+HKD SGD INR KRW TWD THB IDR MYR PHP RUB ILS SAR AED KWD QAR BHD OMR CLP COP PEN
+ARS RON BGN HRK ISK UAH KZT EGP NGN KES MAD VND PKR BDT LKR
+XAU XAG XPT XPD BTC ETH
+""".split())
+_METAL_TOKENS = frozenset({"XAU", "XAG", "XPT", "XPD",
+                           "GOLD", "SILVER", "PLATINUM", "PALLADIUM"})
+
+
+def _strings_in(value: Any):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, Mapping):
+        for k, v in value.items():
+            yield str(k)
+            yield from _strings_in(v)
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        for v in value:
+            yield from _strings_in(v)
+    elif value is not None and not isinstance(value, (bool, int, float)):
+        yield str(value)
+
+
+def _is_pair(token: str) -> bool:
+    return (len(token) >= 6 and token[:3] in _CURRENCY_CODES
+            and token[3:6] in _CURRENCY_CODES)
+
+
+def instrument_token_leaks(value: Any, bound_instrument: Any) -> Tuple[str, ...]:
+    """Instrument tokens found in `value`. Empty tuple = instrument-neutral."""
+    bound = re.sub(r"[^A-Z0-9]", "", str(bound_instrument or "").upper())
+    if bound == AGNOSTIC_INSTRUMENT_SCOPE:
+        bound = ""
+    found = []
+    for text in _strings_in(value):
+        text = unicodedata.normalize("NFKC", text).upper()
+        tokens = re.findall(r"[A-Z0-9]+", text)
+        if bound and bound in re.sub(r"[^A-Z0-9]", "", text):
+            found.append(bound)
+        for i, tok in enumerate(tokens):
+            if _is_pair(tok) or tok in _METAL_TOKENS:
+                found.append(tok)
+            if (i + 1 < len(tokens) and tok in _CURRENCY_CODES
+                    and tokens[i + 1] in _CURRENCY_CODES):
+                found.append(tok + tokens[i + 1])
+    return tuple(dict.fromkeys(found))
+
 REQUIRED_DIMENSIONS = tuple(
     name for dims in SUBKEY_DIMENSIONS.values() for name in dims
-)
+) + BINDING_DIMENSIONS
 
 # Dimensions whose collection semantics are declared UNORDERED. A dependency
 # closure is a set: two orderings of the same closure are the same content and
@@ -266,6 +376,29 @@ def completeness_errors(payload: Mapping[str, Any]) -> Tuple[str, ...]:
     if "fitted_state" in declared:
         errors.extend(_fitted_errors(payload.get("fitted_state")))
 
+    if "instrument_applicability" in declared:
+        applicability = payload.get("instrument_applicability")
+        if applicability not in INSTRUMENT_APPLICABILITY_VALUES:
+            # Unclear applicability must never silently choose a shared or a
+            # split identity. It yields no key, so lookup cannot resolve and
+            # the candidate is routed to review.
+            errors.append("INSTRUMENT_APPLICABILITY_REVIEW_REQUIRED:" + str(applicability))
+        instrument = payload.get("instrument")
+        unfitted = payload.get("fitted_state") == UNFITTED_TOKEN
+        if instrument == AGNOSTIC_INSTRUMENT_SCOPE:
+            # ANY is the canonical-row scope of an agnostic UNFITTED definition
+            # only. Specific semantics and learned state need a real binding.
+            if applicability != INSTRUMENT_AGNOSTIC:
+                errors.append("INSTRUMENT_SCOPE_ANY_REQUIRES_AGNOSTIC_APPLICABILITY")
+            elif not unfitted:
+                errors.append("FITTED_STATE_REQUIRES_CONCRETE_INSTRUMENT")
+        if applicability == INSTRUMENT_AGNOSTIC:
+            for name in LEAKAGE_CHECKED_DIMENSIONS:
+                if name in declared:
+                    for tok in instrument_token_leaks(payload.get(name), instrument):
+                        errors.append("INSTRUMENT_TOKEN_LEAKAGE_REVIEW_REQUIRED:"
+                                      + name + ":" + tok)
+
     _scan_forbidden(payload, errors)
 
     # Encoding rules are part of completeness: a payload that cannot be
@@ -286,8 +419,21 @@ def build_content_identity_key(payload: Mapping[str, Any]):
     if errors:
         return None, tuple(errors)
 
-    def sub(name: str) -> str:
+    def _identity_fields(name: str) -> Tuple[str, ...]:
         dims = SUBKEY_DIMENSIONS[name]
+        if name == "SCOPE_ELIGIBILITY" and payload.get("instrument_applicability") == INSTRUMENT_SPECIFIC:
+            # Applicability is encoded in the governed definition: instrument
+            # IS scope identity content.
+            dims = dims + ("instrument",)
+        if name == "FITTED_LEARNED_STATE" and payload.get("fitted_state") != UNFITTED_TOKEN:
+            # Learned state is ALWAYS instrument-qualified, whatever the
+            # definition's applicability: a fitted transform, calibrator or
+            # cache may never silently cross instruments.
+            dims = dims + ("instrument",)
+        return dims
+
+    def sub(name: str) -> str:
+        dims = _identity_fields(name)
         try:
             body = {
                 d: _encode(payload.get(d), unordered=(d in UNORDERED_DIMENSIONS))

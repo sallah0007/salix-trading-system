@@ -9,12 +9,29 @@ from tracker_identity import (
     MANDATORY_DUPLICATE_CONTROL_SCOPES,
     BuiltIdentityCandidate, CanonicalEraBoundary, ClaimRecord,
     FeatureDefinitionRecord,
-    build_content_identity_key, composer_boundary_outcome,
+    build_content_identity_key, composer_boundary_outcome, instrument_token_leaks,
     governed_normalizer, governed_search_policy,
     resolve_governed_normalizer, resolve_governed_normalizer_binding,
     resolve_governed_search_policy,
     safe_intake_built_identity,
 )
+
+import importlib as _importlib
+from unittest import mock as _fixture_mock
+_store_module=_importlib.import_module("tracker_identity.store")
+
+def seed_fixture(store,rows,replace_all=False):
+    """TEST / FIXTURE ONLY (A14). Canonical records have no public writer;
+    this enables the fixture seeder by code replacement for one call."""
+    with _fixture_mock.patch.object(_store_module,"_fixture_seeding_permitted",
+                                    return_value=True):
+        _store_module._fixture_write_records(store,list(rows),replace_all=replace_all)
+    return store
+
+def fixture_store(rows=(),**kw):
+    return seed_fixture(CanonicalIdentityStore(**kw),rows)
+
+
 
 REQUIRED_SCOPES=(
     "current_active","active_on_demand","validation","experimental_unclassified",
@@ -72,7 +89,7 @@ class IdentitySurfaceTests(unittest.TestCase):
 
     def test_era1_lookup_ignores_era0_rows(self):
         legacy=record(); legacy=FeatureIdentity(**{**legacy.__dict__,"era_id":"ERA_0"})
-        result=identity_lookup(store=CanonicalIdentityStore([legacy]),subject=subject(),request_id="REQ-ERA1-ONLY",search_policy=complete_policy(),normalizer=normalizer())
+        result=identity_lookup(store=fixture_store([legacy]),subject=subject(),request_id="REQ-ERA1-ONLY",search_policy=complete_policy(),normalizer=normalizer())
         self.assertEqual(result.outcome,LookupOutcome.ABSENT_IN_ERA_1)
         self.assertTrue(result.lookup_complete)
 
@@ -89,7 +106,7 @@ class IdentitySurfaceTests(unittest.TestCase):
 
     def test_exact_match(self):
         result=identity_lookup(
-            store=CanonicalIdentityStore([record()]),subject=subject(),request_id="REQ-EXACT",
+            store=fixture_store([record()]),subject=subject(),request_id="REQ-EXACT",
             search_policy=complete_policy(),normalizer=normalizer(),
         )
         self.assertTrue(result.lookup_complete)
@@ -97,7 +114,7 @@ class IdentitySurfaceTests(unittest.TestCase):
 
     def test_near_match_requires_review(self):
         result=identity_lookup(
-            store=CanonicalIdentityStore([record(version="2")]),subject=subject(version="1"),
+            store=fixture_store([record(version="2")]),subject=subject(version="1"),
             request_id="REQ-NEAR",search_policy=complete_policy(),normalizer=normalizer(),
         )
         self.assertTrue(result.lookup_complete)
@@ -127,7 +144,7 @@ class IdentitySurfaceTests(unittest.TestCase):
     def test_d1_store_scope_not_declared_cannot_complete(self):
         hidden=record(scope="X")
         result=identity_lookup(
-            store=CanonicalIdentityStore([hidden]),subject=subject(),request_id="REQ-D1",
+            store=fixture_store([hidden]),subject=subject(),request_id="REQ-D1",
             search_policy=complete_policy(),normalizer=normalizer(),
         )
         self.assertFalse(result.lookup_complete)
@@ -138,7 +155,7 @@ class IdentitySurfaceTests(unittest.TestCase):
     def test_d2_superseded_exact_does_not_resolve_exact(self):
         stale=record(current=False,lifecycle="SUPERSEDED")
         result=identity_lookup(
-            store=CanonicalIdentityStore([stale]),subject=subject(),request_id="REQ-D2",
+            store=fixture_store([stale]),subject=subject(),request_id="REQ-D2",
             search_policy=complete_policy(),normalizer=normalizer(),
         )
         self.assertTrue(result.lookup_complete)
@@ -149,7 +166,7 @@ class IdentitySurfaceTests(unittest.TestCase):
         current=record(current=True,lifecycle="CURRENT")
         stale=record(current=False,lifecycle="SUPERSEDED")
         result=identity_lookup(
-            store=CanonicalIdentityStore([current,stale]),subject=subject(),request_id="REQ-D2B",
+            store=fixture_store([current,stale]),subject=subject(),request_id="REQ-D2B",
             search_policy=complete_policy(),normalizer=normalizer(),
         )
         self.assertTrue(result.lookup_complete)
@@ -164,7 +181,7 @@ class IdentitySurfaceTests(unittest.TestCase):
             instrument="EURUSD",timeframe="H1",
         )
         result=identity_lookup(
-            store=CanonicalIdentityStore([stale,survivor]),subject=subject(),request_id="REQ-SURVIVOR",
+            store=fixture_store([stale,survivor]),subject=subject(),request_id="REQ-SURVIVOR",
             search_policy=complete_policy(),normalizer=normalizer(),
         )
         self.assertTrue(result.lookup_complete)
@@ -208,7 +225,7 @@ class IdentitySurfaceTests(unittest.TestCase):
 
     def test_gold_identity_is_not_eurusd_exact_match(self):
         result=identity_lookup(
-            store=CanonicalIdentityStore([record(instrument="XAUUSD")]),
+            store=fixture_store([record(instrument="XAUUSD")]),
             subject=subject(instrument="EURUSD"),request_id="REQ-INSTRUMENT",
             search_policy=complete_policy(),normalizer=normalizer(),
         )
@@ -221,7 +238,7 @@ class IdentitySurfaceTests(unittest.TestCase):
             instrument="EURUSD",timeframe="H1",
         )
         result=identity_lookup(
-            store=CanonicalIdentityStore([validation]),subject=subject(),request_id="REQ-VALID-HIDDEN",
+            store=fixture_store([validation]),subject=subject(),request_id="REQ-VALID-HIDDEN",
             search_policy=complete_policy(),normalizer=normalizer(),
         )
         self.assertEqual(result.outcome,LookupOutcome.ABSENT_IN_ERA_1)
@@ -234,7 +251,7 @@ class IdentitySurfaceTests(unittest.TestCase):
         )
         s=subject(); s["include_validation_scope"]=True
         result=identity_lookup(
-            store=CanonicalIdentityStore([validation]),subject=s,request_id="REQ-VALID-EXPLICIT",
+            store=fixture_store([validation]),subject=s,request_id="REQ-VALID-EXPLICIT",
             search_policy=complete_policy(),normalizer=normalizer(),
         )
         self.assertEqual(result.outcome,LookupOutcome.EXACT_CANONICAL_IDENTITY)
@@ -250,7 +267,7 @@ class IdentitySurfaceTests(unittest.TestCase):
             lifecycle_state="CURRENT",is_current=True,scope="current_active",era_id="ERA_1",
             instrument="EURUSD",timeframe="H1",
         )
-        store=CanonicalIdentityStore([v1,v2])
+        store=fixture_store([v1,v2])
         sweep=stale_state_sweep(store=store,search_policy=complete_policy(),normalizer=normalizer())
         self.assertTrue(sweep.clean)
         old=identity_lookup(store=store,subject=subject(version="1"),request_id="REQ-V1",search_policy=complete_policy(),normalizer=normalizer())
@@ -265,7 +282,7 @@ class IdentitySurfaceTests(unittest.TestCase):
             lifecycle_state="VALIDATION_ONLY",is_current=True,scope="validation",era_id="ERA_1",
         )
         sweep=stale_state_sweep(
-            store=CanonicalIdentityStore([bad]),search_policy=complete_policy(),normalizer=normalizer(),
+            store=fixture_store([bad]),search_policy=complete_policy(),normalizer=normalizer(),
         )
         self.assertFalse(sweep.clean)
         self.assertTrue(any("VALIDATION_SCOPE_NONCURRENT_LIFECYCLE" in d for d in sweep.defects))
@@ -276,14 +293,14 @@ class IdentitySurfaceTests(unittest.TestCase):
             lifecycle_state="CURRENT",is_current=False,scope="validation",era_id="ERA_1",
         )
         sweep=stale_state_sweep(
-            store=CanonicalIdentityStore([bad]),search_policy=complete_policy(),normalizer=normalizer(),
+            store=fixture_store([bad]),search_policy=complete_policy(),normalizer=normalizer(),
         )
         self.assertFalse(sweep.clean)
         self.assertTrue(any("VALIDATION_SCOPE_NONCURRENT_IDENTITY" in d for d in sweep.defects))
 
     def test_stale_superseded_current_fails_sweep(self):
         sweep=stale_state_sweep(
-            store=CanonicalIdentityStore([record(current=True,lifecycle="SUPERSEDED")]),
+            store=fixture_store([record(current=True,lifecycle="SUPERSEDED")]),
             search_policy=complete_policy(),normalizer=normalizer(),
         )
         self.assertFalse(sweep.clean)
@@ -295,7 +312,7 @@ class IdentitySurfaceTests(unittest.TestCase):
             dependencies=("missing.feature",),
         )
         sweep=stale_state_sweep(
-            store=CanonicalIdentityStore([bad]),search_policy=complete_policy(),normalizer=normalizer(),
+            store=fixture_store([bad]),search_policy=complete_policy(),normalizer=normalizer(),
         )
         self.assertFalse(sweep.clean)
 
@@ -305,7 +322,7 @@ class IdentitySurfaceTests(unittest.TestCase):
             lifecycle_state="CURRENT",is_current=True,scope="current_active",
         )
         sweep=stale_state_sweep(
-            store=CanonicalIdentityStore([fixture]),search_policy=complete_policy(),normalizer=normalizer(),
+            store=fixture_store([fixture]),search_policy=complete_policy(),normalizer=normalizer(),
         )
         self.assertFalse(sweep.clean)
 
@@ -313,7 +330,7 @@ class IdentitySurfaceTests(unittest.TestCase):
         a=FeatureIdentity("feature.a","1","1","1","CURRENT",True,"current_active",aliases=("shared.alias",))
         b=FeatureIdentity("feature.b","1","2","2","CURRENT",True,"current_active",aliases=("shared.alias",))
         sweep=stale_state_sweep(
-            store=CanonicalIdentityStore([a,b]),search_policy=complete_policy(),normalizer=normalizer(),
+            store=fixture_store([a,b]),search_policy=complete_policy(),normalizer=normalizer(),
         )
         self.assertFalse(sweep.clean)
 
@@ -339,6 +356,7 @@ GATE_CONTENT={
     "instrument":"XAUUSD","timeframe":"H1",
     "scope_universe":"XAUUSD/ERA_1",
     "fitted_state":"NONE",
+    "instrument_applicability":"INSTRUMENT_SPECIFIC",
 }
 
 class _Clock:
@@ -405,6 +423,7 @@ def gate_candidate(feature_id="gold.logret",claim_request_id=None,**changes):
         price_basis="BID",data_vintage_mode="CURRENT_RECOMPUTED",
         scope_universe="XAUUSD/ERA_1",parameters={"lookback_bars":2},
         fitted_state="NONE",proxy_status="NOT_PROXY",
+        instrument_applicability="INSTRUMENT_SPECIFIC",
         claim_request_id=claim_request_id,
     )
     vals.update(changes)
@@ -438,7 +457,7 @@ def keyed_row(key,feature_id="gold.logret.imported",current=True,scope="current_
     )
 
 def verified_store(records=()):
-    store=CanonicalIdentityStore(list(records))
+    store=fixture_store(list(records))
     for sc in MANDATORY_DUPLICATE_CONTROL_SCOPES:
         store.declare_scope(sc,"EMPTY_VERIFIED")
     return store
@@ -754,7 +773,7 @@ class GateHardeningNegativeControls(unittest.TestCase):
         store=CanonicalIdentityStore()
         key=gate_key()
         governed_claim(store,"REQ-STALE")
-        store.add(keyed_row(key))                   # arrives by the import path
+        seed_fixture(store,[keyed_row(key)])   # stands in for a governed import (fixture seeder)
         r=gate_intake(store,gate_candidate("gold.logret.stale",claim_request_id="REQ-STALE"))
         self.assertFalse(r.accepted)
         self.assertTrue(any("IDENTITY_APPEARED_SINCE_CLAIM" in e for e in r.errors),r.errors)
@@ -762,7 +781,7 @@ class GateHardeningNegativeControls(unittest.TestCase):
 
     def test_NC24_canonical_survivor_handling_remains_fail_closed(self):
         orphan=record(version="1",current=False,lifecycle="SUPERSEDED",survivor="missing.feature")
-        result=identity_lookup(store=CanonicalIdentityStore([orphan]),subject=subject(),
+        result=identity_lookup(store=fixture_store([orphan]),subject=subject(),
                                request_id="REQ-SURV",search_policy=complete_policy(),
                                normalizer=normalizer())
         self.assertEqual(result.outcome,LookupOutcome.INCOMPLETE_LOOKUP)
@@ -1090,7 +1109,8 @@ class IssuanceAuthenticityCR1CR2(unittest.TestCase):
     became caller-selected. Both reproduced as full canonical row writes.
 
     Authenticity is now equality with an exact snapshot held by a closure-owned
-    per-store ledger that no caller-reachable container can reach.
+    per-store ledger that no ordinary caller API or data container reaches.
+    Closure reflection, gc and ctypes are out of boundary (declared residual).
     """
 
     def _genuine(self,store=None,request_id="REQ-GEN"):
@@ -1445,13 +1465,15 @@ class IssuanceAuthenticityCR1CR2(unittest.TestCase):
         self.assertTrue(error2.startswith("CLAIM_CONTENT_IDENTITY_ALREADY_PRESENT"),error2)
 
     # 12 ----------------------------------------------------------------
-    def test_C12_import_path_residual_remains_open_and_untouched(self):
-        """Recorded, not fixed: store.add()/extend() still write rows without a
-        claim. IMPORT_PATH_AUTHORITY_RESIDUAL = OPEN. This test pins the fact so
-        that a later fix is a deliberate, visible change."""
+    def test_C12_claimless_ordinary_writers_are_closed(self):
+        """DC-006 inverted this pin: store.add()/extend() no longer exist and the
+        records view is read-only (A14 ordinary claimless paths CLOSED)."""
         store=CanonicalIdentityStore()
-        store.add(keyed_row(gate_key()))
-        self.assertEqual(len(store.all()),1)
+        self.assertFalse(hasattr(store,"add"))
+        self.assertFalse(hasattr(store,"extend"))
+        with self.assertRaises(AttributeError):
+            store.records.append(keyed_row(gate_key()))
+        self.assertEqual(store.all(),())
 
 class WeakrefAndStoreOwnedTime004(unittest.TestCase):
     """DC-004 controls, migrated in DC-005 to the test-only time mechanism.
@@ -1641,9 +1663,9 @@ class WeakrefAndStoreOwnedTime004(unittest.TestCase):
         self.assertFalse(genuine.provenance.authorizes_construction)
         self.assertEqual(resolve_governed_search_policy(governed_search_policy()),())
         self.assertEqual(resolve_governed_normalizer(governed_normalizer()),())
-        residual=CanonicalIdentityStore()
-        residual.add(keyed_row(gate_key()))
-        self.assertEqual(len(residual.all()),1)
+        closed=CanonicalIdentityStore()
+        self.assertFalse(hasattr(closed,"add"))         # A14 closed in DC-006
+        self.assertEqual(closed.all(),())
 
 
 class ClockIsolationPublicWeakref005(unittest.TestCase):
@@ -1670,7 +1692,13 @@ class ClockIsolationPublicWeakref005(unittest.TestCase):
             func.__self__               -> must NOT be the ledger
         At aaec2c4 this route returned `dict.pop` bound to the ledger and a
         forged claim written through it committed a row. weakref.finalize.
-        _registry is deliberately NOT used anywhere in this test."""
+        _registry is deliberately NOT used anywhere in this test.
+
+        BOUNDARY (DC-006 Correction D). This closes the PUBLIC weakref route
+        only. Type-1 in-process authority = integrity-against-accident, NOT
+        security against adversarial same-process Python code: closure-cell
+        reflection, gc traversal and ctypes can still reach the ledger. That is
+        a declared out-of-boundary residual; this test makes no claim about it."""
         import weakref
         from dataclasses import replace
         store,genuine=self._genuine(request_id="REQ-PUB")
@@ -1832,13 +1860,13 @@ class ClockIsolationPublicWeakref005(unittest.TestCase):
         self.assertEqual(store_module._ledger_state(store,g.claim_id),"RELEASED")
 
     def test_NC13b_consume_cannot_falsify_a_registration(self):
-        """Even with the identity planted in records by the A14 route and a
+        """Even with the identity planted in records by the test fixture seeder and a
         genuine ACTIVE claim, consumption is refused: there is no construction
         authority, so no registration happened."""
         from tracker_identity import store as store_module
         store,g=self._genuine(request_id="REQ-CON")
         planted=keyed_row(gate_key())
-        store.add(planted)
+        seed_fixture(store,[planted])
         self.assertFalse(store_module._consume_claim(store,g.claim_id,planted))
         self.assertEqual(store_module._ledger_state(store,g.claim_id),"ACTIVE")
         self.assertEqual(store.claims[0].release_reason,None)
@@ -1858,8 +1886,8 @@ class ClockIsolationPublicWeakref005(unittest.TestCase):
                          (g.claim_id,),()):
                 try:
                     fn(store,*args)
-                except TypeError:
-                    pass
+                except (TypeError,PermissionError):
+                    pass    # refused: wrong shape, or the fixture seeder is disabled
         self.assertNotEqual(store_module._ledger_state(store,g.claim_id),"EXPIRED")
 
     # NC-14 / NC-15 / NC-16 --------------------------------------------
@@ -1870,9 +1898,804 @@ class ClockIsolationPublicWeakref005(unittest.TestCase):
         self.assertTrue(any("CLAIM_NOT_CONSTRUCTION_AUTHORIZED" in e for e in r.errors))
         self.assertEqual(resolve_governed_search_policy(governed_search_policy()),())
         self.assertEqual(resolve_governed_normalizer(governed_normalizer()),())
-        residual=CanonicalIdentityStore()
-        residual.add(keyed_row(gate_key()))
-        self.assertEqual(len(residual.all()),1)   # A14 OPEN, untouched
+        closed=CanonicalIdentityStore()
+        self.assertFalse(hasattr(closed,"extend"))      # A14 closed in DC-006
+        self.assertEqual(closed.all(),())
+
+class ConstructionConsumptionKillB006(unittest.TestCase):
+    """DC-006 Correction B — permanent kills for D10/D11/D12/D13/A15.
+
+    The construction-consumption path is unreachable in production:
+    _governed_construction_authority() returns False. These tests reach it ONLY
+    by replacing that FUNCTION under unittest.mock (code replacement = test
+    instrumentation). No public construction-authority surface is added.
+    """
+
+    def _authorized(self,request_id="REQ-B6"):
+        """A claim issued while the construction-authority SOURCE is replaced.
+        The patch is scoped to issuance only and removed before returning."""
+        from unittest import mock
+        from tracker_identity import store as store_module
+        store=CanonicalIdentityStore()
+        with mock.patch.object(store_module,"_governed_construction_authority",
+                               return_value=True):
+            governed_claim(store,request_id)
+        self.assertIs(store.claims[0].provenance.authorizes_construction,True)
+        return store,store.claims[0]
+
+    def test_B0_production_never_issues_construction_authority(self):
+        from tracker_identity import store as store_module
+        self.assertIs(store_module._governed_construction_authority({}),False)
+        store=CanonicalIdentityStore()
+        governed_claim(store,"REQ-B0")
+        self.assertIs(store.claims[0].provenance.authorizes_construction,False)
+
+    def test_B0b_truthy_non_true_source_is_not_authority(self):
+        from unittest import mock
+        from tracker_identity import store as store_module
+        store=CanonicalIdentityStore()
+        with mock.patch.object(store_module,"_governed_construction_authority",
+                               return_value="YES"):
+            governed_claim(store,"REQ-B0B")
+        self.assertIs(store.claims[0].provenance.authorizes_construction,False)
+
+    def test_A15_authorized_registration_consumes_the_claim(self):
+        from tracker_identity import store as store_module
+        store,claim=self._authorized("REQ-A15")
+        r=gate_intake(store,gate_candidate(claim_request_id="REQ-A15"))
+        self.assertTrue(r.accepted,r.errors)
+        self.assertEqual(len(store.all()),1)
+        self.assertEqual(store_module._ledger_state(store,claim.claim_id),"RELEASED")
+        self.assertEqual(store.claims[0].state,"RELEASED")
+        self.assertEqual(store.claims[0].release_reason,"REGISTRATION_COMPLETED")
+        # A consumed claim is terminal: it cannot register a second identity.
+        again=gate_intake(store,gate_candidate("gold.logret.2",claim_request_id="REQ-A15"))
+        self.assertFalse(again.accepted)
+        self.assertEqual(len(store.all()),1)
+
+    def test_B_positive_control_direct_consume_succeeds_when_all_hold(self):
+        """Proves D10-D13 below are not vacuous: with every precondition true,
+        direct consumption DOES succeed."""
+        from tracker_identity import store as store_module
+        store,claim=self._authorized("REQ-POS")
+        row=keyed_row(gate_key())
+        seed_fixture(store,[row])
+        self.assertTrue(store_module._consume_claim(store,claim.claim_id,row))
+        self.assertEqual(store_module._ledger_state(store,claim.claim_id),"RELEASED")
+
+    def test_D10_expired_authorized_claim_is_not_consumed(self):
+        from tracker_identity import store as store_module
+        clock=_Clock(datetime.now(timezone.utc))
+        install_test_clock(self,clock)
+        store,claim=self._authorized("REQ-D10")
+        row=keyed_row(gate_key())
+        seed_fixture(store,[row])
+        clock.advance(10_000)
+        store_module._expire_due_claims(store)
+        self.assertEqual(store_module._ledger_state(store,claim.claim_id),"EXPIRED")
+        self.assertFalse(store_module._consume_claim(store,claim.claim_id,row))
+        self.assertEqual(store_module._ledger_state(store,claim.claim_id),"EXPIRED")
+
+    def test_D11_tampered_mirror_is_not_consumed(self):
+        from dataclasses import replace
+        from tracker_identity import store as store_module
+        store,claim=self._authorized("REQ-D11")
+        row=keyed_row(gate_key())
+        seed_fixture(store,[row])
+        store.claims[0]=replace(claim,issuer="ATTACKER")
+        self.assertFalse(store_module._consume_claim(store,claim.claim_id,row))
+        self.assertEqual(store_module._ledger_state(store,claim.claim_id),"ACTIVE")
+
+    def test_D12_identity_not_in_records_is_not_consumed(self):
+        from tracker_identity import store as store_module
+        store,claim=self._authorized("REQ-D12")
+        row=keyed_row(gate_key())
+        seed_fixture(store,[keyed_row(gate_key())])   # equal, but not the same object
+        self.assertFalse(store_module._consume_claim(store,claim.claim_id,row))
+        self.assertFalse(store_module._consume_claim(store,claim.claim_id,None))
+        self.assertEqual(store_module._ledger_state(store,claim.claim_id),"ACTIVE")
+
+    def test_D13_identity_with_other_content_key_is_not_consumed(self):
+        from tracker_identity import store as store_module
+        store,claim=self._authorized("REQ-D13")
+        other=keyed_row(gate_key(timeframe="H4"),feature_id="gold.other")
+        seed_fixture(store,[other])
+        self.assertFalse(store_module._consume_claim(store,claim.claim_id,other))
+        self.assertEqual(store_module._ledger_state(store,claim.claim_id),"ACTIVE")
+
+    def test_B_construction_authorized_path_still_absent_in_source(self):
+        """CONSTRUCTION_AUTHORIZED_PATH_EXISTS = NO: no production literal grant."""
+        import inspect,pathlib,re
+        src=pathlib.Path(__file__).resolve().parents[1]/"tracker_identity"
+        for f in src.glob("*.py"):
+            text=f.read_text(encoding="utf-8")
+            self.assertIsNone(re.search(r"authorizes_construction\s*=\s*True",text),f.name)
+        from tracker_identity import store as store_module
+        body=inspect.getsource(store_module._governed_construction_authority)
+        self.assertIn("return False",body)
+        self.assertNotIn("return True",body)
+
+
+class ReservedReasonLookalikesM2006(unittest.TestCase):
+    """DC-006 non-blocking M-2: reserved-reason lookalikes are refused."""
+
+    def test_M2_lookalikes_refused_ordinary_reasons_accepted(self):
+        from tracker_identity import store as store_module
+        for n,reason in enumerate(("ttl_expired","TTL-EXPIRED","Ttl Expired",
+                                   "ＴＴＬ＿ＥＸＰＩＲＥＤ",
+                                   "TTL_EXPIRED​","registration.completed",
+                                   "REGISTRATION_COMPLETED	")):
+            store=CanonicalIdentityStore()
+            governed_claim(store,"REQ-M2-%d"%n)
+            cid=store.claims[0].claim_id
+            self.assertFalse(store.release_claim(claim_id=cid,reason=reason),repr(reason))
+            self.assertEqual(store_module._ledger_state(store,cid),"ACTIVE",repr(reason))
+        for n,reason in enumerate(("DONE","TTL expired early - withdrawn","WITHDRAWN")):
+            store=CanonicalIdentityStore()
+            governed_claim(store,"REQ-M2-OK-%d"%n)
+            cid=store.claims[0].claim_id
+            self.assertTrue(store.release_claim(claim_id=cid,reason=reason),repr(reason))
+
+
+class ClaimlessWritePathsClosedA14006(unittest.TestCase):
+    """DC-006 Correction C — A14. Canonical-identity write-path inventory:
+
+      GOVERNED REGISTRATION    store.commit_registration -> store-owned txn
+      GOVERNED IMPORT          import_identity_content -> store-owned import
+                               commit that RE-RUNS the whole contract
+      GOVERNED TRANSITION      transition_authority_state -> store-owned
+                               transition commit (replacement, not creation)
+      TEST / FIXTURE ONLY      _fixture_write_records, disabled unless
+                               _fixture_seeding_permitted is code-replaced
+      UNGOVERNED BYPASS        none reachable by ordinary calls; store.add,
+                               store.extend, records=[...] seeding and public
+                               list mutation were removed
+    """
+
+    def test_A14_1_ordinary_writers_do_not_exist(self):
+        store=CanonicalIdentityStore()
+        for name in ("add","extend","append","insert","set_records","load"):
+            self.assertFalse(hasattr(store,name),name)
+        self.assertIsInstance(store.records,tuple)
+        with self.assertRaises(AttributeError):
+            store.records=[keyed_row(gate_key())]
+        with self.assertRaises(AttributeError):
+            store.records.append(keyed_row(gate_key()))
+        self.assertEqual(store.all(),())
+
+    def test_A14_2_constructor_cannot_seed_records(self):
+        with self.assertRaises(TypeError):
+            CanonicalIdentityStore([keyed_row(gate_key())])
+        with self.assertRaises(TypeError):
+            CanonicalIdentityStore(records=[keyed_row(gate_key())])
+
+    def test_A14_3_fixture_seeder_refuses_in_production(self):
+        from tracker_identity import store as store_module
+        store=CanonicalIdentityStore()
+        self.assertIs(store_module._fixture_seeding_permitted(),False)
+        with self.assertRaises(PermissionError):
+            store_module._fixture_write_records(store,[keyed_row(gate_key())])
+        with self.assertRaises(PermissionError):
+            store_module._fixture_write_records(store,[keyed_row(gate_key())],replace_all=True)
+        self.assertEqual(store.all(),())
+
+    def test_A14_3b_truthy_non_true_permission_is_refused(self):
+        from unittest import mock
+        from tracker_identity import store as store_module
+        store=CanonicalIdentityStore()
+        with mock.patch.object(store_module,"_fixture_seeding_permitted",return_value="YES"):
+            with self.assertRaises(PermissionError):
+                store_module._fixture_write_records(store,[keyed_row(gate_key())])
+        self.assertEqual(store.all(),())
+
+    def test_A14_4_fixture_seeder_is_available_to_tests(self):
+        from tracker_identity import store as store_module
+        store=fixture_store([keyed_row(gate_key())])
+        self.assertEqual(len(store.all()),1)
+        self.assertIs(store_module._fixture_seeding_permitted(),False)  # patch scoped
+        seed_fixture(store,[keyed_row(gate_key(timeframe="H4"),feature_id="r")],replace_all=True)
+        self.assertEqual([r.feature_id for r in store.all()],["r"])
+
+    def test_A14_5_records_view_is_a_snapshot(self):
+        store=fixture_store([keyed_row(gate_key())])
+        view=store.records
+        seed_fixture(store,[keyed_row(gate_key(timeframe="H4"),feature_id="x")])
+        self.assertEqual(len(view),1)
+        self.assertEqual(len(store.records),2)
+
+    def test_A14_6_staging_copy_refuses_every_authority_operation(self):
+        from tracker_identity import store as store_module
+        base=fixture_store([keyed_row(gate_key(timeframe="H4"),feature_id="b")])
+        staged=store_module._staging_copy(base,extra_records=(keyed_row(gate_key()),))
+        self.assertTrue(store_module._is_staged(staged))
+        self.assertFalse(store_module._is_staged(base))
+        self.assertEqual(len(staged.records),2)
+        self.assertEqual(len(base.records),1)            # base untouched
+        empty_staged=store_module._staging_copy(CanonicalIdentityStore())
+        r=governed_lookup_raw(empty_staged,"REQ-STG")
+        self.assertIsNone(r.absent_claim_token)
+        self.assertTrue(any("STORE_IS_STAGING_COPY" in e for e in r.errors),r.errors)
+        self.assertEqual(empty_staged.claims,[])
+        ok,err=staged.commit_registration(identity=keyed_row(gate_key()),creation=None,
+                                          content_key_composite=gate_key().composite,
+                                          request_id="REQ-STG")
+        self.assertFalse(ok); self.assertEqual(err,"STORE_IS_STAGING_COPY")
+        ok,_,errs=store_module._commit_governed_transition(
+            staged,key=("b","1","ERA_1"),from_state="CURRENT",transition=None)
+        self.assertFalse(ok); self.assertIn("STORE_IS_STAGING_COPY",errs)
+        self.assertEqual(len(staged.records),2)
+
+    def test_A14_7_registration_commit_without_claim_is_refused(self):
+        from tracker_identity import store as store_module
+        store=CanonicalIdentityStore()
+        row=keyed_row(gate_key())
+        for rid,ck in (("",gate_key().composite),("REQ",""),("REQ-NONE",gate_key().composite)):
+            ok,_=store_module._commit_governed_registration(
+                store,identity=row,creation=None,content_key_composite=ck,request_id=rid)
+            self.assertFalse(ok)
+        # Genuine claim, but no construction authority: still refused.
+        governed_claim(store,"REQ-GEN7")
+        ok,err=store_module._commit_governed_registration(
+            store,identity=row,creation=None,content_key_composite=gate_key().composite,
+            request_id="REQ-GEN7")
+        self.assertFalse(ok); self.assertEqual(err,"CLAIM_NOT_CONSTRUCTION_AUTHORIZED")
+        self.assertEqual(store.all(),())
+
+    def test_A14_8_transition_commit_cannot_inject_a_caller_record(self):
+        """The transition commit takes a transition, never a replacement row,
+        and re-checks the structural invariants on its own."""
+        import inspect
+        from tracker_identity import store as store_module
+        from tracker_identity.transition import (GovernedStateTransitionRecord,
+                                                 TransitionClass)
+        params=set(inspect.signature(store_module._commit_governed_transition).parameters)
+        self.assertEqual(params,{"store","key","from_state","transition"})
+        store=fixture_store([keyed_row(gate_key(),feature_id="t")])
+        def tr(**over):
+            v=dict(transition_id="T1",segment_id="TRACKER",object_id="t",
+                   object_version="1",era_id="ERA_1",from_state="CURRENT",
+                   to_state="QUARANTINED",transition_class=TransitionClass.QUARANTINE,
+                   reason_class="R",reason_ref="r",evidence_ref=None,changed_ts="x",
+                   changed_by="M",authority_ref="a",record_version="1",
+                   prior_transition_id="NO-CREATION")
+            v.update(over); return GovernedStateTransitionRecord(**v)
+        key=("t","1","ERA_1")
+        cases=(("not-a-record","TRANSITION_RECORD_TYPE_INVALID"),
+               (tr(object_id="u"),"TRANSITION_OBJECT_KEY_MISMATCH"),
+               (tr(to_state="CURRENT"),"TRANSITION_FROM_TO_STATE_INVALID"),
+               (tr(to_state="BOGUS"),"UNKNOWN_TO_STATE"),
+               (tr(),"PRIOR_TRANSITION_ID_MISMATCH"))
+        for t,code in cases:
+            ok,_,errs=store_module._commit_governed_transition(
+                store,key=key,from_state="CURRENT",transition=t)
+            self.assertFalse(ok,code); self.assertIn(code,errs)
+        ok,_,errs=store_module._commit_governed_transition(
+            store,key=key,from_state="SUPERSEDED",
+            transition=tr(from_state="SUPERSEDED"))
+        self.assertFalse(ok); self.assertIn("FROM_STATE_MISMATCH",errs)
+        self.assertEqual(store.records[0].lifecycle_state,"CURRENT")
+        self.assertEqual(store.transitions,[])
+
+    def test_A14_8b_transition_commit_rechecks_chain_duplicates_and_uniqueness(self):
+        """Kills store-level transition mutants the public wrapper would mask:
+        the store-owned commit re-checks prior chain, duplicate transition id
+        and unique object match ON ITS OWN."""
+        from tracker_identity import store as store_module
+        from tracker_identity.transition import (CreationProvenanceRecord,
+                                                 GovernedStateTransitionRecord,
+                                                 TransitionClass)
+        creation=CreationProvenanceRecord("C1","TRACKER","t","1","ERA_1","CURRENT",
+                                          "r","x","M","a")
+        def tr(**over):
+            v=dict(transition_id="T1",segment_id="TRACKER",object_id="t",
+                   object_version="1",era_id="ERA_1",from_state="CURRENT",
+                   to_state="QUARANTINED",transition_class=TransitionClass.QUARANTINE,
+                   reason_class="R",reason_ref="r",evidence_ref=None,changed_ts="x",
+                   changed_by="M",authority_ref="a",record_version="1",
+                   prior_transition_id="C1")
+            v.update(over); return GovernedStateTransitionRecord(**v)
+        key=("t","1","ERA_1")
+        def fresh():
+            store=fixture_store([keyed_row(gate_key(),feature_id="t")])
+            store.add_creation(creation)
+            return store
+        store=fresh()
+        ok,_,errs=store_module._commit_governed_transition(
+            store,key=key,from_state="CURRENT",transition=tr(prior_transition_id="WRONG"))
+        self.assertFalse(ok); self.assertIn("PRIOR_TRANSITION_ID_MISMATCH",errs)
+        store=fresh()
+        store.add_transition(tr(transition_id="T1",object_id="elsewhere"))
+        ok,_,errs=store_module._commit_governed_transition(
+            store,key=key,from_state="CURRENT",transition=tr())
+        self.assertFalse(ok); self.assertIn("DUPLICATE_TRANSITION_ID",errs)
+        store=fixture_store([keyed_row(gate_key(),feature_id="t"),
+                             keyed_row(gate_key(),feature_id="t")])
+        store.add_creation(creation)
+        ok,_,errs=store_module._commit_governed_transition(
+            store,key=key,from_state="CURRENT",transition=tr())
+        self.assertFalse(ok); self.assertIn("TRACKED_OBJECT_NOT_UNIQUE_OR_NOT_FOUND",errs)
+        self.assertTrue(all(r.lifecycle_state=="CURRENT" for r in store.records))
+        # Positive control: the same commit succeeds when every invariant holds,
+        # and the replacement row is DERIVED from the transition.
+        store=fresh()
+        ok,updated,errs=store_module._commit_governed_transition(
+            store,key=key,from_state="CURRENT",transition=tr())
+        self.assertTrue(ok,errs)
+        self.assertEqual(updated.lifecycle_state,"QUARANTINED")
+        self.assertFalse(updated.is_current)
+        self.assertIs(store.records[0],updated)
+        self.assertEqual(len(store.transitions),1)
+
+    def test_A14_9_no_production_module_writes_records_outside_the_store(self):
+        """Source inventory: canonical records are written only inside the
+        store-owned closure writers."""
+        import pathlib,re
+        src=pathlib.Path(__file__).resolve().parents[1]/"tracker_identity"
+        write=re.compile(r"records\s*(\[[^\]]*\]\s*=(?!=)|\.(append|extend|insert|pop|remove|clear)\(|\+=)")
+        hits=0
+        for f in src.glob("*.py"):
+            for n,line in enumerate(f.read_text(encoding="utf-8").splitlines(),1):
+                code=line.split("#",1)[0]
+                if re.search(r"(errors|creation_records|searched_records)",code):
+                    continue
+                if write.search(code):
+                    hits+=1
+                    self.assertEqual(f.name,"store.py",f"{f.name}:{n}: {line.strip()}")
+        self.assertGreater(hits,0)   # the scan is live, not vacuous
+
+class InstrumentIdentityCorrectionA006(unittest.TestCase):
+    """DC-006 Correction A — shared instrument-binding vs canonical-identity rule.
+
+    Composer V9 §39.4 (line 2054, verified at source): "INSTRUMENT / UNIVERSE /
+    SCOPE difference = PAYLOAD_BINDING unless semantics change; if semantics
+    change or are unclear, REVIEW_REQUIRED." Frozen Tracker Core: SCOPE /
+    ELIGIBILITY-DEFINITION holds instrument only "where encoded in the governed
+    feature definition"; §7 cross-instrument access is DEFAULT DENY.
+    """
+
+    # DC-006R: an agnostic definition must be instrument-neutral in EVERY
+    # identity-bearing field. Time semantics name the server/feed clock.
+    NEUTRAL_TIME="SALIX-BROKER-SERVER-UTC-TRANSITION-V1"
+    AGNOSTIC=dict(instrument_applicability="INSTRUMENT_AGNOSTIC",
+                  scope_universe="FX_METALS/ERA_1",
+                  causal_time_semantics=NEUTRAL_TIME)
+    SPECIFIC=dict(instrument_applicability="INSTRUMENT_SPECIFIC")
+    FITTED={"fitted_parameters":{"mu":0.1,"sigma":0.02},"fitting_window":"2020-2024"}
+
+    def _content(self,**over):
+        c=dict(GATE_CONTENT); c.update(over); return c
+
+    def _key(self,**over):
+        key,errors=build_content_identity_key(self._content(**over))
+        return key,errors
+
+    def _lookup(self,store,instrument,request_id="REQ-A6",**over):
+        return identity_lookup(
+            store=store,
+            subject=pre_id_subject(instrument=instrument,
+                                   content=dict(instrument=instrument,**over)),
+            request_id=request_id,search_policy=governed_search_policy(),
+            normalizer=governed_normalizer())
+
+    def _row(self,key,instrument,feature_id="gold.shared"):
+        from dataclasses import replace
+        return replace(keyed_row(key,feature_id=feature_id),instrument=instrument)
+
+    # I1 ----------------------------------------------------------------
+    def test_I1_same_semantics_different_bound_instrument_does_not_split(self):
+        kx,ex=self._key(instrument="XAUUSD",**self.AGNOSTIC)
+        ke,ee=self._key(instrument="EURUSD",**self.AGNOSTIC)
+        self.assertEqual((ex,ee),((),()))
+        self.assertEqual(kx.composite,ke.composite)
+        self.assertEqual(kx.scope_eligibility,ke.scope_eligibility)
+        self.assertEqual(kx.definition_semantics,ke.definition_semantics)
+        # End to end: an EURUSD-bound request resolves the SAME canonical
+        # identity first registered under XAUUSD — no new identity is minted.
+        store=verified_store([self._row(kx,"ANY")])
+        r=self._lookup(store,"EURUSD",**self.AGNOSTIC)
+        self.assertEqual(r.outcome,LookupOutcome.EXACT_CANONICAL_IDENTITY)
+        self.assertIsNone(r.absent_claim_token)
+        self.assertEqual(store.claims,[])
+
+    # I2 ----------------------------------------------------------------
+    def test_I2_instrument_specific_semantics_remain_identity_content(self):
+        kx,_=self._key(instrument="XAUUSD",**self.SPECIFIC)
+        ke,_=self._key(instrument="EURUSD",**self.SPECIFIC)
+        self.assertNotEqual(kx.composite,ke.composite)
+        self.assertNotEqual(kx.scope_eligibility,ke.scope_eligibility)
+        # Same definition body: this is a RELATED identity, routed to review —
+        # never silently merged, never silently treated as unrelated.
+        self.assertEqual(kx.definition_semantics,ke.definition_semantics)
+        store=verified_store([self._row(kx,"XAUUSD")])
+        r=self._lookup(store,"EURUSD",**self.SPECIFIC)
+        self.assertEqual(r.outcome,LookupOutcome.NEAR_MATCH)
+        self.assertEqual(r.pending_collision_result,
+                         "RELATED_VERSION_CONTENT_REVIEW_REQUIRED")
+        self.assertIsNone(r.absent_claim_token)
+
+    def test_I2b_declared_applicability_is_itself_scope_content(self):
+        neutral=dict(scope_universe="FX_METALS/ERA_1",causal_time_semantics=self.NEUTRAL_TIME)
+        ka,_=self._key(instrument="XAUUSD",instrument_applicability="INSTRUMENT_AGNOSTIC",**neutral)
+        ks,_=self._key(instrument="XAUUSD",instrument_applicability="INSTRUMENT_SPECIFIC",**neutral)
+        self.assertNotEqual(ka.scope_eligibility,ks.scope_eligibility)
+        self.assertEqual(ka.definition_semantics,ks.definition_semantics)
+
+    # I3 ----------------------------------------------------------------
+    def test_I3_unclear_applicability_cannot_share_or_split_silently(self):
+        missing=self._content(instrument="XAUUSD")
+        missing.pop("instrument_applicability")
+        key,errors=build_content_identity_key(missing)
+        self.assertIsNone(key)
+        self.assertIn("CONTENT_DIMENSION_MISSING:instrument_applicability",errors)
+        for unclear in ("MAYBE","","  ",None,"instrument_agnostic",
+                        "INSTRUMENT_AGNOSTIC ","AGNOSTIC","SPECIFIC",True,1):
+            key,errors=self._key(instrument="XAUUSD",instrument_applicability=unclear)
+            self.assertIsNone(key,repr(unclear))
+            self.assertTrue(errors,repr(unclear))
+        # End to end: unclear routes to review — incomplete, and no claim.
+        store=verified_store()
+        r=self._lookup(store,"XAUUSD",instrument_applicability="MAYBE")
+        self.assertEqual(r.outcome,LookupOutcome.INCOMPLETE_LOOKUP)
+        self.assertTrue(any("INSTRUMENT_APPLICABILITY_REVIEW_REQUIRED" in e
+                            for e in r.errors),r.errors)
+        self.assertIsNone(r.absent_claim_token)
+        self.assertEqual(store.claims,[])
+
+    # I4 ----------------------------------------------------------------
+    def test_I4_fitted_state_never_crosses_instruments(self):
+        """Reusable definition, but learned state is always instrument-qualified,
+        even for an instrument-AGNOSTIC definition (frozen §7 default deny)."""
+        kx,ex=self._key(instrument="XAUUSD",fitted_state=self.FITTED,**self.AGNOSTIC)
+        ke,ee=self._key(instrument="EURUSD",fitted_state=self.FITTED,**self.AGNOSTIC)
+        self.assertEqual((ex,ee),((),()))
+        self.assertEqual(kx.definition_semantics,ke.definition_semantics)
+        self.assertEqual(kx.scope_eligibility,ke.scope_eligibility)
+        self.assertNotEqual(kx.fitted_learned_state,ke.fitted_learned_state)
+        self.assertNotEqual(kx.composite,ke.composite)
+        # The XAUUSD fitted artifact cannot be resolved as EXACT for EURUSD.
+        store=verified_store([self._row(kx,"XAUUSD")])
+        r=self._lookup(store,"EURUSD",fitted_state=self.FITTED,**self.AGNOSTIC)
+        self.assertNotEqual(r.outcome,LookupOutcome.EXACT_CANONICAL_IDENTITY)
+        self.assertIsNone(r.exact_match)
+        # Control: with NO learned state, the fitted subkey is instrument-free.
+        ux,_=self._key(instrument="XAUUSD",**self.AGNOSTIC)
+        ue,_=self._key(instrument="EURUSD",**self.AGNOSTIC)
+        self.assertEqual(ux.fitted_learned_state,ue.fitted_learned_state)
+
+    def test_I4b_specific_definitions_are_fitted_qualified_too(self):
+        kx,_=self._key(instrument="XAUUSD",fitted_state=self.FITTED,**self.SPECIFIC)
+        ke,_=self._key(instrument="EURUSD",fitted_state=self.FITTED,**self.SPECIFIC)
+        self.assertNotEqual(kx.fitted_learned_state,ke.fitted_learned_state)
+
+    # I5 ----------------------------------------------------------------
+    def test_I5_target_instrument_survives_a_shared_identity(self):
+        kx,_=self._key(instrument="XAUUSD",**self.AGNOSTIC)
+        store=verified_store([self._row(kx,"ANY")])
+        r=self._lookup(store,"EURUSD",**self.AGNOSTIC)
+        self.assertEqual(r.outcome,LookupOutcome.EXACT_CANONICAL_IDENTITY)
+        # DC-006R: the agnostic canonical row carries semantic scope ANY, not
+        # its first binding; the REQUEST's target is reported separately.
+        self.assertEqual(r.exact_match.instrument,"ANY")
+        self.assertEqual(r.bound_instrument,"EURUSD")
+
+    def test_I5b_claim_lineage_retains_the_bound_instrument(self):
+        store=verified_store()
+        r=self._lookup(store,"EURUSD",request_id="REQ-EU",**self.AGNOSTIC)
+        self.assertIsNotNone(r.absent_claim_token,r.errors)
+        self.assertEqual(store.claims[0].provenance.bound_instrument,"EURUSD")
+        self.assertEqual(r.bound_instrument,"EURUSD")
+        # Shared identity => one construction at a time across bindings.
+        r2=self._lookup(store,"XAUUSD",request_id="REQ-XAU",**self.AGNOSTIC)
+        self.assertIsNone(r2.absent_claim_token)
+        self.assertTrue(any("PENDING_CLAIM_EXISTS" in e for e in r2.errors),r2.errors)
+        self.assertEqual(r2.bound_instrument,"XAUUSD")
+
+    def test_I6_other_identity_controls_are_not_weakened(self):
+        """Source/provider, timeframe, causal/time, normalization and definition
+        still split identity for an instrument-AGNOSTIC definition."""
+        base,_=self._key(instrument="XAUUSD",**self.AGNOSTIC)
+        for field,value in (("source_provider","OTHER"),("timeframe","H4"),
+                            ("causal_time_semantics","OTHER-CLOCK"),
+                            ("declared_normalization","ZSCORE"),
+                            ("normalized_definition_graph","SUB(C[t],C[t-1])"),
+                            ("price_basis","ASK")):
+            other,_=self._key(instrument="EURUSD",**dict(self.AGNOSTIC,**{field:value}))
+            self.assertNotEqual(base.composite,other.composite,field)
+
+    def test_I3b_bound_instrument_must_stay_declared(self):
+        """Even when the instrument is NOT identity content (AGNOSTIC), the
+        bound instrument is a required declared dimension: it is never dropped
+        from the request just because it does not split identity."""
+        for mode in (self.AGNOSTIC,self.SPECIFIC):
+            payload=self._content(**mode)
+            payload.pop("instrument")
+            key,errors=build_content_identity_key(payload)
+            self.assertIsNone(key)
+            self.assertIn("CONTENT_DIMENSION_MISSING:instrument",errors)
+
+    def test_I7_content_key_algorithm_version_was_bumped(self):
+        from tracker_identity import CONTENT_KEY_ALGORITHM_ID
+        self.assertEqual(CONTENT_KEY_ALGORITHM_ID,"SALIX-CONTENT-IDENTITY-KEY-V2")
+
+NEUTRAL_AGNOSTIC=dict(instrument_applicability="INSTRUMENT_AGNOSTIC",
+                      scope_universe="FX_METALS/ERA_1",
+                      causal_time_semantics="SALIX-BROKER-SERVER-UTC-TRANSITION-V1",
+                      dependency_closure=("BOUND_ROLE:close","BOUND_ROLE:high"))
+
+class AgnosticLeakage006R(unittest.TestCase):
+    """DC-006R Correction A (CR015 H-1). DC-006 V2 fixed only the DIRECT
+    bound-instrument field. These pin the alternate identity-bearing paths:
+    scope_universe, causal_time_semantics, dependency_closure (and every other
+    identity-bearing field). SEMANTIC_APPLICABILITY_SCOPE is identity content;
+    BOUND_UNIVERSE is binding/lineage."""
+
+    def _key(self,**over):
+        c=dict(GATE_CONTENT); c.update(NEUTRAL_AGNOSTIC); c.update(over)
+        return build_content_identity_key(c)
+
+    def test_L1_equivalent_agnostic_semantics_share_identity(self):
+        kx,ex=self._key(instrument="XAUUSD")
+        ke,ee=self._key(instrument="EURUSD")
+        self.assertEqual((ex,ee),((),()))
+        self.assertEqual(kx.composite,ke.composite)
+
+    def test_L2_bound_universe_alone_does_not_split(self):
+        kx,ex=self._key(instrument="XAUUSD",bound_universe="XAUUSD/ERA_1")
+        ke,ee=self._key(instrument="EURUSD",bound_universe="EURUSD/ERA_1")
+        self.assertEqual((ex,ee),((),()))
+        self.assertEqual(kx.composite,ke.composite)
+        base,_=self._key(instrument="XAUUSD")
+        self.assertEqual(kx.composite,base.composite)   # never hashed at all
+
+    def test_L2b_semantic_applicability_scope_still_splits(self):
+        a,_=self._key(instrument="XAUUSD",scope_universe="FX_METALS/ERA_1")
+        b,_=self._key(instrument="XAUUSD",scope_universe="FX_MAJORS/ERA_1")
+        self.assertNotEqual(a.scope_eligibility,b.scope_eligibility)
+
+    def test_L3_shared_server_feed_time_semantics_share_identity(self):
+        kx,_=self._key(instrument="XAUUSD")
+        ke,_=self._key(instrument="EURUSD")
+        self.assertEqual(kx.causal_time,ke.causal_time)
+        other,_=self._key(instrument="EURUSD",
+                          causal_time_semantics="SALIX-OTHERFEED-UTC-TRANSITION-V1")
+        self.assertNotEqual(kx.causal_time,other.causal_time)   # different feed splits
+
+    def test_L4_role_resolved_dependencies_do_not_split(self):
+        kx,_=self._key(instrument="XAUUSD")
+        ke,_=self._key(instrument="EURUSD")
+        self.assertEqual(kx.definition_semantics,ke.definition_semantics)
+
+    def test_L5_instrument_specific_semantics_still_split(self):
+        spec=dict(instrument_applicability="INSTRUMENT_SPECIFIC")
+        kx,ex=self._key(instrument="XAUUSD",dependency_closure=("XAUUSD.close",),
+                        scope_universe="XAUUSD/ERA_1",
+                        causal_time_semantics="SALIX-XAUUSD-BROKER-UTC-V1",**spec)
+        ke,ee=self._key(instrument="EURUSD",dependency_closure=("EURUSD.close",),
+                        scope_universe="EURUSD/ERA_1",
+                        causal_time_semantics="SALIX-EURUSD-BROKER-UTC-V1",**spec)
+        self.assertEqual((ex,ee),((),()))
+        self.assertNotEqual(kx.composite,ke.composite)
+
+    def test_L6_leaky_agnostic_declarations_fail_review_required(self):
+        cases=(
+            ("scope_universe","XAUUSD/ERA_1"),
+            ("scope_universe","EURUSD_ONLY"),                   # another instrument
+            ("scope_universe","xauusdm-universe"),              # broker suffix, lower case
+            ("causal_time_semantics","SALIX-XAUUSD-BROKER-UTC-TRANSITION-V1"),
+            ("causal_time_semantics","SALIX-XAU/USD-FEED-V1"),  # split pair
+            ("causal_time_semantics","GOLD-SESSION-CLOCK-V1"),  # metal name
+            ("dependency_closure",("XAUUSD.close",)),
+            ("dependency_closure",("BOUND_ROLE:close","EUR_USD.high")),
+            ("normalized_definition_graph","LN(DIV(XAUUSD.C[t],C[t-1]))"),
+            ("parameters",{"symbol":"EURUSD"}),
+            ("parameters",{"XAG_weight":0.5}),                  # metal code as a key
+            ("source_provider","FEED-XAUUSD"),
+        )
+        for field,value in cases:
+            key,errors=self._key(instrument="XAUUSD",**{field:value})
+            self.assertIsNone(key,(field,value))
+            self.assertTrue(any(e.startswith("INSTRUMENT_TOKEN_LEAKAGE_REVIEW_REQUIRED:"+field)
+                                for e in errors),(field,value,errors))
+        # The bound instrument itself is caught in any identity field, even in
+        # an unknown symbology the pair rules would not recognise.
+        # A suffixed pair symbol of ANOTHER instrument (the bound-instrument
+        # rule cannot catch it; the pair-prefix rule must).
+        key,errors=self._key(instrument="EURUSD",scope_universe="xauusdm-universe")
+        self.assertIsNone(key)
+        self.assertIn("INSTRUMENT_TOKEN_LEAKAGE_REVIEW_REQUIRED:scope_universe:XAUUSDM",errors)
+        key,errors=self._key(instrument="GER40",scope_universe="GER40-ONLY")
+        self.assertIsNone(key)
+        self.assertIn("INSTRUMENT_TOKEN_LEAKAGE_REVIEW_REQUIRED:scope_universe:GER40",errors)
+
+    def test_L6b_leak_is_refused_not_stripped(self):
+        """The leaked field is not silently normalised into a neutral key."""
+        leaky,errors=self._key(instrument="XAUUSD",scope_universe="XAUUSD/ERA_1")
+        self.assertIsNone(leaky); self.assertTrue(errors)
+        self.assertEqual(
+            instrument_token_leaks("XAUUSD/ERA_1","XAUUSD"),("XAUUSD",))
+
+    def test_L6c_leaky_agnostic_lookup_issues_no_claim(self):
+        store=verified_store()
+        content=dict(GATE_CONTENT); content.update(NEUTRAL_AGNOSTIC)
+        content.update(scope_universe="XAUUSD/ERA_1")
+        r=identity_lookup(store=store,subject=pre_id_subject(content=content),
+                          request_id="REQ-LEAK",search_policy=governed_search_policy(),
+                          normalizer=governed_normalizer())
+        self.assertEqual(r.outcome,LookupOutcome.INCOMPLETE_LOOKUP)
+        self.assertIsNone(r.absent_claim_token)
+        self.assertEqual(store.claims,[])
+
+    def test_L7_neutral_vocabulary_is_not_a_false_positive(self):
+        for text in ("FX_METALS/ERA_1","SALIX-BROKER-SERVER-UTC-TRANSITION-V1",
+                     "LAST_COMPLETED_BEFORE_T","RECONSTRUCTED_NOT_OBSERVED","BID",
+                     "CURRENT_RECOMPUTED","COMPOSER","LN(DIV(C[t],C[t-1]))","H1",
+                     "BOUND_ROLE:close","NONE"):
+            self.assertEqual(instrument_token_leaks(text,"XAUUSD"),(),text)
+
+    def test_L8_any_scope_rules(self):
+        k_any,e_any=self._key(instrument="ANY")
+        k_x,_=self._key(instrument="XAUUSD")
+        self.assertEqual(e_any,())
+        self.assertEqual(k_any.composite,k_x.composite)
+        _,e=self._key(instrument="ANY",instrument_applicability="INSTRUMENT_SPECIFIC")
+        self.assertIn("INSTRUMENT_SCOPE_ANY_REQUIRES_AGNOSTIC_APPLICABILITY",e)
+        _,e=self._key(instrument="ANY",fitted_state={"fitted_parameters":{"mu":1.0}})
+        self.assertIn("FITTED_STATE_REQUIRES_CONCRETE_INSTRUMENT",e)
+
+
+class CanonicalAgnosticRow006R(unittest.TestCase):
+    """DC-006R Correction B (CR015 M-1): an agnostic canonical row records the
+    semantic instrument scope ANY, never its first runtime binding."""
+
+    # Empty closure: BOUND_ROLE:* references are not canonical rows, so the
+    # stale-state sweep refuses them as dangling at registration (fail closed;
+    # reported residual). Role-dependency sharing is proven at key level (L4).
+    def _content(self,instrument):
+        c=dict(GATE_CONTENT); c.update(NEUTRAL_AGNOSTIC); c["instrument"]=instrument
+        c["dependency_closure"]=()
+        return c
+
+    def _lookup(self,store,instrument,request_id):
+        return identity_lookup(
+            store=store,subject=pre_id_subject(instrument=instrument,
+                                               content=self._content(instrument)),
+            request_id=request_id,search_policy=governed_search_policy(),
+            normalizer=governed_normalizer())
+
+    def _candidate(self,instrument,request_id):
+        return gate_candidate(claim_request_id=request_id,instrument=instrument,
+                              instrument_applicability="INSTRUMENT_AGNOSTIC",
+                              scope_universe=NEUTRAL_AGNOSTIC["scope_universe"],
+                              causal_time_semantics=NEUTRAL_AGNOSTIC["causal_time_semantics"],
+                              dependencies=())
+
+    def _register_xauusd_first(self):
+        """XAUUSD-bound request registers the shared definition. Construction
+        authority is reachable only by code replacement (test instrumentation)."""
+        from unittest import mock
+        from tracker_identity import store as store_module
+        store=verified_store()
+        with mock.patch.object(store_module,"_governed_construction_authority",
+                               return_value=True):
+            first=self._lookup(store,"XAUUSD","REQ-XAU-FIRST")
+        self.assertIsNotNone(first.absent_claim_token,first.errors)
+        self.assertEqual(store.claims[0].provenance.bound_instrument,"XAUUSD")
+        r=gate_intake(store,self._candidate("ANY","REQ-XAU-FIRST"))
+        self.assertTrue(r.accepted,r.errors)
+        return store,r.identity
+
+    def test_R1_first_binding_is_not_stamped_as_ownership(self):
+        store,row=self._register_xauusd_first()
+        self.assertEqual(row.instrument,"ANY")
+        self.assertEqual(store.all()[0].instrument,"ANY")
+        # Lineage keeps the exact binding that caused the registration.
+        self.assertEqual(store.claims[0].provenance.bound_instrument,"XAUUSD")
+
+    def test_R2_agnostic_candidate_stamped_with_binding_is_refused(self):
+        from unittest import mock
+        from tracker_identity import store as store_module
+        store=verified_store()
+        with mock.patch.object(store_module,"_governed_construction_authority",
+                               return_value=True):
+            self._lookup(store,"XAUUSD","REQ-XAU-STAMP")
+        r=gate_intake(store,self._candidate("XAUUSD","REQ-XAU-STAMP"))
+        self.assertFalse(r.accepted)
+        self.assertTrue(any("AGNOSTIC_DEFINITION_ROW_INSTRUMENT_MUST_BE_ANY" in e
+                            for e in r.errors),r.errors)
+        self.assertEqual(store.all(),())
+
+    def test_R3_later_eurusd_binding_pre_id_is_coherent(self):
+        store,row=self._register_xauusd_first()
+        r=self._lookup(store,"EURUSD","REQ-EUR-LATER")
+        self.assertEqual(r.outcome,LookupOutcome.EXACT_CANONICAL_IDENTITY)
+        self.assertIs(r.exact_match,row)
+        self.assertEqual(r.exact_match.instrument,"ANY")
+        self.assertEqual(r.bound_instrument,"EURUSD")
+        self.assertIsNone(r.absent_claim_token)
+        self.assertEqual(len(store.all()),1)            # no new identity minted
+
+    def test_R4_later_eurusd_binding_canonical_id_is_coherent(self):
+        store,row=self._register_xauusd_first()
+        for bound in ("EURUSD","XAUUSD"):
+            s={"subject_mode":"CANONICAL_ID","feature_id":row.feature_id,
+               "feature_version":row.feature_version,"definition_hash":row.definition_hash,
+               "graph_hash":row.graph_hash,"instrument":bound,"timeframe":row.timeframe,
+               "lookup_era_scope":"ERA_1_ONLY","candidate_content":self._content(bound)}
+            r=identity_lookup(store=store,subject=s,request_id="REQ-CID-"+bound,
+                              search_policy=governed_search_policy(),
+                              normalizer=governed_normalizer())
+            self.assertEqual(r.outcome,LookupOutcome.EXACT_CANONICAL_IDENTITY,(bound,r.errors))
+            self.assertIs(r.exact_match,row)
+            self.assertEqual(r.bound_instrument,bound)
+        # Canonical-ID path ALONE (no candidate content, so the content-key
+        # path cannot supply the match): ANY row still resolves EXACT.
+        s={"subject_mode":"CANONICAL_ID","feature_id":row.feature_id,
+           "feature_version":row.feature_version,"definition_hash":row.definition_hash,
+           "graph_hash":row.graph_hash,"instrument":"EURUSD","timeframe":row.timeframe,
+           "lookup_era_scope":"ERA_1_ONLY"}
+        r=identity_lookup(store=store,subject=s,request_id="REQ-CID-ONLY",
+                          search_policy=governed_search_policy(),normalizer=governed_normalizer())
+        self.assertEqual(r.outcome,LookupOutcome.EXACT_CANONICAL_IDENTITY,r.errors)
+        self.assertIs(r.exact_match,row)
+        self.assertEqual(r.bound_instrument,"EURUSD")
+        # Control: ANY matches any binding but NOT a different timeframe.
+        from tracker_identity.search import _canonical_matches
+        key=(row.feature_id,row.feature_version,row.definition_hash,row.graph_hash,"EURUSD","H4")
+        self.assertFalse(_canonical_matches(row,key))
+        self.assertFalse(_canonical_matches(row,key[:4]+("","H1")))
+        # Control: a concrete XAUUSD row is never matched by an EURUSD subject.
+        from dataclasses import replace
+        concrete=replace(row,instrument="XAUUSD")
+        self.assertFalse(_canonical_matches(concrete,key[:4]+("EURUSD",row.timeframe)))
+
+    def test_R4b_role_dependency_registration_fails_closed(self):
+        """PINNED RESIDUAL: BOUND_ROLE:* references share identity at key level
+        but are not canonical rows, so registration refuses them as dangling.
+        No role-resolution semantics are invented here."""
+        from unittest import mock
+        from tracker_identity import store as store_module
+        store=verified_store()
+        content=self._content("XAUUSD"); content["dependency_closure"]=("BOUND_ROLE:close",)
+        with mock.patch.object(store_module,"_governed_construction_authority",
+                               return_value=True):
+            identity_lookup(store=store,subject=pre_id_subject(instrument="XAUUSD",content=content),
+                            request_id="REQ-ROLE",search_policy=governed_search_policy(),
+                            normalizer=governed_normalizer())
+        cand=gate_candidate(claim_request_id="REQ-ROLE",instrument="ANY",
+                            instrument_applicability="INSTRUMENT_AGNOSTIC",
+                            scope_universe=NEUTRAL_AGNOSTIC["scope_universe"],
+                            causal_time_semantics=NEUTRAL_AGNOSTIC["causal_time_semantics"],
+                            dependencies=("BOUND_ROLE:close",))
+        r=gate_intake(store,cand)
+        self.assertFalse(r.accepted)
+        self.assertEqual(r.errors,("STALE_STATE_SWEEP_FAILED",))
+        self.assertTrue(any("DANGLING_DEPENDENCY" in d and "BOUND_ROLE:close" in d
+                            for d in r.stale_sweep.defects),r.stale_sweep.defects)
+        self.assertEqual(store.all(),())
+
+    def test_R5_pre_id_request_must_be_concretely_bound(self):
+        store=verified_store()
+        r=self._lookup(store,"ANY","REQ-ANY")
+        self.assertEqual(r.outcome,LookupOutcome.INCOMPLETE_LOOKUP)
+        self.assertIn("PRE_ID_BOUND_INSTRUMENT_MUST_BE_CONCRETE",r.errors)
+        self.assertEqual(store.claims,[])
+
+    def test_R6_fitted_agnostic_row_stays_instrument_qualified(self):
+        from tracker_identity import FeatureDefinitionRecord
+        fitted={"fitted_parameters":{"mu":0.1}}
+        base=dict(feature_id="f",feature_version="1",semantic_definition="s",formula="x",
+                  dependencies=(),era_id="ERA_1",definition_hash="",graph_hash="",
+                  timeframe="H1",instrument_applicability="INSTRUMENT_AGNOSTIC")
+        def rec(**over):
+            return FeatureDefinitionRecord(**dict(base,**over))
+        ok=rec(instrument="XAUUSD",fitted_state=fitted)
+        self.assertFalse(any("MUST_BE_ANY" in e for e in ok.completeness_errors()))
+        stamped=rec(instrument="XAUUSD",fitted_state="NONE")
+        self.assertTrue(any("AGNOSTIC_DEFINITION_ROW_INSTRUMENT_MUST_BE_ANY" in e
+                            for e in stamped.completeness_errors()))
+        anyrow=rec(instrument="ANY",fitted_state="NONE")
+        self.assertFalse(any("MUST_BE_ANY" in e for e in anyrow.completeness_errors()))
+
 
 class ManagerReAttackM1R(unittest.TestCase):
     """M-1R: the registry CONTAINER must be immutable, not only its entries."""

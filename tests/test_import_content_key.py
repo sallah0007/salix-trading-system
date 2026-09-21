@@ -30,6 +30,23 @@ from tracker_identity import (
     stale_state_sweep,
 )
 
+import importlib as _importlib
+from unittest import mock as _fixture_mock
+_store_module=_importlib.import_module("tracker_identity.store")
+
+def seed_fixture(store,rows,replace_all=False):
+    """TEST / FIXTURE ONLY (A14). Canonical records have no public writer;
+    this enables the fixture seeder by code replacement for one call."""
+    with _fixture_mock.patch.object(_store_module,"_fixture_seeding_permitted",
+                                    return_value=True):
+        _store_module._fixture_write_records(store,list(rows),replace_all=replace_all)
+    return store
+
+def fixture_store(rows=(),**kw):
+    return seed_fixture(CanonicalIdentityStore(**kw),rows)
+
+
+
 ERA = "ERA_1"
 SCOPES = ("current_active",)
 
@@ -44,6 +61,7 @@ CONTENT_DIMS = dict(
     scope_universe="XAUUSD/ERA_1",
     parameters={"lookback_bars": 2},
     fitted_state="NONE",
+    instrument_applicability="INSTRUMENT_SPECIFIC",
 )
 
 
@@ -110,15 +128,31 @@ def row(fid="gold.logret", **changes):
     return FeatureIdentity(**vals)
 
 
+def approve_package(*,era_boundary,source_universe,manifest,catalogue,**_ignored):
+    """TEST ONLY (DC-006R). Pin exactly THIS package in the approved-import
+    registry for one block, by code replacement (mock). Production has no such
+    path: its registry is empty and read-only."""
+    from unittest import mock
+    from tracker_identity import import_package_registry as reg
+    entry=reg.ApprovedImportPackageEntry(
+        "TEST-FIXTURE-PACKAGE",
+        *reg.package_hashes(era_boundary=era_boundary,source_universe=source_universe,
+                            manifest=manifest,catalogue=catalogue),
+        approval_ref="TEST-FIXTURE:not-a-governed-approval")
+    return mock.patch.object(reg,"APPROVED_IMPORT_PACKAGE_REGISTRY",reg._build_registry((entry,)))
+
 def do_import(rows, cat=None, store=None):
     store = store or CanonicalIdentityStore(active_era_id=ERA)
-    result = import_identity_content(
-        target_store=store, rows=tuple(rows),
+    package = dict(
         manifest=IdentityImportManifest("M", "1", ERA,
                                         (ImportSourceRef("s", "source", "CANONICAL",
                                                          True, len(rows), ERA),)),
         source_universe=universe(), era_boundary=boundary(),
-        catalogue=cat or catalogue(), search_policy=policy(), normalizer=normalizer())
+        catalogue=cat or catalogue())
+    with approve_package(**package):
+        result = import_identity_content(
+            target_store=store, rows=tuple(rows), **package,
+            search_policy=policy(), normalizer=normalizer())
     return store, result
 
 
@@ -192,7 +226,7 @@ class ValidationScopeParticipation(unittest.TestCase):
         store, _ = do_import([row(scope="validation")])
         bad = replace(store.all()[0], content_key_composite="corrupted")
         sweep = stale_state_sweep(
-            store=CanonicalIdentityStore([bad], active_era_id=ERA),
+            store=fixture_store([bad], active_era_id=ERA),
             search_policy=policy(("validation",)), normalizer=normalizer(),
             catalogue=catalogue())
         self.assertFalse(sweep.clean)
@@ -202,7 +236,7 @@ class ValidationScopeParticipation(unittest.TestCase):
     def test_validation_row_missing_reconstructable_key_is_a_defect(self):
         """No blanket validation exemption in the sweep either."""
         sweep = stale_state_sweep(
-            store=CanonicalIdentityStore([row(scope="validation")], active_era_id=ERA),
+            store=fixture_store([row(scope="validation")], active_era_id=ERA),
             search_policy=policy(("validation",)), normalizer=normalizer(),
             catalogue=catalogue())
         self.assertFalse(sweep.clean)
@@ -213,7 +247,7 @@ class ValidationScopeParticipation(unittest.TestCase):
 class StaleSweepContentKey(unittest.TestCase):
 
     def _sweep(self, record):
-        store = CanonicalIdentityStore([record], active_era_id=ERA)
+        store = fixture_store([record], active_era_id=ERA)
         return stale_state_sweep(store=store, search_policy=policy(),
                                  normalizer=normalizer(), catalogue=catalogue())
 

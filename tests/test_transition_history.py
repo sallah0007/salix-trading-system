@@ -13,6 +13,23 @@ from tracker_identity import (
     transition_authority_state,
 )
 
+import importlib as _importlib
+from unittest import mock as _fixture_mock
+_store_module=_importlib.import_module("tracker_identity.store")
+
+def seed_fixture(store,rows,replace_all=False):
+    """TEST / FIXTURE ONLY (A14). Canonical records have no public writer;
+    this enables the fixture seeder by code replacement for one call."""
+    with _fixture_mock.patch.object(_store_module,"_fixture_seeding_permitted",
+                                    return_value=True):
+        _store_module._fixture_write_records(store,list(rows),replace_all=replace_all)
+    return store
+
+def fixture_store(rows=(),**kw):
+    return seed_fixture(CanonicalIdentityStore(**kw),rows)
+
+
+
 
 def policy():
     p=SearchPolicy("transition-test","1","",("current_active",),("current_active",),{})
@@ -39,7 +56,7 @@ def tracked_store():
         created_ts="2026-09-19T22:30:00+10:00",created_by="SALIX_MANAGER",
         authority_ref="owner:era1",evidence_ref="evidence:definition",
     )
-    return CanonicalIdentityStore(records=[identity],creation_records=[creation])
+    return fixture_store([identity],creation_records=[creation])
 
 
 def transition(store, **changes):
@@ -150,14 +167,14 @@ class GovernedTransitionTests(unittest.TestCase):
         store=tracked_store()
         first=transition(store)
         self.assertTrue(first.accepted)
-        store.records[0]=replace(store.records[0],lifecycle_state="CURRENT",is_current=True)
+        seed_fixture(store,[replace(store.records[0],lifecycle_state="CURRENT",is_current=True)],replace_all=True)
         sweep=stale_state_sweep(store=store,search_policy=policy(),normalizer=normalizer())
         self.assertFalse(sweep.clean)
         self.assertTrue(any(x.startswith("STATE_HISTORY_MISMATCH") for x in sweep.defects))
 
     def test_creation_state_direct_mutation_is_detected(self):
         store=tracked_store()
-        store.records[0]=replace(store.records[0],lifecycle_state="QUARANTINED",is_current=False)
+        seed_fixture(store,[replace(store.records[0],lifecycle_state="QUARANTINED",is_current=False)],replace_all=True)
         sweep=stale_state_sweep(store=store,search_policy=policy(),normalizer=normalizer())
         self.assertFalse(sweep.clean)
         self.assertTrue(any(x.startswith("STATE_HISTORY_MISMATCH") for x in sweep.defects))
@@ -172,7 +189,7 @@ class GovernedTransitionTests(unittest.TestCase):
 
     def test_unknown_existing_lifecycle_fails_sweep(self):
         store=tracked_store()
-        store.records[0]=replace(store.records[0],lifecycle_state="ACTIVE",is_current=False)
+        seed_fixture(store,[replace(store.records[0],lifecycle_state="ACTIVE",is_current=False)],replace_all=True)
         sweep=stale_state_sweep(store=store,search_policy=policy(),normalizer=normalizer())
         self.assertFalse(sweep.clean)
         self.assertTrue(any(x.startswith("UNKNOWN_LIFECYCLE_STATE:") for x in sweep.defects))
