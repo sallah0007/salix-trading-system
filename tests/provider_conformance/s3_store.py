@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Iterator, Optional, Tuple
 
 from .canonical import sha256_hex
+from .model import sequence_from_transition_key
 from .store_port import (AccessDenied, NotFound, ObjectRead, ObjectStorePort,
                          PreconditionFailed, UnknownWriteOutcome, WriteResult)
 
@@ -55,6 +56,17 @@ class S3ObjectStore(ObjectStorePort):
         self.last_response_metadata = meta
         return meta
 
+    @staticmethod
+    def _attach(error, metadata):
+        """Carry provider metadata on the exception so evidence keeps it.
+
+        DC-038 F: 409 and 412 both mean "conditional write refused" for control
+        flow, but they are DIFFERENT provider behaviours and the distinction
+        must survive into the retained evidence.
+        """
+        error.provider_metadata = dict(metadata or {})
+        return error
+
     def _raise_mapped(self, exc, *, operation: str):
         from botocore.exceptions import (ClientError, ConnectionError as BotoConnError,
                                          ConnectTimeoutError, ReadTimeoutError)
@@ -66,14 +78,20 @@ class S3ObjectStore(ObjectStorePort):
             error = exc.response.get("Error", {})
             code = str(error.get("Code", ""))
             status = str(exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", ""))
-            self._meta(exc.response)
-            if code in PRECONDITION_CODES or status == "412" or status == "409":
-                raise PreconditionFailed(f"{operation}:{code}:{status}") from exc
+            meta = self._meta(exc.response)
+            meta["operation"] = operation
+            meta["error_code"] = code
+            meta["error_message"] = str(error.get("Message", ""))[:200]
+            if code in PRECONDITION_CODES or status in ("412", "409"):
+                raise self._attach(
+                    PreconditionFailed(f"{operation}:{code}:{status}"), meta) from exc
             if code in NOT_FOUND_CODES or status == "404":
-                raise NotFound(f"{operation}:{code}") from exc
+                raise self._attach(NotFound(f"{operation}:{code}"), meta) from exc
             if code in DENIED_CODES or status == "403":
-                raise AccessDenied(f"{operation}:{code}:{status}") from exc
-            raise UnknownWriteOutcome(f"{operation}:UNMAPPED:{code}:{status}") from exc
+                raise self._attach(
+                    AccessDenied(f"{operation}:{code}:{status}"), meta) from exc
+            raise self._attach(
+                UnknownWriteOutcome(f"{operation}:UNMAPPED:{code}:{status}"), meta) from exc
         raise UnknownWriteOutcome(f"{operation}:{type(exc).__name__}:{exc}") from exc
 
     def _get(self, key: str, *, operation: str) -> ObjectRead:
@@ -133,8 +151,12 @@ class S3ObjectStore(ObjectStorePort):
         for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
             for item in page.get("Contents", []) or []:
                 key = item["Key"]
-                if key.endswith(".bin"):
-                    yield key, self._get(key, operation="scan_transitions").data
+                if not key.endswith(".bin"):
+                    continue
+                sequence = sequence_from_transition_key(key)
+                if sequence is not None and sequence < from_sequence:
+                    continue
+                yield key, self._get(key, operation="scan_transitions").data
 
     def read_after_write_probe(self, key: str, data: bytes) -> Tuple[bool, dict]:
         written = self._put(key, data, operation="read_after_write_write")

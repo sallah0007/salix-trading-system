@@ -10,12 +10,16 @@ from __future__ import annotations
 import itertools
 import unittest
 
-from tests.provider_conformance.authority_writer import (RestrictedAuthorityWriter,
+from tests.provider_conformance.authority_writer import (FencingToken,
+                                                         RestrictedAuthorityWriter,
                                                          SEQUENCE_POLICIES)
 from tests.provider_conformance.canonical import sha256_hex
 from tests.provider_conformance.memory_store import MemoryObjectStore
-from tests.provider_conformance.model import (HeadRecord, head_key,
-                                              transition_key)
+from tests.provider_conformance.model import (NO_PREVIOUS_TRANSITION, HeadRecord,
+                                              head_key, is_authority_key, probe_key,
+                                              sequence_from_transition_key,
+                                              transition_key,
+                                              transition_scan_prefix)
 from tests.provider_conformance.store_port import (AccessDenied, NotFound,
                                                    PreconditionFailed)
 
@@ -333,6 +337,322 @@ class BypassBoundary(unittest.TestCase):
         after, _ = writer.read_head()
         self.assertEqual(after.accepted_transition_hash,
                          head.accepted_transition_hash)
+
+
+class EpochAwareRebuild038(unittest.TestCase):
+    """DC-038 correction C/D — governing policy RESET_PER_EPOCH.
+
+    The defect this pins: before DC-038, rebuild_from_journal() demanded that
+    the accepted tip's sequence equal HEAD.sequence. Immediately after
+    advance_epoch() the HEAD legitimately sits at sequence 0 in the new epoch
+    while still naming the previous epoch's tip, so a perfectly healthy journal
+    was reported CHAIN_TIP_SEQUENCE_NOT_HEAD. That is a false inconsistency on
+    the exact path a rollback recovery depends on.
+
+    An epoch advance is a durable mutable-HEAD fence, NOT an accepted
+    transition (EPOCH_ADVANCE_ACCEPTED_TRANSITION = NO).
+    """
+
+    def test_D_governing_sequence_for_reset_per_epoch(self):
+        # 1. commit transitions in epoch 1
+        writer = started(new_writer(policy="RESET_PER_EPOCH"), transitions=2)
+        head, _ = writer.read_head()
+        self.assertEqual((head.epoch, head.sequence), (1, 2))
+
+        # 2. rebuild => consistent
+        first = writer.rebuild_from_journal()
+        self.assertTrue(first.consistent, first.detail)
+        self.assertEqual(first.detail, "REBUILD_CONSISTENT")
+        self.assertEqual([(t.epoch, t.sequence) for t in first.chain], [(1, 1), (1, 2)])
+
+        # 3. advance epoch under RESET_PER_EPOCH
+        advanced = writer.advance_epoch(writer.issue_fencing_token())
+        self.assertTrue(advanced.accepted, advanced.status)
+
+        # 4./5. immediate rebuild BEFORE any new transition => consistent,
+        #       HEAD epoch advanced and sequence reset to 0
+        fenced_head, _ = writer.read_head()
+        self.assertEqual((fenced_head.epoch, fenced_head.sequence), (2, 0))
+        fenced = writer.rebuild_from_journal()
+        self.assertTrue(fenced.consistent, fenced.detail)
+        self.assertEqual(fenced.detail,
+                         "REBUILD_CONSISTENT_EPOCH_FENCED_NO_NEW_TRANSITION")
+        # The fence did NOT journal a new accepted transition.
+        self.assertEqual(len(fenced.chain), 2)
+        self.assertEqual(fenced_head.accepted_transition_hash,
+                         first.chain[-1].transition_hash())
+
+        # 6. first transition in the new epoch => sequence 1
+        outcome = writer.commit(writer.propose(sha256_hex(b"post")),
+                                writer.issue_fencing_token())
+        self.assertTrue(outcome.accepted, outcome.status)
+        after, _ = writer.read_head()
+        self.assertEqual((after.epoch, after.sequence), (2, 1))
+
+        # 7. rebuild again => consistent, chain crosses the epoch boundary
+        final = writer.rebuild_from_journal()
+        self.assertTrue(final.consistent, final.detail)
+        self.assertEqual(final.detail, "REBUILD_CONSISTENT")
+        self.assertEqual([(t.epoch, t.sequence) for t in final.chain],
+                         [(1, 1), (1, 2), (2, 1)])
+
+        # 8. the stale pre-advance token is still rejected
+        stale_token = FencingToken(writer.namespace_id, 1, "pre-advance")
+        rejected = writer.commit(writer.propose(sha256_hex(b"stale")), stale_token)
+        self.assertEqual(rejected.status, "REJECTED_FENCING_TOKEN_EPOCH_STALE")
+        unchanged, _ = writer.read_head()
+        self.assertEqual((unchanged.epoch, unchanged.sequence), (2, 1))
+
+    def test_epoch_advance_journals_no_accepted_transition(self):
+        writer = started(new_writer(), transitions=1)
+        before = {k for k in writer.store._objects if k.endswith(".bin")}
+        writer.advance_epoch(writer.issue_fencing_token())
+        after = {k for k in writer.store._objects if k.endswith(".bin")}
+        self.assertEqual(before, after)
+
+    def test_repeated_advances_without_transitions_stay_consistent(self):
+        writer = started(new_writer(), transitions=1)
+        for expected_epoch in (2, 3, 4):
+            writer.advance_epoch(writer.issue_fencing_token())
+            head, _ = writer.read_head()
+            self.assertEqual((head.epoch, head.sequence), (expected_epoch, 0))
+            rebuilt = writer.rebuild_from_journal()
+            self.assertTrue(rebuilt.consistent, rebuilt.detail)
+            self.assertEqual(len(rebuilt.chain), 1)
+
+    def test_fenced_genesis_namespace_rebuilds_consistently(self):
+        """Epoch advanced before ANY transition was ever accepted."""
+        writer = started(new_writer())
+        writer.advance_epoch(writer.issue_fencing_token())
+        head, _ = writer.read_head()
+        self.assertEqual((head.epoch, head.sequence), (2, 0))
+        rebuilt = writer.rebuild_from_journal()
+        self.assertTrue(rebuilt.consistent, rebuilt.detail)
+        self.assertEqual(rebuilt.detail, "REBUILD_CONSISTENT_NO_ACCEPTED_TRANSITIONS")
+        self.assertEqual(rebuilt.chain, ())
+
+    def test_alternate_policy_regression_only_non_governing(self):
+        """CONTINUE_ACROSS_EPOCH is retained as regression coverage only. It
+        does NOT govern: RESET_PER_EPOCH is the decided policy."""
+        writer = started(new_writer(policy="CONTINUE_ACROSS_EPOCH"), transitions=2)
+        writer.advance_epoch(writer.issue_fencing_token())
+        head, _ = writer.read_head()
+        self.assertEqual((head.epoch, head.sequence), (2, 2))
+        fenced = writer.rebuild_from_journal()
+        self.assertTrue(fenced.consistent, fenced.detail)
+        outcome = writer.commit(writer.propose(sha256_hex(b"post")),
+                                writer.issue_fencing_token())
+        self.assertTrue(outcome.accepted)
+        after, _ = writer.read_head()
+        self.assertEqual((after.epoch, after.sequence), (2, 3))
+        self.assertTrue(writer.rebuild_from_journal().consistent)
+
+    # -- the rebuild must still fail closed ------------------------------
+    def test_journal_may_not_override_the_authoritative_head_epoch(self):
+        """An accepted transition claiming an epoch beyond HEAD is refused: no
+        journal-only inference may promote the HEAD epoch."""
+        writer = started(new_writer(), transitions=1)
+        head, _ = writer.read_head()
+        forged = writer.propose(sha256_hex(b"forged"), epoch=9, sequence=1)
+        key = transition_key(PREFIX, writer.namespace_id, 9, 1,
+                             forged.transition.transition_hash())
+        writer.store.append_transition_if_absent(key, forged.transition.to_bytes())
+        # Point the HEAD at the forged transition without advancing its epoch.
+        rolled = HeadRecord(
+            namespace_id=writer.namespace_id, epoch=head.epoch, sequence=1,
+            accepted_transition_hash=forged.transition.transition_hash(),
+            previous_head_hash=head.head_hash(), accepted_at_ns=1)
+        writer.store.raw_put_head(head_key(PREFIX, writer.namespace_id),
+                                  rolled.to_bytes())
+        rebuilt = writer.rebuild_from_journal()
+        self.assertFalse(rebuilt.consistent)
+        self.assertTrue(rebuilt.detail.startswith(
+            "ACCEPTED_TRANSITION_EPOCH_AHEAD_OF_HEAD"), rebuilt.detail)
+
+    def test_sequence_gap_within_an_epoch_fails_closed(self):
+        writer = started(new_writer(), transitions=1)
+        head, _ = writer.read_head()
+        gapped = writer.propose(sha256_hex(b"gap"), sequence=5)
+        t = gapped.transition
+        key = transition_key(PREFIX, writer.namespace_id, t.epoch, t.sequence,
+                             t.transition_hash())
+        writer.store.append_transition_if_absent(key, t.to_bytes())
+        rolled = HeadRecord(
+            namespace_id=writer.namespace_id, epoch=t.epoch, sequence=5,
+            accepted_transition_hash=t.transition_hash(),
+            previous_head_hash=head.head_hash(), accepted_at_ns=1)
+        writer.store.raw_put_head(head_key(PREFIX, writer.namespace_id),
+                                  rolled.to_bytes())
+        rebuilt = writer.rebuild_from_journal()
+        self.assertFalse(rebuilt.consistent)
+        self.assertTrue(rebuilt.detail.startswith(
+            "SEQUENCE_NOT_STRICTLY_NEXT_IN_EPOCH"), rebuilt.detail)
+
+    def test_head_naming_no_transition_but_claiming_sequence_fails_closed(self):
+        writer = started(new_writer())
+        head, _ = writer.read_head()
+        lying = HeadRecord(
+            namespace_id=writer.namespace_id, epoch=1, sequence=7,
+            accepted_transition_hash=NO_PREVIOUS_TRANSITION,
+            previous_head_hash=head.head_hash(), accepted_at_ns=1)
+        writer.store.raw_put_head(head_key(PREFIX, writer.namespace_id),
+                                  lying.to_bytes())
+        rebuilt = writer.rebuild_from_journal()
+        self.assertFalse(rebuilt.consistent)
+        self.assertTrue(rebuilt.detail.startswith(
+            "HEAD_SEQUENCE_WITHOUT_ACCEPTED_TRANSITION"), rebuilt.detail)
+
+    def test_orphans_still_excluded_after_an_epoch_advance(self):
+        writer = started(new_writer(), transitions=2)
+        orphan = writer.propose(sha256_hex(b"orphan"), sequence=88)
+        orphan_key = transition_key(PREFIX, writer.namespace_id, 1, 88,
+                                    orphan.transition.transition_hash())
+        writer.store.append_transition_if_absent(orphan_key,
+                                                 orphan.transition.to_bytes())
+        writer.advance_epoch(writer.issue_fencing_token())
+        rebuilt = writer.rebuild_from_journal()
+        self.assertTrue(rebuilt.consistent, rebuilt.detail)
+        self.assertEqual(len(rebuilt.chain), 2)
+        self.assertEqual(rebuilt.orphans, (orphan_key,))
+
+    def test_missing_accepted_transition_still_fails_closed_after_advance(self):
+        writer = started(new_writer(), transitions=2)
+        head, _ = writer.read_head()
+        victim = [k for k in writer.store._objects
+                  if k.endswith(f"{head.accepted_transition_hash}.bin")][0]
+        del writer.store._objects[victim]
+        writer.advance_epoch(writer.issue_fencing_token())
+        rebuilt = writer.rebuild_from_journal()
+        self.assertFalse(rebuilt.consistent)
+        self.assertTrue(rebuilt.detail.startswith(
+            "ACCEPTED_TRANSITION_MISSING_FROM_JOURNAL"), rebuilt.detail)
+
+    # -- fail-closed branches of the corrected tip/epoch rules -----------
+    def _forge_head(self, writer, *, epoch, sequence, tip_hash):
+        """Write a HEAD directly, bypassing the writer.
+
+        This is the bypass probe, used here to manufacture the corrupt states a
+        rebuilder must diagnose. It is not a governed path.
+        """
+        head, _ = writer.read_head()
+        forged = HeadRecord(
+            namespace_id=writer.namespace_id, epoch=epoch, sequence=sequence,
+            accepted_transition_hash=tip_hash,
+            previous_head_hash=head.head_hash(), accepted_at_ns=1)
+        writer.store.raw_put_head(head_key(PREFIX, writer.namespace_id),
+                                  forged.to_bytes())
+
+    def _plant(self, writer, *, epoch, sequence, previous_transition_hash,
+               payload=b"planted"):
+        request = writer.propose(sha256_hex(payload), epoch=epoch, sequence=sequence,
+                                 previous_transition_hash=previous_transition_hash)
+        t = request.transition
+        writer.store.append_transition_if_absent(
+            transition_key(PREFIX, writer.namespace_id, epoch, sequence,
+                           t.transition_hash()),
+            t.to_bytes())
+        return t
+
+    def test_fenced_head_with_tip_in_the_same_epoch_fails_closed(self):
+        """HEAD.sequence == 0 means 'nothing accepted in this epoch yet', so a
+        tip inside HEAD.epoch is a contradiction: sequence 0 is never an
+        accepted transition."""
+        writer = started(new_writer(), transitions=1)
+        head, _ = writer.read_head()
+        self._forge_head(writer, epoch=head.epoch, sequence=0,
+                         tip_hash=head.accepted_transition_hash)
+        rebuilt = writer.rebuild_from_journal()
+        self.assertFalse(rebuilt.consistent)
+        self.assertTrue(rebuilt.detail.startswith(
+            "CHAIN_TIP_EPOCH_INVALID_FOR_FENCED_HEAD"), rebuilt.detail)
+
+    def test_first_accepted_transition_must_be_sequence_1(self):
+        writer = started(new_writer())
+        planted = self._plant(writer, epoch=1, sequence=3,
+                              previous_transition_hash=NO_PREVIOUS_TRANSITION)
+        self._forge_head(writer, epoch=1, sequence=3,
+                         tip_hash=planted.transition_hash())
+        rebuilt = writer.rebuild_from_journal()
+        self.assertFalse(rebuilt.consistent)
+        self.assertTrue(rebuilt.detail.startswith(
+            "FIRST_ACCEPTED_TRANSITION_SEQUENCE_NOT_1"), rebuilt.detail)
+
+    def test_epoch_decrease_along_the_chain_fails_closed(self):
+        writer = started(new_writer())
+        first = self._plant(writer, epoch=2, sequence=1,
+                            previous_transition_hash=NO_PREVIOUS_TRANSITION)
+        second = self._plant(writer, epoch=1, sequence=1,
+                             previous_transition_hash=first.transition_hash(),
+                             payload=b"older-epoch")
+        self._forge_head(writer, epoch=2, sequence=1,
+                         tip_hash=second.transition_hash())
+        rebuilt = writer.rebuild_from_journal()
+        self.assertFalse(rebuilt.consistent)
+        self.assertTrue(rebuilt.detail.startswith(
+            "TRANSITION_EPOCH_DECREASED_AT_SEQUENCE"), rebuilt.detail)
+
+    def test_tip_epoch_must_equal_head_epoch_once_sequence_advanced(self):
+        writer = started(new_writer(), transitions=1)
+        head, _ = writer.read_head()
+        writer.advance_epoch(writer.issue_fencing_token())
+        # HEAD claims a transition was accepted in epoch 2 while the tip is the
+        # epoch-1 transition: an epoch advance never accepts a transition.
+        self._forge_head(writer, epoch=2, sequence=1,
+                         tip_hash=head.accepted_transition_hash)
+        rebuilt = writer.rebuild_from_journal()
+        self.assertFalse(rebuilt.consistent)
+        self.assertTrue(rebuilt.detail.startswith("CHAIN_TIP_EPOCH_NOT_HEAD"),
+                        rebuilt.detail)
+
+    def test_tip_sequence_must_equal_head_sequence(self):
+        writer = started(new_writer(), transitions=2)
+        head, _ = writer.read_head()
+        self._forge_head(writer, epoch=head.epoch, sequence=5,
+                         tip_hash=head.accepted_transition_hash)
+        rebuilt = writer.rebuild_from_journal()
+        self.assertFalse(rebuilt.consistent)
+        self.assertTrue(rebuilt.detail.startswith("CHAIN_TIP_SEQUENCE_NOT_HEAD"),
+                        rebuilt.detail)
+
+
+class ScanFromSequence038(unittest.TestCase):
+    """DC-038 F: from_sequence is honoured, but never silently hides an object
+    whose key carries no parseable sequence."""
+
+    def test_from_sequence_filters_by_key_sequence(self):
+        writer = started(new_writer(), transitions=3)
+        prefix = transition_scan_prefix(PREFIX, writer.namespace_id)
+        all_keys = [k for k, _ in writer.store.scan_transitions(prefix)]
+        self.assertEqual(len(all_keys), 3)
+        from_two = [k for k, _ in writer.store.scan_transitions(prefix, from_sequence=2)]
+        self.assertEqual(len(from_two), 2)
+        self.assertEqual([sequence_from_transition_key(k) for k in sorted(from_two)],
+                         [2, 3])
+        self.assertEqual(list(writer.store.scan_transitions(prefix, from_sequence=99)),
+                         [])
+
+    def test_unparseable_key_is_never_hidden_by_from_sequence(self):
+        writer = started(new_writer(), transitions=1)
+        prefix = transition_scan_prefix(PREFIX, writer.namespace_id)
+        foreign = prefix + "1/transitions/NOT-A-SEQUENCE.bin"
+        writer.store.append_transition_if_absent(foreign, b"{}")
+        keys = [k for k, _ in writer.store.scan_transitions(prefix, from_sequence=99)]
+        self.assertIn(foreign, keys)
+
+    def test_rebuild_sees_a_foreign_object_and_fails_closed(self):
+        """A foreign object is diagnosed, not crashed on. It must also not be
+        silently skipped: skipping is how a tampered journal looks clean."""
+        for body in (b'{"namespace_id":"x"}',      # missing required fields
+                     b"not json at all",
+                     b"\xff\xfe\x00binary"):
+            writer = started(new_writer(), transitions=1)
+            prefix = transition_scan_prefix(PREFIX, writer.namespace_id)
+            writer.store.append_transition_if_absent(
+                prefix + "1/transitions/NOT-A-SEQUENCE.bin", body)
+            rebuilt = writer.rebuild_from_journal()
+            self.assertFalse(rebuilt.consistent, body)
+            self.assertTrue(rebuilt.detail.startswith("TRANSITION_OBJECT_UNPARSEABLE"),
+                            rebuilt.detail)
 
 
 if __name__ == "__main__":

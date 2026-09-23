@@ -97,7 +97,13 @@ class ObjectStorePort(abc.ABC):
         """Yield (key, bytes) for every transition object under `prefix`.
 
         Listing ORDER is never authority (E-09); the caller rebuilds from the
-        sequence/hash chain. Implementations must not filter silently.
+        sequence/hash chain.
+
+        `from_sequence` is honoured against the key's 020d sequence prefix
+        (DC-038 F). A key whose basename carries no parseable sequence is
+        ALWAYS yielded: an unparseable key is what a tampered or foreign
+        object looks like, and hiding it would turn a detectable defect into
+        a silent one.
         """
 
     @abc.abstractmethod

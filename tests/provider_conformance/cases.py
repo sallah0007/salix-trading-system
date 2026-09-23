@@ -17,7 +17,8 @@ from typing import Callable, List, Optional, Tuple
 from .authority_writer import RestrictedAuthorityWriter
 from .canonical import sha256_hex
 from .evidence import EvidenceRecorder
-from .model import HeadRecord, head_key, transition_key
+from .model import (HeadRecord, head_key, is_authority_key, probe_key,
+                    transition_key)
 from .store_port import (AccessDenied, NotFound, ObjectStorePort,
                          PreconditionFailed, UnknownWriteOutcome)
 
@@ -100,14 +101,19 @@ class _LostResponseStore:
 # ---------------------------------------------------------------- cases
 def case_01_strong_read_after_write(ctx: CaseContext) -> CaseResult:
     writer = ctx.started("c01", ctx.writer("c01"))
-    probe_key = f"{ctx.prefix}/stage-a/v1/coordination/{writer.namespace_id}/raw-probe.bin"
+    # DC-038 F: dedicated, run-scoped probe key. A probe is never written to an
+    # authoritative HEAD or transition key, even in an isolated bucket.
+    key = probe_key(ctx.prefix, ctx.run_id, "c01-read-after-write")
+    if is_authority_key(key):
+        return CaseResult("c01", "strong read-after-write", "BuildPlan 15.1 / E07-M1",
+                          FAIL, "PROBE_KEY_INSIDE_AUTHORITY_NAMESPACE:" + key)
     payload = b"read-after-write-probe"
-    equal, meta = ctx.store.read_after_write_probe(probe_key, payload)
+    equal, meta = ctx.store.read_after_write_probe(key, payload)
     token = writer.issue_fencing_token()
     outcome = writer.commit(writer.propose(sha256_hex(b"p1")), token)
     head, _ = writer.read_head()
     ctx.log("c01", "read_after_write_probe", PASS if equal else FAIL,
-            request_metadata={"key": probe_key, "content_sha256": sha256_hex(payload)},
+            request_metadata={"key": key, "content_sha256": sha256_hex(payload)},
             response_metadata=meta)
     head_visible = (outcome.accepted
                     and head.accepted_transition_hash == outcome.transition_hash)
@@ -115,7 +121,7 @@ def case_01_strong_read_after_write(ctx: CaseContext) -> CaseResult:
     return CaseResult("c01", "strong read-after-write", "BuildPlan 15.1 / E07-M1",
                       status,
                       f"object_probe_equal={equal} head_reads_own_write={head_visible}",
-                      {"head_sequence": head.sequence})
+                      {"head_sequence": head.sequence, "probe_key": key})
 
 
 def case_02_immutable_create_only(ctx: CaseContext) -> CaseResult:
@@ -181,6 +187,7 @@ def case_04_stale_etag_rejected(ctx: CaseContext) -> CaseResult:
     ctx.log("c04", "compare_and_swap_head_stale_etag",
             PASS if replayed.status == "CAS_LOST" else FAIL,
             request_metadata={"if_match": stale_request.observed_head_version},
+            response_metadata=replayed.evidence or {},
             detail=replayed.status)
     ok = (first.accepted and replayed.status == "CAS_LOST"
           and revalidated.status == "REJECTED_SEQUENCE_NOT_STRICTLY_NEXT"
@@ -384,20 +391,43 @@ def case_12_rollback_epoch_fence(ctx: CaseContext) -> CaseResult:
     pre_rollback_token = writer.issue_fencing_token()
     pre_rollback_request = writer.propose(sha256_hex(b"pre-rollback"))
     advanced = writer.advance_epoch(writer.issue_fencing_token())
+
+    # DC-038 C/D: an epoch advance is a HEAD fence, not an accepted transition.
+    # The journal must rebuild consistently IMMEDIATELY after it, before any
+    # new transition exists in the new epoch.
+    fenced_head, _ = writer.read_head()
+    fenced_rebuild = writer.rebuild_from_journal()
+    ctx.log("c12", "rebuild_immediately_after_epoch_advance",
+            PASS if fenced_rebuild.consistent else FAIL,
+            detail=fenced_rebuild.detail,
+            extra={"head_epoch": fenced_head.epoch,
+                   "head_sequence": fenced_head.sequence})
+
     delayed = writer.commit(pre_rollback_request, pre_rollback_token)
     post_token = writer.issue_fencing_token()
     post = writer.commit(writer.propose(sha256_hex(b"post-rollback")), post_token)
     head, _ = writer.read_head()
+    post_rebuild = writer.rebuild_from_journal()
     ctx.log("c12", "pre_rollback_token_after_advance",
             PASS if delayed.status == "REJECTED_FENCING_TOKEN_EPOCH_STALE" else FAIL,
             detail=delayed.status)
+    expected_first_sequence = 1 if ctx.sequence_policy == "RESET_PER_EPOCH" else 2
     ok = (advanced.accepted
+          and fenced_rebuild.consistent
+          and fenced_head.sequence == (0 if ctx.sequence_policy == "RESET_PER_EPOCH"
+                                       else 1)
           and delayed.status == "REJECTED_FENCING_TOKEN_EPOCH_STALE"
-          and post.accepted and head.epoch == 2)
+          and post.accepted and head.epoch == 2
+          and head.sequence == expected_first_sequence
+          and post_rebuild.consistent)
     return CaseResult("c12", "rollback epoch advance fences prior tokens", "E10-M1",
                       PASS if ok else FAIL,
-                      f"advance={advanced.status} pre_rollback={delayed.status} "
-                      f"post={post.status} epoch={head.epoch}")
+                      f"advance={advanced.status} fenced_rebuild={fenced_rebuild.detail} "
+                      f"fenced_sequence={fenced_head.sequence} "
+                      f"pre_rollback={delayed.status} post={post.status} "
+                      f"epoch={head.epoch} sequence={head.sequence} "
+                      f"post_rebuild={post_rebuild.detail}",
+                      {"sequence_policy": ctx.sequence_policy})
 
 
 def case_13_bypass_prevention(ctx: CaseContext) -> CaseResult:

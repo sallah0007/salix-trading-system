@@ -248,7 +248,10 @@ class RestrictedAuthorityWriter:
         except PreconditionFailed as exc:
             # Lost the race. The candidate object stays inert: it is not
             # referenced by the accepted HEAD chain, so it is non-authoritative.
-            return CommitOutcome("CAS_LOST", str(exc), transition_hash=t_hash)
+            # The provider's own refusal metadata (409 vs 412) is carried
+            # through so the evidence keeps the distinction.
+            return CommitOutcome("CAS_LOST", str(exc), transition_hash=t_hash,
+                                 evidence=getattr(exc, "provider_metadata", {}))
         except AccessDenied as exc:
             return CommitOutcome("REJECTED_ACCESS_DENIED", str(exc),
                                  transition_hash=t_hash)
@@ -307,6 +310,13 @@ class RestrictedAuthorityWriter:
         order is irrelevant (E-09: "object listing order is never authority").
         Candidate objects not on the accepted chain are reported as orphans and
         excluded — E01-M1 makes them inert.
+
+        EPOCH AWARENESS (DC-038). HEAD.epoch is authority; nothing in the
+        journal may override it. Sequence is strictly monotonic WITHIN an
+        epoch. An epoch advance is a HEAD fence, NOT an accepted transition
+        (EPOCH_ADVANCE_ACCEPTED_TRANSITION = NO), so HEAD.sequence == 0 naming
+        a tip from an earlier epoch is a consistent "fenced, nothing accepted
+        yet" state, not a defect.
         """
         try:
             head, _ = self.read_head()
@@ -318,16 +328,26 @@ class RestrictedAuthorityWriter:
         import json
         for key, data in self.store.scan_transitions(
                 transition_scan_prefix(self.prefix, self.namespace_id)):
-            payload = json.loads(data.decode("utf-8"))
-            record = TransitionRecord(
-                namespace_id=payload["namespace_id"], epoch=int(payload["epoch"]),
-                sequence=int(payload["sequence"]),
-                previous_head_hash=payload["previous_head_hash"],
-                previous_transition_hash=payload["previous_transition_hash"],
-                payload_hash=payload["payload_hash"],
-                accepted_at_ns=int(payload["accepted_at_ns"]),
-                transition_kind=payload.get("transition_kind", "GOVERNED_TRANSITION"),
-            )
+            # A foreign, truncated or tampered object must FAIL CLOSED with a
+            # diagnosis, never crash the rebuilder: a crash mid-recovery is
+            # indistinguishable to an operator from "the tool is broken", and
+            # an operator who cannot rebuild may be tempted to write by hand.
+            try:
+                payload = json.loads(data.decode("utf-8"))
+                record = TransitionRecord(
+                    namespace_id=payload["namespace_id"], epoch=int(payload["epoch"]),
+                    sequence=int(payload["sequence"]),
+                    previous_head_hash=payload["previous_head_hash"],
+                    previous_transition_hash=payload["previous_transition_hash"],
+                    payload_hash=payload["payload_hash"],
+                    accepted_at_ns=int(payload["accepted_at_ns"]),
+                    transition_kind=payload.get("transition_kind",
+                                                "GOVERNED_TRANSITION"),
+                )
+            except (ValueError, TypeError, KeyError, UnicodeDecodeError) as exc:
+                return RebuiltState((), (), head, False,
+                                    f"TRANSITION_OBJECT_UNPARSEABLE:{key}:"
+                                    f"{type(exc).__name__}")
             computed = record.transition_hash()
             if not key.endswith(f"{computed}.bin"):
                 return RebuiltState((), (), head, False,
@@ -351,17 +371,95 @@ class RestrictedAuthorityWriter:
             cursor = record.previous_transition_hash
 
         ordered = tuple(reversed(chain))
+        orphans = tuple(sorted(keys_by_hash[h] for h in by_hash if h not in seen))
+
+        # -- chain links -------------------------------------------------
         for index, record in enumerate(ordered):
             expected_prev = (NO_PREVIOUS_TRANSITION if index == 0
                              else ordered[index - 1].transition_hash())
             if record.previous_transition_hash != expected_prev:
-                return RebuiltState(ordered, (), head, False,
+                return RebuiltState(ordered, orphans, head, False,
                                     "CHAIN_LINK_INVALID_AT_SEQUENCE:"
                                     + str(record.sequence))
-        if ordered and ordered[-1].transition_hash() != head.accepted_transition_hash:
-            return RebuiltState(ordered, (), head, False, "CHAIN_TIP_NOT_HEAD")
-        if ordered and ordered[-1].sequence != head.sequence:
-            return RebuiltState(ordered, (), head, False, "CHAIN_TIP_SEQUENCE_NOT_HEAD")
 
-        orphans = tuple(sorted(keys_by_hash[h] for h in by_hash if h not in seen))
+        # -- epoch / sequence progression (DC-038 correction C) ----------
+        # The authoritative HEAD owns the epoch. Nothing inferred from the
+        # journal may override it, so an accepted transition may never sit in
+        # an epoch beyond HEAD.epoch. Sequence is validated WITHIN each epoch:
+        # under the governing RESET_PER_EPOCH policy the first accepted
+        # transition of any epoch is sequence 1.
+        previous = None
+        for record in ordered:
+            if record.epoch > head.epoch:
+                return RebuiltState(ordered, orphans, head, False,
+                                    "ACCEPTED_TRANSITION_EPOCH_AHEAD_OF_HEAD:"
+                                    + str(record.epoch))
+            if previous is None:
+                if record.sequence != 1:
+                    return RebuiltState(ordered, orphans, head, False,
+                                        "FIRST_ACCEPTED_TRANSITION_SEQUENCE_NOT_1:"
+                                        + str(record.sequence))
+            elif record.epoch < previous.epoch:
+                return RebuiltState(ordered, orphans, head, False,
+                                    "TRANSITION_EPOCH_DECREASED_AT_SEQUENCE:"
+                                    + str(record.sequence))
+            elif record.epoch == previous.epoch:
+                if record.sequence != previous.sequence + 1:
+                    return RebuiltState(ordered, orphans, head, False,
+                                        "SEQUENCE_NOT_STRICTLY_NEXT_IN_EPOCH:"
+                                        + str(record.sequence))
+            else:                                  # epoch advanced mid-chain
+                expected = (1 if self.sequence_policy == "RESET_PER_EPOCH"
+                            else previous.sequence + 1)
+                if record.sequence != expected:
+                    return RebuiltState(ordered, orphans, head, False,
+                                        "SEQUENCE_INVALID_AFTER_EPOCH_ADVANCE:"
+                                        + str(record.sequence))
+            previous = record
+
+        # -- tip vs HEAD -------------------------------------------------
+        # E10-M1 / Manager reconciliation CR-036: an epoch advance is a durable
+        # mutable-HEAD epoch FENCE, not an accepted transition. So immediately
+        # after advance_epoch the HEAD legitimately sits at sequence 0 in the
+        # new epoch while still naming the previous epoch's accepted tip. That
+        # state is CONSISTENT: it means "fenced, nothing accepted yet here".
+        if not ordered:
+            if head.accepted_transition_hash != NO_PREVIOUS_TRANSITION:
+                return RebuiltState(ordered, orphans, head, False,
+                                    "HEAD_NAMES_TRANSITION_BUT_CHAIN_EMPTY")
+            if head.sequence != 0:
+                return RebuiltState(ordered, orphans, head, False,
+                                    "HEAD_SEQUENCE_WITHOUT_ACCEPTED_TRANSITION:"
+                                    + str(head.sequence))
+            return RebuiltState(ordered, orphans, head, True,
+                                "REBUILD_CONSISTENT_NO_ACCEPTED_TRANSITIONS")
+
+        tip = ordered[-1]
+        if tip.transition_hash() != head.accepted_transition_hash:
+            return RebuiltState(ordered, orphans, head, False, "CHAIN_TIP_NOT_HEAD")
+
+        if head.sequence == 0:
+            # Epoch-fenced, no transition accepted in this epoch yet. The tip
+            # must belong to an EARLIER epoch; a tip in HEAD.epoch would imply
+            # an accepted transition at sequence 0, which cannot exist.
+            if tip.epoch >= head.epoch:
+                return RebuiltState(ordered, orphans, head, False,
+                                    "CHAIN_TIP_EPOCH_INVALID_FOR_FENCED_HEAD:"
+                                    + str(tip.epoch))
+            return RebuiltState(ordered, orphans, head, True,
+                                "REBUILD_CONSISTENT_EPOCH_FENCED_NO_NEW_TRANSITION")
+
+        if tip.epoch != head.epoch:
+            # Non-governing CONTINUE_ACROSS_EPOCH keeps the carried sequence on
+            # the fence, so its fenced state is (tip.epoch < head.epoch and
+            # tip.sequence == head.sequence). RESET_PER_EPOCH never reaches here.
+            if (self.sequence_policy == "CONTINUE_ACROSS_EPOCH"
+                    and tip.epoch < head.epoch and tip.sequence == head.sequence):
+                return RebuiltState(ordered, orphans, head, True,
+                                    "REBUILD_CONSISTENT_EPOCH_FENCED_NO_NEW_TRANSITION")
+            return RebuiltState(ordered, orphans, head, False,
+                                "CHAIN_TIP_EPOCH_NOT_HEAD:" + str(tip.epoch))
+        if tip.sequence != head.sequence:
+            return RebuiltState(ordered, orphans, head, False,
+                                "CHAIN_TIP_SEQUENCE_NOT_HEAD:" + str(tip.sequence))
         return RebuiltState(ordered, orphans, head, True, "REBUILD_CONSISTENT")

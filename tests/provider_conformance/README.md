@@ -59,7 +59,7 @@ no amount of harness code can supply.
 
 | # | Case | Proven by |
 |---|---|---|
-| c01 | strong read-after-write | object probe + HEAD reads its own accepted write |
+| c01 | strong read-after-write | run-scoped probe key (never an authority key) + HEAD reads its own accepted write |
 | c02 | immutable create-only transition write | overwrite with different bytes refused; bytes unchanged |
 | c03 | conditional HEAD CAS | create-only genesis, duplicate create refused, valid commit accepted |
 | c04 | stale ETag rejection | commit against a stale snapshot → provider precondition refuses (`CAS_LOST`) |
@@ -70,7 +70,7 @@ no amount of harness code can supply.
 | c09 | complete journal scan / rebuild | chain rebuilt backwards from HEAD; orphan candidate excluded and reported |
 | c10 | delayed / stale fencing rejection | stale token refused after epoch advance; forged future token refused |
 | c11 | competing-writer race | both writers validate against the same snapshot; exactly one CAS wins |
-| c12 | rollback epoch fence | epoch advance, pre-rollback token refused, post-rollback write accepted |
+| c12 | rollback epoch fence | epoch advance, **rebuild consistent immediately after the fence**, pre-rollback token refused, post-rollback write accepted at sequence 1, rebuild consistent again |
 | c13 | **bypass prevention** | ordinary principal's direct HEAD put must be `AccessDenied` |
 | c14 | evidence capture | every record carries ts, operation, request/response metadata, outcome |
 | c15 | deterministic manifest | recomputation is stable; one changed byte changes the digest |
@@ -168,15 +168,51 @@ current ETag would have succeeded.
 6. **The time source is harness-local.** `accepted_at_ns` comes from an
    injected counter, not the governed Tracker time source, so evidence
    timestamps order events within a run and are not governed time.
+7. **Scan filtering is by key, not by content.** `from_sequence` is honoured
+   against the key's 020d prefix. A key with no parseable sequence is always
+   yielded, so a foreign or tampered object still reaches the rebuilder and
+   fails closed instead of being hidden.
+8. **409 vs 412.** Both map to "conditional write refused" for control flow,
+   but the provider's own status and error code are preserved in the evidence
+   so the distinction survives review.
 
-## Open semantic question S-1 — sequence at an epoch advance
+## Governed epoch / sequence semantics (S-1 RESOLVED)
 
-The frozen text says sequence increases *within* an epoch, and that epoch
-increases on failover. It does not say what sequence does **at** the advance.
-Both readings are implemented and selectable with `--sequence-policy`:
+Manager reconciliation CR-036, 2026-09-23:
 
-- `RESET_PER_EPOCH` (default) — sequence restarts at 0 in the new epoch;
-- `CONTINUE_ACROSS_EPOCH` — sequence keeps increasing across the advance.
+```
+E01_SEQUENCE_POLICY                 = RESET_PER_EPOCH
+EPOCH_ADVANCE_REPRESENTATION        = MUTABLE_HEAD_EPOCH_FENCE
+EPOCH_ADVANCE_ACCEPTED_TRANSITION   = NO
+```
 
-This is reported to the Manager rather than silently assumed. It matters for
-journal rebuild and for any consumer that treats sequence as globally ordered.
+- a new epoch's HEAD carries `sequence = 0`;
+- the first accepted governed transition in that epoch is `sequence = 1`;
+- an epoch advance is a durable HEAD fence. It does **not** journal an
+  accepted transition, and no new canonical `EPOCH_ADVANCE` transition type was
+  invented;
+- no global sequence invariant exists. Sequence is monotonic *within* an epoch.
+
+`CONTINUE_ACROSS_EPOCH` remains selectable via `--sequence-policy` as
+**non-governing regression coverage only**.
+
+### Rebuild is epoch-aware
+
+`rebuild_from_journal()` walks the accepted chain by hash (never by listing
+order) and applies:
+
+- `HEAD.epoch` is authority. An accepted transition in a later epoch than the
+  HEAD fails closed; no journal-only inference may promote the HEAD epoch.
+- sequence is validated strictly **within** each epoch; the first accepted
+  transition of an epoch is 1 under the governing policy.
+- if `HEAD.sequence > 0`, the tip must be in `HEAD.epoch` with
+  `tip.sequence == HEAD.sequence`.
+- if `HEAD.sequence == 0`, the HEAD legitimately still names the previous
+  epoch's tip. That is `REBUILD_CONSISTENT_EPOCH_FENCED_NO_NEW_TRANSITION`,
+  not a defect. **This was the DC-038 correction**: the earlier version
+  reported `CHAIN_TIP_SEQUENCE_NOT_HEAD` for a perfectly healthy journal
+  immediately after a rollback fence — a false inconsistency on exactly the
+  path a recovery depends on.
+- orphan candidates stay excluded and reported; missing, tampered or
+  unparseable accepted transitions fail closed with a diagnosis rather than
+  crashing the rebuilder.

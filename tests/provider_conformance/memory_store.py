@@ -15,6 +15,7 @@ import uuid
 from typing import Dict, Iterator, Optional, Tuple
 
 from .canonical import sha256_hex
+from .model import sequence_from_transition_key
 from .store_port import (AccessDenied, NotFound, ObjectRead, ObjectStorePort,
                          PreconditionFailed, UnknownWriteOutcome, WriteResult)
 
@@ -106,8 +107,12 @@ class MemoryObjectStore(ObjectStorePort):
         # Deliberately yielded in REVERSE key order: listing order is never
         # authority, and a rebuilder that depends on it must fail its test.
         for key in sorted(self._objects, reverse=True):
-            if key.startswith(prefix) and key.endswith(".bin"):
-                yield key, self._objects[key]
+            if not (key.startswith(prefix) and key.endswith(".bin")):
+                continue
+            sequence = sequence_from_transition_key(key)
+            if sequence is not None and sequence < from_sequence:
+                continue
+            yield key, self._objects[key]
 
     def read_after_write_probe(self, key: str, data: bytes) -> Tuple[bool, dict]:
         self._check_denied(key, is_head_write=False)

@@ -126,3 +126,33 @@ def transition_scan_prefix(prefix: str, namespace_id: str,
                            epoch: Optional[int] = None) -> str:
     base = f"{prefix}/stage-a/v1/coordination/{namespace_id}/epochs/"
     return base if epoch is None else f"{base}{epoch}/transitions/"
+
+
+def probe_key(prefix: str, run_id: str, label: str) -> str:
+    """Run-scoped key for read-after-write probes (DC-038 F).
+
+    Probes are deliberately OUTSIDE the coordination namespace: a probe must
+    never be written to an authoritative HEAD or transition key, even in an
+    isolated bucket.
+    """
+    return f"{prefix}/stage-a/v1/conformance-probes/{run_id}/{label}.bin"
+
+
+def is_authority_key(key: str) -> bool:
+    """True for any coordination HEAD or transition key."""
+    return "/stage-a/v1/coordination/" in key
+
+
+def sequence_from_transition_key(key: str) -> Optional[int]:
+    """Parse the 020d sequence prefix from a transition key basename.
+
+    Returns None when the basename does not carry one, so callers can decide.
+    Scanners must NOT silently drop such an object: an unparseable key is
+    exactly what a tampered or foreign object looks like, and the rebuilder
+    must see it to fail closed.
+    """
+    basename = key.rsplit("/", 1)[-1]
+    head = basename.split("-", 1)[0]
+    if head.isdigit():
+        return int(head)
+    return None

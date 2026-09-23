@@ -212,5 +212,82 @@ class NonProductionBoundary(unittest.TestCase):
         self.assertFalse(MemoryObjectStore.CAN_PROVE_PROVIDER_SEMANTICS)
 
 
+class ProbeKeyBoundary038(unittest.TestCase):
+    """DC-038 F: read-after-write probes use a dedicated run-scoped key."""
+
+    def test_probe_key_is_outside_the_authority_namespace(self):
+        from tests.provider_conformance.model import is_authority_key, probe_key
+        key = probe_key("pfx", "run-1", "c01-read-after-write")
+        self.assertFalse(is_authority_key(key))
+        self.assertIn("conformance-probes/run-1/", key)
+        self.assertTrue(is_authority_key("pfx/stage-a/v1/coordination/ns/HEAD"))
+
+    def test_no_probe_is_written_to_an_authority_key(self):
+        class ProbeWatcher(MemoryObjectStore):
+            probed = []
+
+            def read_after_write_probe(self, key, data):
+                ProbeWatcher.probed.append(key)
+                return super().read_after_write_probe(key, data)
+
+        from tests.provider_conformance.model import is_authority_key
+        ProbeWatcher.probed = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            results, _ = run_suite(tmpdir, store=ProbeWatcher())
+        self.assertEqual(results["c01"].status, PASS, results["c01"].detail)
+        self.assertTrue(ProbeWatcher.probed)
+        for key in ProbeWatcher.probed:
+            self.assertFalse(is_authority_key(key), key)
+
+
+class PostAdvanceRebuildInSuite038(unittest.TestCase):
+    """The governing regression must also be visible in the LIVE case suite,
+    not only in unit tests."""
+
+    def test_c12_covers_the_immediate_post_advance_rebuild(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            results, recorder = run_suite(tmpdir)
+        self.assertEqual(results["c12"].status, PASS, results["c12"].detail)
+        self.assertIn("REBUILD_CONSISTENT_EPOCH_FENCED_NO_NEW_TRANSITION",
+                      results["c12"].detail)
+        self.assertIn("sequence=1", results["c12"].detail)
+        operations = [r["operation"] for r in recorder.records if r["case_id"] == "c12"]
+        self.assertIn("rebuild_immediately_after_epoch_advance", operations)
+
+    def test_c12_fails_if_only_the_post_advance_rebuild_is_inconsistent(self):
+        """Proves the immediate-post-advance assertion is load-bearing.
+
+        The injection breaks ONLY c12's first (fenced) rebuild. Every other
+        rebuild, including c12's own second one, runs for real — so if the
+        fenced assertion were dropped, c12 would still report PASS and this
+        test would catch it.
+        """
+        from unittest import mock
+        from tests.provider_conformance.authority_writer import (
+            RebuiltState, RestrictedAuthorityWriter)
+        real = RestrictedAuthorityWriter.rebuild_from_journal
+        broken = RebuiltState((), (), None, False, "INJECTED_INCONSISTENT")
+        seen = {"c12": 0}
+
+        def only_first_c12(self):
+            if self.namespace_id.endswith("--c12"):
+                seen["c12"] += 1
+                if seen["c12"] == 1:
+                    return broken
+            return real(self)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.object(RestrictedAuthorityWriter,
+                                   "rebuild_from_journal", only_first_c12):
+                results, _ = run_suite(tmpdir)
+        self.assertGreaterEqual(seen["c12"], 2)          # both rebuilds happened
+        self.assertEqual(results["c12"].status, FAIL, results["c12"].detail)
+        self.assertIn("INJECTED_INCONSISTENT", results["c12"].detail)
+        # The SECOND rebuild was genuine, so the failure is attributable to the
+        # fenced one alone.
+        self.assertIn("post_rebuild=REBUILD_CONSISTENT", results["c12"].detail)
+
+
+
 if __name__ == "__main__":
     unittest.main()
