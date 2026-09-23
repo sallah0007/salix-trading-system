@@ -27,8 +27,8 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
 from .model import (NO_PREVIOUS_HEAD, NO_PREVIOUS_TRANSITION, HeadRecord,
-                    TransitionRecord, head_key, transition_key,
-                    transition_scan_prefix)
+                    TransitionRecord, head_key, parse_transition_key,
+                    transition_key, transition_scan_prefix)
 from .store_port import (AccessDenied, NotFound, PreconditionFailed,
                          UnknownWriteOutcome)
 
@@ -326,8 +326,23 @@ class RestrictedAuthorityWriter:
         by_hash: Dict[str, TransitionRecord] = {}
         keys_by_hash: Dict[str, str] = {}
         import json
-        for key, data in self.store.scan_transitions(
-                transition_scan_prefix(self.prefix, self.namespace_id)):
+        # Materialised and sorted by key so that every diagnostic below is
+        # DETERMINISTIC: which defect is reported first must not depend on the
+        # provider's listing order. Order still confers no authority — the
+        # chain is walked by hash.
+        scanned = sorted(self.store.scan_transitions(
+            transition_scan_prefix(self.prefix, self.namespace_id)),
+            key=lambda item: item[0])
+        for key, data in scanned:
+            # DC-039 / R2-L1: bind the KEY to the decoded record. A valid body
+            # copied under a wrong epoch path or sequence prefix used to be
+            # collapsed by hash and pass unnoticed, which let a from_sequence
+            # scan and a full rebuild disagree about what exists.
+            parts = parse_transition_key(key, prefix=self.prefix,
+                                         namespace_id=self.namespace_id)
+            if parts is None:
+                return RebuiltState((), (), head, False,
+                                    "TRANSITION_KEY_LAYOUT_INVALID:" + key)
             # A foreign, truncated or tampered object must FAIL CLOSED with a
             # diagnosis, never crash the rebuilder: a crash mid-recovery is
             # indistinguishable to an operator from "the tool is broken", and
@@ -349,9 +364,29 @@ class RestrictedAuthorityWriter:
                                     f"TRANSITION_OBJECT_UNPARSEABLE:{key}:"
                                     f"{type(exc).__name__}")
             computed = record.transition_hash()
-            if not key.endswith(f"{computed}.bin"):
+            if parts.transition_hash != computed:
                 return RebuiltState((), (), head, False,
                                     "TRANSITION_KEY_HASH_MISMATCH:" + key)
+            # One transition hash, one canonical key. Checked BEFORE the
+            # per-object epoch/sequence binding below, because when a valid
+            # body is COPIED under another key both objects are individually
+            # well formed and only their coexistence is the defect. Checking
+            # binding first would mask this branch entirely.
+            if computed in keys_by_hash and keys_by_hash[computed] != key:
+                pair = " | ".join(sorted((keys_by_hash[computed], key)))
+                return RebuiltState((), (), head, False,
+                                    f"DUPLICATE_TRANSITION_HASH_UNDER_DISTINCT_KEYS:"
+                                    f"{computed}:{pair}")
+            # The key is identity: its epoch and sequence must be the record's
+            # own. A lone mislabelled copy is caught here.
+            if parts.epoch != record.epoch:
+                return RebuiltState((), (), head, False,
+                                    f"TRANSITION_KEY_EPOCH_MISMATCH:{key}:"
+                                    f"key={parts.epoch}:record={record.epoch}")
+            if parts.sequence != record.sequence:
+                return RebuiltState((), (), head, False,
+                                    f"TRANSITION_KEY_SEQUENCE_MISMATCH:{key}:"
+                                    f"key={parts.sequence}:record={record.sequence}")
             by_hash[computed] = record
             keys_by_hash[computed] = key
 

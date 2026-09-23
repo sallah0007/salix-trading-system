@@ -11,8 +11,9 @@ Frozen keys (Build Plan §29A E-09):
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from .canonical import canonical_bytes, hash_payload, sha256_hex
 
@@ -141,6 +142,42 @@ def probe_key(prefix: str, run_id: str, label: str) -> str:
 def is_authority_key(key: str) -> bool:
     """True for any coordination HEAD or transition key."""
     return "/stage-a/v1/coordination/" in key
+
+
+class TransitionKeyParts(NamedTuple):
+    epoch: int
+    sequence: int
+    transition_hash: str
+
+
+# The canonical transition key, anchored end to end (DC-039 / R2-L1):
+#   {prefix}/stage-a/v1/coordination/{namespace}/epochs/{epoch}
+#       /transitions/{sequence:020d}-{sha256}.bin
+_TRANSITION_KEY = re.compile(
+    r"^(?P<prefix>.+)/stage-a/v1/coordination/(?P<namespace>[^/]+)"
+    r"/epochs/(?P<epoch>\d+)/transitions/"
+    r"(?P<sequence>\d{20})-(?P<hash>[0-9a-f]{64})\.bin$")
+
+
+def parse_transition_key(key: str, *, prefix: str,
+                         namespace_id: str) -> Optional[TransitionKeyParts]:
+    """Decode a transition key, or None when it is not canonical.
+
+    The key is IDENTITY, not decoration: epoch and sequence in the path must
+    later be proven equal to the decoded record's own fields. Returning None
+    means "not a canonical key", which callers must treat as fail-closed —
+    never as "skip this object".
+    """
+    match = _TRANSITION_KEY.match(key)
+    if match is None:
+        return None
+    if match.group("prefix") != prefix or match.group("namespace") != namespace_id:
+        return None
+    epoch_text = match.group("epoch")
+    if epoch_text != str(int(epoch_text)):      # no padded/alternate spellings
+        return None
+    return TransitionKeyParts(int(epoch_text), int(match.group("sequence")),
+                              match.group("hash"))
 
 
 def sequence_from_transition_key(key: str) -> Optional[int]:

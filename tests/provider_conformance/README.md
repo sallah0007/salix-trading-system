@@ -216,3 +216,23 @@ order) and applies:
 - orphan candidates stay excluded and reported; missing, tampered or
   unparseable accepted transitions fail closed with a diagnosis rather than
   crashing the rebuilder.
+
+### The transition key is identity (DC-039 / R2-L1)
+
+Every transition object encountered by rebuild must satisfy, or the rebuild
+fails closed with a deterministic diagnostic:
+
+- the key parses as the canonical layout, with the governed prefix and
+  namespace, an unpadded epoch, exactly 20 sequence digits and a lower-case
+  64-hex hash;
+- the key's epoch equals the decoded record's epoch;
+- the key's sequence equals the decoded record's sequence;
+- the hash suffix equals the recomputed transition hash;
+- one transition hash appears under exactly ONE key.
+
+Before this, a valid body copied under a wrong epoch path or sequence prefix
+was collapsed by hash: rebuild said `REBUILD_CONSISTENT` and reported no
+orphan, so a `from_sequence` scan and a full rebuild could disagree about what
+exists while both looked clean. The scan is materialised and sorted by key
+before validation, so which defect is reported first never depends on the
+provider's listing order.

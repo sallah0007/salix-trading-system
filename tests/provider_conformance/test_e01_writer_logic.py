@@ -16,7 +16,8 @@ from tests.provider_conformance.authority_writer import (FencingToken,
 from tests.provider_conformance.canonical import sha256_hex
 from tests.provider_conformance.memory_store import MemoryObjectStore
 from tests.provider_conformance.model import (NO_PREVIOUS_TRANSITION, HeadRecord,
-                                              head_key, is_authority_key, probe_key,
+                                              head_key, is_authority_key,
+                                              parse_transition_key, probe_key,
                                               sequence_from_transition_key,
                                               transition_key,
                                               transition_scan_prefix)
@@ -639,20 +640,181 @@ class ScanFromSequence038(unittest.TestCase):
         keys = [k for k, _ in writer.store.scan_transitions(prefix, from_sequence=99)]
         self.assertIn(foreign, keys)
 
-    def test_rebuild_sees_a_foreign_object_and_fails_closed(self):
-        """A foreign object is diagnosed, not crashed on. It must also not be
-        silently skipped: skipping is how a tampered journal looks clean."""
+    def test_foreign_key_layout_fails_closed(self):
+        """A non-canonical key is diagnosed, never silently skipped: skipping
+        is how a tampered journal looks clean."""
+        writer = started(new_writer(), transitions=1)
+        prefix = transition_scan_prefix(PREFIX, writer.namespace_id)
+        writer.store.append_transition_if_absent(
+            prefix + "1/transitions/NOT-A-SEQUENCE.bin", b"{}")
+        rebuilt = writer.rebuild_from_journal()
+        self.assertFalse(rebuilt.consistent)
+        self.assertTrue(rebuilt.detail.startswith("TRANSITION_KEY_LAYOUT_INVALID"),
+                        rebuilt.detail)
+
+    def test_corrupt_body_under_a_canonical_key_fails_closed(self):
+        """A canonical key is diagnosed on its BODY, not crashed on."""
         for body in (b'{"namespace_id":"x"}',      # missing required fields
                      b"not json at all",
                      b"\xff\xfe\x00binary"):
             writer = started(new_writer(), transitions=1)
-            prefix = transition_scan_prefix(PREFIX, writer.namespace_id)
-            writer.store.append_transition_if_absent(
-                prefix + "1/transitions/NOT-A-SEQUENCE.bin", body)
+            key = transition_key(PREFIX, writer.namespace_id, 1, 5, "a" * 64)
+            writer.store.append_transition_if_absent(key, body)
             rebuilt = writer.rebuild_from_journal()
             self.assertFalse(rebuilt.consistent, body)
             self.assertTrue(rebuilt.detail.startswith("TRANSITION_OBJECT_UNPARSEABLE"),
                             rebuilt.detail)
+
+
+class TransitionKeyBinding039(unittest.TestCase):
+    """DC-039 / R2-L1 — the transition KEY is identity, not decoration.
+
+    Reproduced on c76b9e7 before fixing: a valid body copied under a wrong
+    sequence prefix, or under a wrong epoch path, was collapsed by hash. The
+    rebuild returned REBUILD_CONSISTENT and reported no orphan, so a
+    from_sequence scan and a full rebuild could observe different key
+    identities while both looked clean.
+    """
+
+    def _copy_under(self, writer, *, epoch, sequence, remove_original=False):
+        source = sorted(k for k in writer.store._objects if k.endswith(".bin"))[0]
+        body = writer.store._objects[source]
+        transition_hash = source.rsplit("-", 1)[1][:-len(".bin")]
+        target = transition_key(PREFIX, writer.namespace_id, epoch, sequence,
+                                transition_hash)
+        writer.store._objects[target] = body
+        writer.store._versions[target] = '"copied"'
+        if remove_original:
+            del writer.store._objects[source]
+        return source, target
+
+    # A ------------------------------------------------------------------
+    def test_A_canonical_key_body_and_hash_rebuild_consistently(self):
+        writer = started(new_writer(), transitions=3)
+        rebuilt = writer.rebuild_from_journal()
+        self.assertTrue(rebuilt.consistent, rebuilt.detail)
+        self.assertEqual(rebuilt.detail, "REBUILD_CONSISTENT")
+        for record in rebuilt.chain:
+            key = transition_key(PREFIX, writer.namespace_id, record.epoch,
+                                 record.sequence, record.transition_hash())
+            parsed = parse_transition_key(key, prefix=PREFIX,
+                                          namespace_id=writer.namespace_id)
+            self.assertEqual(parsed.epoch, record.epoch)
+            self.assertEqual(parsed.sequence, record.sequence)
+            self.assertEqual(parsed.transition_hash, record.transition_hash())
+
+    # B ------------------------------------------------------------------
+    def test_B_same_body_under_a_wrong_sequence_prefix_fails_closed(self):
+        writer = started(new_writer(), transitions=2)
+        self._copy_under(writer, epoch=1, sequence=77)
+        rebuilt = writer.rebuild_from_journal()
+        self.assertFalse(rebuilt.consistent)
+        self.assertTrue(rebuilt.detail.startswith(
+            "DUPLICATE_TRANSITION_HASH_UNDER_DISTINCT_KEYS"), rebuilt.detail)
+
+    def test_B2_lone_copy_under_a_wrong_sequence_prefix_fails_closed(self):
+        writer = started(new_writer(), transitions=2)
+        self._copy_under(writer, epoch=1, sequence=77, remove_original=True)
+        rebuilt = writer.rebuild_from_journal()
+        self.assertFalse(rebuilt.consistent)
+        self.assertTrue(rebuilt.detail.startswith("TRANSITION_KEY_SEQUENCE_MISMATCH"),
+                        rebuilt.detail)
+
+    # C ------------------------------------------------------------------
+    def test_C_same_body_under_a_wrong_epoch_path_fails_closed(self):
+        writer = started(new_writer(), transitions=2)
+        source = sorted(k for k in writer.store._objects if k.endswith(".bin"))[0]
+        sequence = int(source.rsplit("/", 1)[1].split("-")[0])
+        self._copy_under(writer, epoch=9, sequence=sequence)
+        rebuilt = writer.rebuild_from_journal()
+        self.assertFalse(rebuilt.consistent)
+        self.assertTrue(rebuilt.detail.startswith(
+            "DUPLICATE_TRANSITION_HASH_UNDER_DISTINCT_KEYS"), rebuilt.detail)
+
+    def test_C2_lone_copy_under_a_wrong_epoch_path_fails_closed(self):
+        writer = started(new_writer(), transitions=2)
+        source = sorted(k for k in writer.store._objects if k.endswith(".bin"))[0]
+        sequence = int(source.rsplit("/", 1)[1].split("-")[0])
+        self._copy_under(writer, epoch=9, sequence=sequence, remove_original=True)
+        rebuilt = writer.rebuild_from_journal()
+        self.assertFalse(rebuilt.consistent)
+        self.assertTrue(rebuilt.detail.startswith("TRANSITION_KEY_EPOCH_MISMATCH"),
+                        rebuilt.detail)
+
+    # D ------------------------------------------------------------------
+    def test_D_duplicate_hash_under_two_distinct_keys_fails_closed(self):
+        writer = started(new_writer(), transitions=2)
+        source, target = self._copy_under(writer, epoch=2, sequence=1)
+        rebuilt = writer.rebuild_from_journal()
+        self.assertFalse(rebuilt.consistent)
+        self.assertTrue(rebuilt.detail.startswith(
+            "DUPLICATE_TRANSITION_HASH_UNDER_DISTINCT_KEYS"), rebuilt.detail)
+        # The diagnostic names BOTH keys, in sorted order, so it is
+        # reproducible whatever order the provider lists objects in.
+        self.assertIn(" | ".join(sorted((source, target))), rebuilt.detail)
+
+    def test_D2_duplicate_diagnostic_is_listing_order_independent(self):
+        details = []
+        for reverse in (False, True):
+            writer = started(new_writer(), transitions=2)
+            self._copy_under(writer, epoch=2, sequence=1)
+            store = writer.store
+            original_scan = store.scan_transitions
+
+            def scan(prefix, from_sequence=0, _rev=reverse):
+                items = list(original_scan(prefix, from_sequence))
+                items.sort(key=lambda item: item[0], reverse=_rev)
+                return iter(items)
+
+            store.scan_transitions = scan
+            details.append(writer.rebuild_from_journal().detail)
+        self.assertEqual(details[0], details[1])
+
+    # E ------------------------------------------------------------------
+    def test_E_malformed_key_layouts_fail_closed(self):
+        namespace = "ns-1"
+        base = f"{PREFIX}/stage-a/v1/coordination/{namespace}/epochs"
+        good = transition_key(PREFIX, namespace, 1, 1, "a" * 64)
+        self.assertIsNotNone(parse_transition_key(good, prefix=PREFIX,
+                                                  namespace_id=namespace))
+        seq20 = "0" * 19 + "1"          # the one valid 20-digit spelling
+        malformed = (
+            f"{base}/1/transitions/1-{'a' * 64}.bin",              # unpadded
+            f"{base}/1/transitions/{'0' * 18}1-{'a' * 64}.bin",     # 19 digits
+            f"{base}/1/transitions/{'0' * 20}1-{'a' * 64}.bin",     # 21 digits
+            f"{base}/1/transitions/{seq20}-{'a' * 63}.bin",         # short hash
+            f"{base}/1/transitions/{seq20}-{'A' * 64}.bin",         # upper-case hash
+            f"{base}/01/transitions/{seq20}-{'a' * 64}.bin",        # padded epoch
+            f"{base}/x/transitions/{seq20}-{'a' * 64}.bin",         # non-numeric epoch
+            f"{base}/1/transitions/{seq20}-{'a' * 64}.txt",         # wrong extension
+            f"{base}/1/{seq20}-{'a' * 64}.bin",                     # missing segment
+            good.replace(f"/{namespace}/", "/other-namespace/"),    # other namespace
+            good.replace(PREFIX + "/", "other-prefix/"),            # other prefix
+        )
+        for key in malformed:
+            self.assertIsNone(parse_transition_key(key, prefix=PREFIX,
+                                                   namespace_id=namespace), key)
+        writer = started(new_writer(namespace=namespace), transitions=1)
+        writer.store.append_transition_if_absent(malformed[0], b"{}")
+        rebuilt = writer.rebuild_from_journal()
+        self.assertFalse(rebuilt.consistent)
+        self.assertEqual(rebuilt.detail, "TRANSITION_KEY_LAYOUT_INVALID:" + malformed[0])
+
+    # F ------------------------------------------------------------------
+    def test_F_orphans_and_from_sequence_semantics_are_preserved(self):
+        writer = started(new_writer(), transitions=2)
+        orphan = writer.propose(sha256_hex(b"orphan"), sequence=88)
+        orphan_key = transition_key(PREFIX, writer.namespace_id, 1, 88,
+                                    orphan.transition.transition_hash())
+        writer.store.append_transition_if_absent(orphan_key,
+                                                 orphan.transition.to_bytes())
+        rebuilt = writer.rebuild_from_journal()
+        self.assertTrue(rebuilt.consistent, rebuilt.detail)
+        self.assertEqual(rebuilt.orphans, (orphan_key,))
+        prefix = transition_scan_prefix(PREFIX, writer.namespace_id)
+        self.assertEqual(
+            len([k for k, _ in writer.store.scan_transitions(prefix, from_sequence=2)]),
+            2)
 
 
 if __name__ == "__main__":
