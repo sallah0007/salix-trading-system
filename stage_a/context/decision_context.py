@@ -52,6 +52,9 @@ def check_status_event(e: dict, context_known: bool) -> None:
 
 def as_of_visible(e: dict, t: int) -> bool:
     """As-of views filter on CREATED_AT / AVAILABLE_ASOF, never retroactive EFFECTIVE_AT."""
+    for v in (e.get("CREATED_AT"), e.get("AVAILABLE_ASOF"), t):
+        if isinstance(v, bool) or not isinstance(v, int):
+            raise Refusal(repr(v), code="AS_OF_TIMESTAMP_MALFORMED")            # missing/malformed stamps fail closed, never compare
     return e["CREATED_AT"] <= t and e["AVAILABLE_ASOF"] <= t
 
 def fail_closed_transition(subject_kind: str, risk_reducing: bool, domain_resolvable: bool) -> dict:

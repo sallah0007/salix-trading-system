@@ -9,7 +9,7 @@ M = [(BO, "    bad = sorted(set(bo) & FORBIDDEN_FIELDS)\n    if bad:", "    bad 
      (BO, 'if k in KNOWN_TOKEN_FIELDS and not _present(v) and k != "CLAIM_ID":', "if False:"),
      (BO, "        if consulted_by_verification is True:", "        if False:"), (BO, "        if consulted_by_verification is None:", "        if False:"),
      (BO, "    if dangling:", "    if False:"), (BO, "        if not _present(not_possible_governed_reason_ref):", "        if False:"),
-     (BO, "    if declared_hash != recomputed_hash:", "    if False:"), (BO, "    if not isinstance(bo, dict):", "    if False:"),
+     (BO, "    if declared_hash != recomputed_hash:", "    if False:"), (BO, "    if not isinstance(bo, dict):\n        raise Refusal(type(bo).__name__", "    if False:\n        raise Refusal(type(bo).__name__"),
      (QI, 'learned_derived=bool(m.data["fit_refs"]))', "learned_derived=False)"), (QI, 'fail("BUILD_OUTPUT_CONTRACT", e.code)', "pass"),
      (LS, "    if rec.kind not in KINDS:", "    if False:"), (LS, "check_status_event(ev, context_known)", "pass"),
      (LS, 'if boundary_evidence and k in boundary_evidence and k != "PRIOR_STATE" and boundary_evidence[k] != ev[k]:', "if False:"),

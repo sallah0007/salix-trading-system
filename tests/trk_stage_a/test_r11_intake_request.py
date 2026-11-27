@@ -35,6 +35,6 @@ class PolicyPinsDimension(unittest.TestCase):
         from stage_a.tracker import quant_intake_adapter as Q
         from stage_a.storage.byte_primitives import canonical_bytes, domain_hash
         dims = ["SCHEMA", "HASH_BINDING", "CAPABILITY", "FIT_ANCESTRY", "SCOPE_BINDING", "IDENTITY_CONTENT_KEY",
-                "LOOKUP_COMPLETENESS", "DUPLICATE", "CONSTRUCTION_AUTHORITY", "REQUEST_RECORD", "RESOURCE_CEILING", "CAPABILITY_DECLARATION", "BUILD_OUTPUT_CONTRACT"]
+                "LOOKUP_COMPLETENESS", "DUPLICATE", "CONSTRUCTION_AUTHORITY", "REQUEST_RECORD", "RESOURCE_CEILING", "CAPABILITY_DECLARATION", "BUILD_OUTPUT_CONTRACT", "BUILD_CONFORMANCE"]
         self.assertEqual(Q.POLICY["HASH"], domain_hash("SALIX_STAGE_A_INTAKE_POLICY_V1", canonical_bytes({"dimensions": dims})))
 if __name__ == "__main__": unittest.main()
