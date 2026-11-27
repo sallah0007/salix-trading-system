@@ -94,27 +94,45 @@ def classify_late(available_asof: int, fence: int, publish_log_position: int, wa
     raise Refusal("pre-fence, visible at watermark, not omitted: not a late dependency", code="NOT_LATE")
 
 class FinalResolutionStore:
-    """Exactly one final outcome per resolution identity; REQUEST_ID maps many-to-one; retries reuse, never re-evaluate."""
+    """Exactly one final outcome per resolution identity; REQUEST_ID maps many-to-one; retries reuse, never re-evaluate.
+
+    BOUNDED CONTRACT (until a qualified provider supplies atomicity, D10): single PROCESS only. Within one process the
+    check/evaluate/store sequence is serialised by one lock, a re-entrant call for an identity already being evaluated is refused
+    (it would otherwise recurse or double-evaluate), an evaluator that raises stores nothing (the identity stays unresolved and a
+    later call may evaluate again), and an evaluator that returns None is refused (None cannot be told apart from 'no outcome').
+    Nothing here protects against two processes or a restart: the map is in memory. That is an unresolved provider decision."""
     def __init__(self):
+        import threading
+        self._lock = threading.RLock()
         self._by_identity: Dict[FinalResolutionIdentity, object] = {}
         self._req_ids: Dict[str, FinalResolutionIdentity] = {}
+        self._inflight = set()
         self.evaluations = 0
     def resolve(self, request_id: str, identity: FinalResolutionIdentity, evaluate):
-        bound = self._req_ids.get(request_id)
-        if bound is not None and bound != identity:
-            raise Refusal(request_id, code="REQUEST_ID_REBOUND_TO_OTHER_IDENTITY")
-        prior = self._by_identity.get(identity)
-        if prior is not None:
-            self._req_ids.setdefault(request_id, identity)
-            return prior                                    # never fish for a different result
-        self.evaluations += 1
-        out = evaluate()
-        self._by_identity[identity] = out
-        self._req_ids[request_id] = identity
-        return out
+        with self._lock:
+            bound = self._req_ids.get(request_id)
+            if bound is not None and bound != identity:
+                raise Refusal(request_id, code="REQUEST_ID_REBOUND_TO_OTHER_IDENTITY")
+            if identity in self._by_identity:
+                self._req_ids.setdefault(request_id, identity)
+                return self._by_identity[identity]          # never fish for a different result
+            if identity in self._inflight:
+                raise Refusal(identity, code="REENTRANT_RESOLUTION")
+            self._inflight.add(identity)
+            try:
+                self.evaluations += 1
+                out = evaluate()
+                if out is None:
+                    raise Refusal(identity, code="EVALUATOR_RETURNED_NO_OUTCOME")
+                self._by_identity[identity] = out
+                self._req_ids[request_id] = identity
+                return out
+            finally:
+                self._inflight.discard(identity)
     def late_dependency_mutates(self, identity: FinalResolutionIdentity):
-        if identity in self._by_identity:
-            raise Refusal(identity, code="FINAL_WINDOW_IMMUTABLE")   # a late dependency may not re-resolve an expired window
+        with self._lock:
+            if identity in self._by_identity:
+                raise Refusal(identity, code="FINAL_WINDOW_IMMUTABLE")   # a late dependency may not re-resolve an expired window
 
 H1_REQUIRED = ("CONSUMER_BINDING_ID", "CONSUMER_ID", "TARGET_CONSUMER", "REQUEST_ID", "BOUND_FEATURE_IDS_AND_VERSIONS",
                "BOUND_PAYLOAD_OR_PACKAGE_ID", "PACKAGE_CLASS", "PACKAGE_HASH", "PURPOSE", "TEMPORAL_CONTRACT_ID",

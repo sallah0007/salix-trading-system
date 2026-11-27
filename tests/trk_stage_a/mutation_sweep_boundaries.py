@@ -3,6 +3,15 @@ Each mutant must make tests/trk_stage_a/test_boundaries.py FAIL. Run: python3 te
 import subprocess, sys, pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 M = [
+ ("gateway/v038.py", "with self._lock:\n            bound = self._req_ids.get(request_id)", "if True:\n            bound = self._req_ids.get(request_id)"),
+ ("gateway/v038.py", "if identity in self._inflight:", "if False:"),
+ ("gateway/v038.py", "if out is None:", "if False:"),
+ ("gateway/v038.py", "self._inflight.discard(identity)", "pass"),
+ ("schema/independent.py", "raise ValueError(\"unknown tag\")", "return b\"\\x02\" + _ref(v[1])"),
+ ("schema/independent.py", "if type(code) is not int or code not in table.values():", "if type(code) is not int:"),
+ ("schema/independent.py", "if table is None: raise", "if False: raise"),
+ ("schema/independent.py", "if \"refit_mode_is_scheduled\" in m and m[\"refit_mode_is_scheduled\"] is not sched:", "if False:"),
+ ("schema/independent.py", "if (r[\"speculation_mode\"] == _sym(enums, \"SPECULATION_MODE\", \"GATED_ONE_STEP\"))", "if (r[\"speculation_mode\"] == 2)"),
  ("context/news_hub_v2.py", "if publicly_available_at is None or salix_received_at is None:", "if False:"),
  ("context/news_hub_v2.py", "if asof > decision_cutoff:", "if False:"),
  ("context/news_hub_v2.py", 'if pres == "NO_EVENT_RECORDED" and cov != "COMPLETE":', "if False:"),
@@ -35,8 +44,8 @@ M = [
  ("gateway/v038.py", "if available_asof >= fence:", "if available_asof > fence:"),
  ("gateway/v038.py", "if publish_log_position > watermark.status_log_position:", "if publish_log_position >= watermark.status_log_position:"),
  ("gateway/v038.py", "if bound is not None and bound != identity:", "if False:"),
- ("gateway/v038.py", "if prior is not None:", "if False:"),
- ("gateway/v038.py", "if identity in self._by_identity:", "if False:"),
+ ("gateway/v038.py", "if identity in self._by_identity:\n                self._req_ids", "if False:\n                self._req_ids"),
+ ("gateway/v038.py", "if identity in self._by_identity:\n                raise", "if False:\n                raise"),
  ("gateway/v038.py", "if missing:", "if False:"),
  ("gateway/v038.py", "if fields[\"PACKAGE_CLASS\"] not in", "if False and fields[\"PACKAGE_CLASS\"] not in"),
  ("gateway/v038.py", "return NOT_READY\n    return REJECTED", "return NOT_READY\n    return NOT_READY"),

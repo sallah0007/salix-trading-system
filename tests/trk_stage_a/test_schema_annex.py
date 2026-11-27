@@ -1,3 +1,4 @@
+import re
 """Annex V1.2 byte-encoding and hash-coverage tests. Code tables here are PROVISIONAL test values (D3 open)."""
 import pytest
 from stage_a.errors import Refusal
@@ -170,14 +171,14 @@ def test_independent_manifest_hash_equals_producer_and_is_order_insensitive():
     for m in (manifest(), manifest(refit_mode="SCHEDULED_REFIT", refit_rule_ref=R("rr"), parameter_generation_source_ref=R("pg")),
               manifest(health_metric_program_refs=(("m2", R("m2")), ("m1", R("m1"))))):
         d = _manifest_dict(m, Tm)
-        assert X.manifest_hash(d) == O.manifest_hash(Tm, m)
+        assert X.manifest_hash(d, Tm.enums) == O.manifest_hash(Tm, m)
         e = copy.deepcopy(d); e["input_dependencies"].reverse(); e["program_capability_declarations"].reverse()
-        assert X.manifest_hash(e) == X.manifest_hash(d)
+        assert X.manifest_hash(e, Tm.enums) == X.manifest_hash(d, Tm.enums)
 
 def test_independent_manifest_refusals_and_sensitivity():
     from stage_a.schema import independent as X
-    Tm = CodeTables(enums={"PROGRAM_CAPABILITY_CLASS": {"TRANSITION": 1, "PROJECTION": 2}, "REFIT_MODE": {"NONE": 1}}, ref_types={"R": 1, "PROGRAM": 1, "RULE": 1})
-    d = _manifest_dict(manifest(), Tm); base = X.manifest_hash(d)
+    Tm = CodeTables(enums={"PROGRAM_CAPABILITY_CLASS": {"TRANSITION": 1, "PROJECTION": 2}, "REFIT_MODE": {"NONE": 1, "SCHEDULED_REFIT": 2}}, ref_types={"R": 1, "PROGRAM": 1, "RULE": 1})
+    d = _manifest_dict(manifest(), Tm); base = X.manifest_hash(d, Tm.enums)
     import copy
     def mod(f):
         e = copy.deepcopy(d); f(e); return e
@@ -188,6 +189,33 @@ def test_independent_manifest_refusals_and_sensitivity():
               lambda e: e["program_capability_declarations"][0].update(opcode_set_used=[2, 1]),
               lambda e: e["program_capability_declarations"][0].update(opcode_set_used=[]),
               lambda e: e.update(program_capability_declarations=[])):
-        with pytest.raises(ValueError): X.manifest_hash(mod(f))
-    assert X.manifest_hash(mod(lambda e: e.update(feature_version="f2"))) != base
-    assert X.manifest_hash(mod(lambda e: e["program_capability_declarations"][0].update(opcode_set_used=[1, 3]))) != base
+        with pytest.raises(ValueError): X.manifest_hash(mod(f), Tm.enums)
+    assert X.manifest_hash(mod(lambda e: e.update(feature_version="f2")), Tm.enums) != base
+    assert X.manifest_hash(mod(lambda e: e["program_capability_declarations"][0].update(opcode_set_used=[1, 3])), Tm.enums) != base
+
+
+def test_independent_manifest_refit_flag_and_capability_codes_follow_table():
+    from stage_a.schema import independent as X
+    import copy
+    Tm = CodeTables(enums={"PROGRAM_CAPABILITY_CLASS": {"TRANSITION": 1, "PROJECTION": 2}, "REFIT_MODE": {"NONE": 1, "SCHEDULED_REFIT": 2}},
+                    ref_types={"R": 1, "PROGRAM": 1, "RULE": 1})
+    d = _manifest_dict(manifest(), Tm)
+    lie = copy.deepcopy(d); lie["refit_mode_is_scheduled"] = True                       # caller flag disagrees with resolved mode
+    with pytest.raises(ValueError): X.manifest_hash(lie, Tm.enums)
+    sch = _manifest_dict(manifest(refit_mode="SCHEDULED_REFIT", refit_rule_ref=R("rr"), parameter_generation_source_ref=R("pg")), Tm)
+    nolie = copy.deepcopy(sch); nolie["refit_mode_is_scheduled"] = False
+    with pytest.raises(ValueError): X.manifest_hash(nolie, Tm.enums)
+    bypass = copy.deepcopy(sch); bypass["refit_rule_ref"] = None; bypass["refit_mode_is_scheduled"] = False   # caller tries to dodge presence rule
+    with pytest.raises(ValueError): X.manifest_hash(bypass, Tm.enums)
+    nf = copy.deepcopy(sch); del nf["refit_mode_is_scheduled"]; nf["refit_rule_ref"] = None                  # flag omitted: mode still decides
+    with pytest.raises(ValueError): X.manifest_hash(nf, Tm.enums)
+    ok = copy.deepcopy(sch); del ok["refit_mode_is_scheduled"]
+    assert X.manifest_hash(ok, Tm.enums) == X.manifest_hash(sch, Tm.enums)
+    bad = copy.deepcopy(d); bad["refit_mode"] = 9
+    with pytest.raises(ValueError): X.manifest_hash(bad, Tm.enums)
+    bad = copy.deepcopy(d); bad["program_capability_declarations"][0]["capability_class"] = 9
+    with pytest.raises(ValueError): X.manifest_hash(bad, Tm.enums)
+    remap = {"PROGRAM_CAPABILITY_CLASS": {"TRANSITION": 40, "PROJECTION": 41}, "REFIT_MODE": {"NONE": 7, "SCHEDULED_REFIT": 8}}
+    T3 = CodeTables(enums=remap, ref_types={"R": 1, "PROGRAM": 1, "RULE": 1})
+    m = manifest(refit_mode="SCHEDULED_REFIT", refit_rule_ref=R("rr"), parameter_generation_source_ref=R("pg"))
+    assert X.manifest_hash(_manifest_dict(m, T3), remap) == O.manifest_hash(T3, m)
