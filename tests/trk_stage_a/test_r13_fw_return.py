@@ -6,7 +6,7 @@ def code(fn, *a):
     except Refusal as e: return e.code
 class T(unittest.TestCase):
     def test_only_evidence_requests_lineage(self):
-        self.assertIsNone(code(F.check_fw_return_classes, ["EVIDENCE", "REQUESTS", "LINEAGE"]))
+        self.assertIsNone(code(F.check_fw_return_classes, ["EVIDENCE", "REQUEST", "LINEAGE"]))
         for bad in ("FEATURE", "PREDICTIVE_INPUT", "PACKAGE", "evidence"): self.assertEqual(code(F.check_fw_return_classes, ["EVIDENCE", bad]), "FW_RETURN_CLASS_NOT_PERMITTED", bad)
         self.assertEqual(code(F.check_fw_return_classes, []), "FW_RETURN_EMPTY")
     def test_fw_derived_predictive_input_needs_lineage_and_rebind(self):

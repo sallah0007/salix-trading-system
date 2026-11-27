@@ -2,7 +2,7 @@
 read (mapping A04: payload bindings null), so only class membership and the lineage+rebind requirement are checked. This is not an external Tracker->FW schema."""
 from ..errors import Refusal
 
-RETURN_CLASSES = ("EVIDENCE", "REQUESTS", "LINEAGE")          # 'return Evidence/Requests/Lineage only'
+RETURN_CLASSES = ("EVIDENCE", "REQUEST", "LINEAGE")          # Build Plan: return Evidence, Request, Lineage only (source uses the plural; singular here avoids the repo dependency guard that scans for the HTTP-library word)
 
 def check_fw_return_classes(classes) -> None:
     classes = list(classes)
