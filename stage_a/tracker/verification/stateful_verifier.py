@@ -1,7 +1,7 @@
 """Independent verification of a materialization record against the bytes actually stored.
 Imports only stdlib and this verifier's own independent modules. A static test asserts that."""
 from .independent_encoding import enc_bytes, parse
-from .independent_hashing import manifest_digest, graph_digest, program_digest
+from .independent_hashing import manifest_digest, graph_digest, program_digest, materialization_digest
 from .independent_traversal import (structure_violations, extracted_ops, extracted_caps, reference_evaluate,
                                     RefEvalError, bits, make_probe)
 from .verification_result import make_result, PASS, FAIL, INSUFFICIENT_EVIDENCE, SCOPE_MATERIALIZATION
@@ -27,6 +27,7 @@ def verify_materialization(*, store_get, record: dict, declared: dict, expect_sc
 
     if not chk("record_field_set", isinstance(record, dict) and set(record) == _REC_KEYS):
         return make_result(FAIL, SCOPE_MATERIALIZATION, subject, checks, reasons)
+    chk("materialization_hash_recomputed", materialization_digest(record, enc_bytes) == record["materialization_hash"])      # a free-form hash label is never verified identity
     raw = store_get(record["object_key"])
     if not chk("artifact_present", raw is not None):
         return make_result(INSUFFICIENT_EVIDENCE, SCOPE_MATERIALIZATION, subject, checks, reasons)

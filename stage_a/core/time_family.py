@@ -4,6 +4,7 @@ broker-time rule are source-owned and UNBOUND; nothing here defaults, derives or
 What IS source-present and therefore implemented: (a) an unregistered timeframe is refused, never assumed; (b) a parent bar is COMPLETE only against an explicitly SUPPLIED segmentation (parent -> exact child ids)
 and only when every listed child is present, no extra child exists, and no child is duplicated - completeness is never inferred from counts or labels; (c) cross-timeframe as-of: a parent value is visible at a
 query time only when its availability is STRICTLY before it (half-open, equality excluded), i.e. a parent bar is never back-projected onto an earlier child time."""
+from dataclasses import dataclass
 from ..errors import Refusal
 
 COMPLETE, INCOMPLETE, UNDETERMINED = "COMPLETE", "INCOMPLETE", "UNDETERMINED_CALENDAR_UNBOUND"
@@ -40,7 +41,24 @@ def parent_visible_asof(parent_available_asof: int, query_asof: int) -> bool:
     if not _int(parent_available_asof) or not _int(query_asof) or parent_available_asof < 0 or query_asof < 0: raise Refusal("as-of", code="ASOF_MALFORMED")
     return parent_available_asof < query_asof
 
-def latest_visible_parent(parents, query_asof: int):
-    """parents: [(parent_id, available_asof, complete: bool)]. The latest COMPLETE parent visible strictly before query_asof, else None; an incomplete parent is never exposed."""
-    vis = [p for p in parents if p[2] is True and parent_visible_asof(p[1], query_asof)]
-    return max(vis, key=lambda p: p[1]) if vis else None
+SELECTED, NONE_VISIBLE, MULTIPLE_CANDIDATES = "SELECTED", "NONE_VISIBLE", "MULTIPLE_CANDIDATES"
+@dataclass(frozen=True)
+class ParentSelection:
+    state: str
+    parent_id: object = None
+    available_asof: object = None
+    candidates: tuple = ()          # on MULTIPLE_CANDIDATES: the tied ids, sorted for display only - NOT a selection rule
+
+def latest_visible_parent(parents, query_asof: int) -> ParentSelection:
+    """parents: [(parent_id, available_asof, complete: bool)]. Latest COMPLETE parent visible strictly before query_asof. If DISTINCT parents tie on the latest availability and no governed rule chooses, the result is
+    MULTIPLE_CANDIDATES (input order, registration order or id ordering never decides a single slot; no tie-break rule, K3/CASE or outcome metric is invented). The same id listed twice with the same availability
+    is one candidate; the same id with two availabilities is malformed. An incomplete parent is never exposed."""
+    seen = {}
+    for pid, asof, complete in parents:
+        if pid in seen and seen[pid][0] != asof: raise Refusal(str(pid), code="PARENT_LISTED_WITH_TWO_AVAILABILITIES")
+        seen[pid] = (asof, complete)
+    vis = {pid: a for pid, (a, c) in seen.items() if c is True and parent_visible_asof(a, query_asof)}
+    if not vis: return ParentSelection(NONE_VISIBLE)
+    top = max(vis.values()); tied = sorted((str(p) for p, a in vis.items() if a == top))
+    if len(tied) > 1: return ParentSelection(MULTIPLE_CANDIDATES, None, top, tuple(tied))
+    pid = [p for p, a in vis.items() if a == top][0]; return ParentSelection(SELECTED, pid, top)

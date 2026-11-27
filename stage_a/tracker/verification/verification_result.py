@@ -30,6 +30,23 @@ class VerificationResult:
             raise Refusal("%s %s" % (self.status, list(self.reasons)), code="VERIFICATION_NOT_PASS")
         return self
 
+COMPOSED_VERIFIER_ID = "tracker.verification.stateful_verifier.verify_materialization"
+_L2_CHECKS = ("equivalence_probe_batch", "equivalence_probe_incremental")        # the independent numeric recomputation; everything else is L1 structure/identity
+
+def split_levels(result):
+    """(l1, l2) from the verifier's typed result. L2 is UNAVAILABLE (never PASS, never a fallback to L1) when the verifier never reached the recomputation."""
+    names = dict(result.checks)
+    if result.status == INSUFFICIENT_EVIDENCE: return "FAIL", "UNAVAILABLE"
+    l1 = "PASS" if all(ok for n, ok in result.checks if n not in _L2_CHECKS) else "FAIL"
+    if not all(n in names for n in _L2_CHECKS): return l1, "UNAVAILABLE"
+    return l1, ("PASS" if all(names[n] for n in _L2_CHECKS) else "FAIL")
+
+def result_is_self_consistent(result) -> bool:
+    """True only if `result` is a VerificationResult whose hash is re-derived from its own typed fields (a forged digest or edited checks is detected). Not a security boundary: in-process code can build any object."""
+    if not isinstance(result, VerificationResult): return False
+    try: return make_result(result.status, result.scope, dict(result.subject), result.checks, result.reasons).result_hash == result.result_hash
+    except Exception: return False
+
 def make_result(status, scope, subject: dict, checks, reasons) -> VerificationResult:
     subj = tuple(sorted(subject.items()))
     chk = tuple(checks)
