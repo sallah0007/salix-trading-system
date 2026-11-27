@@ -111,39 +111,39 @@ DERIVATION_CLASS = INDEPENDENTLY_DERIVED (static `ast` import graph); EXACT_INPU
 LIMIT (stated, not hidden): this shows a module is IMPORTED on a callpath. It is NOT semantic clause conformance. A row-presence or import fact is not a semantic audit; an adapter aliased to receive-only code is NOT implemented request construction (rows 38-43); registry bytes are not logical requirements. IRREDUCIBLE INPUT for clause-level audit of rows 8-11, 14-21, 27-48: the Build Plan s27/E03 matrix text and Stage A Blueprint 1xf9Lv0q... were not resolvable by the Coder in R25 (the 273 KB change register 1ddBOTaD... was downloaded and contains no E03 module-tree; sha256 b5762085...ca8; Drive search for the Build Plan returned unrelated E3-A records). Owning function: Manager supplies the exact Build Plan Drive ID/revision. Consequence: rows stay at the section 3 STATE (alias/gap) plus the reachability below; none is marked semantically conforming. Recommendation: Manager names the Build Plan ID, then clause rows are filled from it.
 | # | E-03 path | repo module(s) resolved | PIPE | CORE | REVERIFY | tests importing | R25 derived reachability |
 |---|---|---|---|---|---|---|---|
-| 1 | stage_a/authority.py | `stage_a.authority` | Y | N | N | 2 | INVOKED_ON_A_CALLPATH |
-| 2 | stage_a/identifiers.py | `stage_a.identifiers` | Y | N | Y | 3 | INVOKED_ON_A_CALLPATH |
-| 3 | stage_a/errors.py | `stage_a.errors` | Y | Y | Y | 41 | INVOKED_ON_A_CALLPATH |
-| 4 | stage_a/clocks.py | `stage_a.clocks` | Y | N | N | 3 | INVOKED_ON_A_CALLPATH |
+| 1 | stage_a/authority.py | `stage_a.authority` | Y | N | N | 2 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
+| 2 | stage_a/identifiers.py | `stage_a.identifiers` | Y | N | Y | 3 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
+| 3 | stage_a/errors.py | `stage_a.errors` | Y | Y | Y | 41 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
+| 4 | stage_a/clocks.py | `stage_a.clocks` | Y | N | N | 3 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
 | 5 | stage_a/currentness.py | `stage_a.currentness` | N | N | N | 3 | REFERENCE_ONLY_NO_IN_REPO_CALLER |
-| 6 | stage_a/replay.py | `stage_a.replay` | Y | N | N | 4 | INVOKED_ON_A_CALLPATH |
+| 6 | stage_a/replay.py | `stage_a.replay` | Y | N | N | 4 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
 | 7 | stage_a/observability.py | `stage_a.observability` | N | N | N | 3 | REFERENCE_ONLY_NO_IN_REPO_CALLER |
 | 8 | composer/request_classification.py | `stage_a.composer.request_classification` | N | N | N | 1 | REFERENCE_ONLY_NO_IN_REPO_CALLER |
 | 9 | composer/governed_order_adapter.py | none (no repo module resolved from the row) | - | - | - | - | NOT_BUILT_OR_UNRESOLVED_PATH |
 | 10 | composer/build_executor.py | none (no repo module resolved from the row) | - | - | - | - | NOT_BUILT_OR_UNRESOLVED_PATH |
 | 11 | composer/refit_executor.py | none (no repo module resolved from the row) | - | - | - | - | NOT_BUILT_OR_UNRESOLVED_PATH |
-| 12 | composer/build_output.py | `stage_a.tracker.build_output_check` | Y | N | N | 5 | INVOKED_ON_A_CALLPATH |
-| 13 | expression/manifest.py | `stage_a.composer.expression.manifest` | Y | N | Y | 10 | INVOKED_ON_A_CALLPATH |
-| 14 | expression/schema.py | `stage_a.composer.expression.schema` | Y | N | Y | 2 | INVOKED_ON_A_CALLPATH |
-| 15 | expression/canonical_encoding.py | `stage_a.composer.expression.canonical_encoding` | Y | N | Y | 5 | INVOKED_ON_A_CALLPATH |
-| 16 | expression/hashing.py | `stage_a.composer.expression.hashing` | Y | N | Y | 5 | INVOKED_ON_A_CALLPATH |
-| 17 | expression/opcodes.py | `stage_a.composer.expression.opcodes` | Y | N | Y | 1 | INVOKED_ON_A_CALLPATH |
-| 18 | expression/capability.py | `stage_a.composer.expression.capability` | Y | N | Y | 1 | INVOKED_ON_A_CALLPATH |
-| 19 | expression/evaluator.py | `stage_a.composer.expression.evaluator` | Y | N | Y | 4 | INVOKED_ON_A_CALLPATH |
-| 20 | expression/fit_generation.py | `stage_a.composer.expression.fit_generation` | Y | N | N | 1 | INVOKED_ON_A_CALLPATH |
-| 21 | expression/artifacts.py | `stage_a.composer.expression.artifacts` | Y | N | Y | 3 | INVOKED_ON_A_CALLPATH |
-| 22 | tracker/quant_intake_adapter.py | `stage_a.tracker.quant_intake_adapter` | Y | N | N | 13 | INVOKED_ON_A_CALLPATH |
-| 23 | tracker/quant_certification.py | `stage_a.tracker.quant_certification` | Y | N | N | 3 | INVOKED_ON_A_CALLPATH |
+| 12 | composer/build_output.py | `stage_a.tracker.build_output_check` | Y | N | N | 5 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
+| 13 | expression/manifest.py | `stage_a.composer.expression.manifest` | Y | N | Y | 10 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
+| 14 | expression/schema.py | `stage_a.composer.expression.schema` | Y | N | Y | 2 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
+| 15 | expression/canonical_encoding.py | `stage_a.composer.expression.canonical_encoding` | Y | N | Y | 5 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
+| 16 | expression/hashing.py | `stage_a.composer.expression.hashing` | Y | N | Y | 5 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
+| 17 | expression/opcodes.py | `stage_a.composer.expression.opcodes` | Y | N | Y | 1 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
+| 18 | expression/capability.py | `stage_a.composer.expression.capability` | Y | N | Y | 1 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
+| 19 | expression/evaluator.py | `stage_a.composer.expression.evaluator` | Y | N | Y | 4 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
+| 20 | expression/fit_generation.py | `stage_a.composer.expression.fit_generation` | Y | N | N | 1 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
+| 21 | expression/artifacts.py | `stage_a.composer.expression.artifacts` | Y | N | Y | 3 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
+| 22 | tracker/quant_intake_adapter.py | `stage_a.tracker.quant_intake_adapter` | Y | N | N | 13 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
+| 23 | tracker/quant_certification.py | `stage_a.tracker.quant_certification` | Y | N | N | 3 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
 | 24 | tracker/publication.py | `stage_a.tracker.publication` | N | N | N | 3 | REFERENCE_ONLY_NO_IN_REPO_CALLER |
-| 25 | materialization/stateful_materializer.py | `stage_a.tracker.materialization.stateful_materializer` | Y | N | Y | 5 | INVOKED_ON_A_CALLPATH |
-| 26 | verification/stateful_verifier.py | `stage_a.tracker.verification.stateful_verifier` | Y | N | Y | 5 | INVOKED_ON_A_CALLPATH |
-| 27 | verification/verification_result.py | `stage_a.tracker.verification.verification_result` | Y | Y | Y | 5 | INVOKED_ON_A_CALLPATH |
-| 28 | context/event_identity.py | `stage_a.context.decision_context` | N | Y | Y | 2 | INVOKED_ON_A_CALLPATH |
+| 25 | materialization/stateful_materializer.py | `stage_a.tracker.materialization.stateful_materializer` | Y | N | Y | 5 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
+| 26 | verification/stateful_verifier.py | `stage_a.tracker.verification.stateful_verifier` | Y | N | Y | 5 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
+| 27 | verification/verification_result.py | `stage_a.tracker.verification.verification_result` | Y | Y | Y | 5 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
+| 28 | context/event_identity.py | `stage_a.context.decision_context` | N | Y | Y | 2 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
 | 29 | context/coverage.py | `stage_a.context.news_hub_v2` | N | N | N | 5 | REFERENCE_ONLY_NO_IN_REPO_CALLER |
 | 30 | context/applicability.py | `stage_a.context.news_hub_v2` | N | N | N | 5 | REFERENCE_ONLY_NO_IN_REPO_CALLER |
 | 31 | context/resolver.py | `stage_a.context.news_hub_v2` | N | N | N | 5 | REFERENCE_ONLY_NO_IN_REPO_CALLER |
 | 32 | context/causal_gate.py | none (no repo module resolved from the row) | - | - | - | - | NOT_BUILT_OR_UNRESOLVED_PATH |
-| 33 | gateway/dependency_resolution.py | `stage_a.gateway.contracts` | N | Y | Y | 8 | INVOKED_ON_A_CALLPATH |
+| 33 | gateway/dependency_resolution.py | `stage_a.gateway.contracts` | N | Y | Y | 8 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
 | 34 | gateway/binding.py | `stage_a.gateway.v038` | N | N | N | 4 | REFERENCE_ONLY_NO_IN_REPO_CALLER |
 | 35 | gateway/non_delivery.py | none (no repo module resolved from the row) | - | - | - | - | NOT_BUILT_OR_UNRESOLVED_PATH |
 | 36 | gateway/settlement.py | none (no repo module resolved from the row) | - | - | - | - | NOT_BUILT_OR_UNRESOLVED_PATH |
@@ -160,14 +160,14 @@ LIMIT (stated, not hidden): this shows a module is IMPORTED on a callpath. It is
 | 47 | health/blast_radius.py | `stage_a.health.blast_radius` | N | N | N | 3 | REFERENCE_ONLY_NO_IN_REPO_CALLER |
 | 48 | health/expectation.py | none (no repo module resolved from the row) | - | - | - | - | NOT_BUILT_OR_UNRESOLVED_PATH |
 | 49 | coordination/interface.py | `stage_a.coordination.interface` | N | N | N | 0 | REFERENCE_ONLY_NO_IN_REPO_CALLER |
-| 50 | coordination/transition_record.py | `stage_a.coordination.transition_record` | Y | N | N | 4 | INVOKED_ON_A_CALLPATH |
-| 51 | coordination/object_store_journal.py | `stage_a.coordination.object_store_journal` | Y | Y | Y | 11 | INVOKED_ON_A_CALLPATH |
+| 50 | coordination/transition_record.py | `stage_a.coordination.transition_record` | Y | N | N | 4 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
+| 51 | coordination/object_store_journal.py | `stage_a.coordination.object_store_journal` | Y | Y | Y | 11 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
 | 52 | coordination/fencing.py | `stage_a.coordination.fencing` | N | N | N | 1 | REFERENCE_ONLY_NO_IN_REPO_CALLER |
-| 53 | coordination/recovery.py | `stage_a.coordination.recovery` | Y | N | N | 2 | INVOKED_ON_A_CALLPATH |
+| 53 | coordination/recovery.py | `stage_a.coordination.recovery` | Y | N | N | 2 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
 | 54 | coordination/scheduler.py | `stage_a.coordination.scheduler` | N | N | N | 2 | REFERENCE_ONLY_NO_IN_REPO_CALLER |
-| 55 | storage/object_store.py | `stage_a.storage.object_store` | Y | Y | Y | 15 | INVOKED_ON_A_CALLPATH |
+| 55 | storage/object_store.py | `stage_a.storage.object_store` | Y | Y | Y | 15 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
 | 56 | storage/postgres_read_model.py | `stage_a.storage.postgres_read_model` | N | N | N | 2 | REFERENCE_ONLY_NO_IN_REPO_CALLER |
-| 57 | storage/keys.py | `stage_a.storage.keys` | Y | Y | Y | 3 | INVOKED_ON_A_CALLPATH |
+| 57 | storage/keys.py | `stage_a.storage.keys` | Y | Y | Y | 3 | IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE |
 
 Reading the table: `REFERENCE_ONLY_NO_IN_REPO_CALLER` = no in-repo module on the three entry closures imports it (it may be exercised by tests only). `NOT_BUILT_OR_UNRESOLVED_PATH` = no repo module resolved from the row or by suffix (Composer-owned rows 9-11 are LATER; the rest are NOT_BUILT or live under another name that the row text does not name: a Manager mapping decision).
 
@@ -297,9 +297,23 @@ Producer, observer and verifier are kept exact. CODER-RUN (author-run, native to
 ## 14. R26 changes (supersedes the R25 "NOT built" list where stated)
 Clause-level audit: `docs/closeout/TRK-STAGE-A-R26-CLAUSE-AUDIT.md` (Build Plan 1CVUUPJ4... actually read; locators in `docs/SOURCE_LOCATORS.md`). The R25 sentence that the Build Plan ID was an irreducible input is WITHDRAWN: the document was supplied and read.
 - Defects fixed: typed FAIL / unknown status / truncated PASS profile can no longer be recorded as HEALTHY composed evidence (typed status wins; `PASS_PROFILE` pinned to the real verifier); composed evidence binds the verified VERSION; `due_for_reverification` takes the bound expected version so foreign-version freshness cannot suppress work; conflicting completeness for one parent is refused in every order.
-- Gateway health-to-feature gap CLOSED for Core-produced snapshots: `HealthBinding` (feature id/version/instrument/timeframe); no binding = HEALTH_BINDING_UNBOUND, mismatch = HEALTH_BINDING_MISMATCH. Admitted external binding/provenance and lifecycle status-kind/producer identity are NOT selected.
+- [R27-CORRECTED] R26 wording "gateway health-to-feature gap CLOSED / default-deny" was an OVERCLAIM and is withdrawn: a plain snapshot, a copy with `binding=None`, and an unrelated subject with a caller-asserted `HealthBinding` each yielded a Binding. See section 15 for the actual R27/R28 state.
 - Scheduler now verifies the EXISTING pinned candidate recording evidence (`candidate-recording-evidence/` key, put_if_absent, never overwritten; corrupt records fail as found). Candidate storage only: not an authority kind, not accepted persistence, no daemon, host/scheduling qualification unbound. The caller's `max_items` is the explicit resource bound.
 - New candidate predicates (registry evidence-truth; causal imputation/fitted-transform firewall) with Core callpath `judge_transition_evidence` / `judge_transform` consumed by `eligible_asof`; per-timeframe vintage/watermark snapshot (`resolve_snapshot`) with unique-positive, ambiguity/absence UNRESOLVED and Core journaling. Source-owned slots stay unbound: authoritative evidence store admission, freshness values, fitting/holdout contract instances, calendar/registry instance, selection tie rule.
 - Still NOT built (named): FW ten-field/H3 and ML writer/finalizer/manifest-generation/union associations (Contract V0.38 H3 and MLCore not re-opened in R26), request-classification wiring (D6), single DeliveredFeatureEntry owner module (Annex not re-opened), `coordination/scheduler` ceilings (policy instance source-owned).
 - B22 limits kept explicit: self-supplied task/denylist is not principal/input-scope admission; frozen s15 also names model/version and permitted-evidence context; no SALIX AI.
 - Mutation sweep `mutation_sweep_r25.py` now 76 mutants (R25 + R26 changed code), all killed (author-run).
+
+
+## 15. R27/R28 repairs and source-backed additions (supersedes sections 13-14 where stated)
+Evidence class for every item: AUTHOR-RUN (native tool output in this session), not independently reviewed; CI/merged trees are reported in the PR, not here. `tools/audit_e03_callpaths.py` label `IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE` replaces `INVOKED_ON_A_CALLPATH`: static import reachability is NOT an executed Gateway.resolve/consumer workflow and is not integration evidence; section 3A's last column is to be read that way.
+- Gateway Health (R27 A1-A4 + R28 2): `SimulatedGateway` decides a Core snapshot by TYPE (`CoreHealthSnapshot`) and requires it journal-confirmed (`confirm_snapshot`, id re-derived, present in `SNAPSHOT_ISSUED`); shape-only snapshots are refused unless the legacy-harness flag is set explicitly (tests only); the subject-to-dependency association is a caller-supplied UNADMITTED input (`associate_subject`), an unassociated bound snapshot is HELD. R28: issuance is not current permission - at use `snapshot_current_at_use(snap, fence)` re-reads the current journal (quarantine, epoch, ambiguity, re-verification request, Health expiry against its own max_age, evidence-truth/transform verdicts incl. declared required proofs) and refuses `HEALTH_SNAPSHOT_NOT_CURRENT_AT_USE`; finalized bindings are never re-judged or rewritten. No historical Health mode is invented (`asof_seq` still refuses). Still HELD: the kernel-string-to-frozen-ID mapping and who admits the association.
+- Evidence records (R27 A2/A3): no defaults for revoked/current/approval_state; verdicts keyed by the full scope and (R28 1) by an unambiguous typed JSON key (no delimiter assumptions); proven failing under the old join.
+- Composed evidence provenance (R28 3): a result earns COMPOSED_RECOMPUTATION only if issued by a verifier run in this process (`issue_result` receipt); public `make_result` objects are refused. Not a security boundary (in-process code can call `issue_result`) and the receipt does not survive restart; the journal keeps digest and class only.
+- Delivered entry (R27/R28 4): `gateway/binding.py` is the single constructor path used by `SimulatedGateway.resolve`; `verify_delivered` re-derives the hash through the INDEPENDENT composition (`schema.independent`) from the supplied code tables, refuses look-alikes/field drift/unknown codes, and is called by `fw.receiver.receive` and `ml.receiver.build_row` (no tables => `DELIVERED_HASH_NOT_VERIFIABLE`, fail closed unless explicitly allowed). The Binding envelope still carries the digest; no byte layout beyond the frozen Annex hash composition is claimed.
+- H3 (R28): `gateway/outcome_series.py` implements the V0.37/V0.38 required and conditional fields and the whole-interval rule. Authorized segments, sealed-holdout regions and conditional applicability are caller-supplied UNADMITTED inputs; closed-integer interval convention is mine and named. `fw.receiver.receive_outcome_series` is the consumer entry. No real FW/ML connection.
+- Closure (R28): `ml/closure.py` implements the Contract section X.1 closure object, the EDGE_CLASS vocabulary and the fail-closed rule; the verdict is DERIVED from NODE_SET/EDGE_SET over the union of content-carrying edges, and self-asserted CLOSURE_COMPLETE/PASS is checked against it. HELD individually: the accepted completeness witness/provider for the edge set, FINAL_CLOSURE_HASH composition, resolver appointment, closure policy instance; `require_standalone_qualified` still refuses. A derived PASS is a candidate only.
+- Sweeps: `mutation_sweep_r28.py` = 39 mutants over R27/R28 changed code, all killed (author-run). One named behavioural equivalent: swapping the independent hash composition for the producer one is not killable by behaviour; independence is structural and covered by the two-implementation equality tests.
+
+### Still NOT built or read (named; no gate cleared)
+ML writer/finalizer/manifest-generation/request association against MLCore (downloaded, not yet applied clause-by-clause); FW10 source mappings and request/return lineage payload; Composer request classification/intake and the Tracker-issued order path (V9 7A/27/28, 38.2); snapshot seal/selection/watermark wiring through Core and the L2 trigger/burst/resource mechanics; Health blast radius; remaining source reads (frozen Parent/Matrix overlays, MasterHealth V3, DecisionContext V4 140-151, NewsHub V2 p146 ACTUAL max(public,receipt) vs the unbound general AVAILABLE_ASOF relation, registry snapshot minimum fields). Each needs either the read (engineering) or the named external input (provider/principal/policy instance); the remaining clause-by-clause E03/TR, D1-D18/D12' and A07 rows keep their R26 verdicts until re-audited. No 41-unit/100-qualifier semantic award, NL-0187 stays proposed, A02 Class B HOLD, A07/COVERAGE OPEN, P12/N2 UNSATISFIED, QC34 ALERT(HOLD), A08 READY_TO_CODE NO, Stage A HOLD; Sallah's sign-off is pending.

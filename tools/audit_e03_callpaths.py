@@ -41,5 +41,5 @@ for l in rows:
     if not mods: print("| %s | %s | none (no repo module resolved from the row) | - | - | - | - | NOT_BUILT_OR_UNRESOLVED_PATH |" % (n, path)); continue
     f = lambda k: "Y" if any(m in ENT[k] for m in mods) else "N"
     t = sum(1 for s in tests.values() if any(re.search(r"\b" + re.escape(m) + r"\b", s) or re.search(r"from\s+" + re.escape(m.rpartition(".")[0]) + r"\s+import[^\n]*\b" + re.escape(m.rpartition(".")[2]) + r"\b", s) for m in mods))
-    d = "INVOKED_ON_A_CALLPATH" if "Y" in (f("PIPE"), f("CORE"), f("REVERIFY")) else "REFERENCE_ONLY_NO_IN_REPO_CALLER"
+    d = "IMPORT_REACHABLE_NOT_EXECUTION_EVIDENCE" if "Y" in (f("PIPE"), f("CORE"), f("REVERIFY")) else "REFERENCE_ONLY_NO_IN_REPO_CALLER"
     print("| %s | %s | %s | %s | %s | %s | %d | %s |" % (n, path, ", ".join("`%s`" % m for m in mods), f("PIPE"), f("CORE"), f("REVERIFY"), t, d))
