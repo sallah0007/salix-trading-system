@@ -35,6 +35,12 @@ def from_final_store(store) -> HealthObservation:
         k = type(o).__name__ + (":" + o.reason if type(o).__name__ == "NonDeliveryResolution" else ""); by[k] = by.get(k, 0) + 1
     return HealthObservation("GATEWAY_BINDING_NON_DELIVERY", {"windows": len(out), "by_outcome": dict(sorted(by.items()))}, "final_resolution_store", scope="GLOBAL:FINAL_RESOLUTION_STORE")
 
+def from_gateway_late_evidence(gateway) -> HealthObservation:
+    """Immutable late/settlement evidence the Gateway recorded beside stored outcomes (V0.38 forensic classification). Facts only: counts by classification; a SETTLEMENT_BREACH is evidence, the Health verdict needs the unbound policy."""
+    ev = gateway.all_late_evidence(); by = {}
+    for e in ev: by[e.classification] = by.get(e.classification, 0) + 1
+    return HealthObservation("GATEWAY_BINDING_NON_DELIVERY", {"late_evidence": len(ev), "by_classification": dict(sorted(by.items()))}, "gateway_late_evidence", scope="GLOBAL:GATEWAY_LATE_EVIDENCE")
+
 def from_fw_association(assoc) -> HealthObservation:
     rets = assoc.all_returns(); by = {}
     for r in rets: by[r.return_class] = by.get(r.return_class, 0) + 1

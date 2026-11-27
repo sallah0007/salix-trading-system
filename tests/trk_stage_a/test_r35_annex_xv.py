@@ -1,5 +1,7 @@
 """Typed Annex V1.2 (13PE_pli3ZlFjjPdhHtWtLyyH2XdAv8XGA4FN0KGcIlA) XV END-TO-END ACCEPTANCE and XVI CROSS-CONSUMER CONSISTENCY against the repository SimulatedGateway + FW/ML receivers (candidate, simulation, NOT an external Gateway).
-XV names thirteen fields asserted for exact equality, ML-only fields, and eight required negatives plus five ML-only negatives. Each is exercised below through ONE path: published row -> Gateway outcome -> FW receive_verified AND ML build_row."""
+R36 CORRECTION OF THE R35 COVERAGE CLAIM: this file does NOT exercise every XV negative through both consumers. Exact coverage: (a) 13-field equality + XVI: FW receive_verified and ML build_row of the same outcome (test_fw_and_ml_receive... / test_xvi...);
+(b) wrong version / wrong scope / hash mismatch / CATCHING_UP: FW receive_verified ONLY; missing required dependency: FW receive_verified, plus ML build_row only as the explicit excluded row; (c) the ML-only items covered are required-absence-as-explicit-excluded-row and EVENTUAL-not-substituted-for-ORIGINAL_AS_OBSERVED;
+forward-fill / mixed feed era / silent drop beyond the explicit excluded row are NOT exercised here (feed era is covered by test_r34_consumption_claim only for the claim path, not through build_row). The settlement test records LATE_VISIBILITY non-delivery and retry immutability; the SETTLEMENT_BREACH emitter is `SettlementBreachEvidence` below."""
 import unittest
 from stage_a.errors import Refusal
 from stage_a.gateway import contracts as G
@@ -42,4 +44,17 @@ class XV(unittest.TestCase):
         r = MLR.build_row("rowX", R("gen"), [_entry(fid=J, ver="f1")], [miss], g, "ORIGINAL_AS_OBSERVED", NONE_, lambda o: ("ENUM", "REASON", "REQUIRED_ABSENT"), tables=g.t)
         self.assertEqual((r.included, r.row_exclusion_reason, r.bindings), (False, ("ENUM", "REASON", "REQUIRED_ABSENT"), ()))                      # a required absence yields an EXPLICIT excluded row with its reason, never a silent drop or a filled row
         ev = _gw(vint="EVENTUAL"); o = ev.resolve("r1", e, I, I, 3, 10, _health(), data_vintage_mode="ORIGINAL_AS_OBSERVED"); self.assertEqual(o.reason, "DATA_VINTAGE_MODE_MISMATCH")    # EVENTUAL never substitutes for ORIGINAL_AS_OBSERVED
+class SettlementBreachEvidence(unittest.TestCase):
+    """R36: the V0.38 forensic classification has an actual emitter and callpath: `SimulatedGateway.record_late_evidence` -> immutable evidence beside the stored outcome -> Health adapter facts. The governed SETTLEMENT_DELAY / certified lag remain a HELD slot."""
+    def test_pre_fence_data_visible_after_the_watermark_is_recorded_as_a_settlement_breach_beside_an_unchanged_outcome(self):
+        from stage_a.gateway import v038 as V
+        from stage_a.health import adapters as AD
+        g = _gw(); e = _entry(ver="f1"); b = g.resolve("r1", e, I, I, 3, 10, _health()); wm = V.VisibilityWatermark(50, 12)
+        ev = g.record_late_evidence("r1", 9, 51, wm); self.assertEqual((ev.classification, ev.fence, ev.watermark_position), (V.SETTLEMENT_BREACH, 10, 50))
+        self.assertIs(g.outcome("r1"), b); self.assertIs(FWR.receive_verified(b, e, I, I, T, g), b)                                  # the bound outcome is NOT rewritten
+        self.assertEqual(g.record_late_evidence("r1", 9, 51, wm), ev); self.assertEqual(g.late_evidence("r1"), (ev,))                       # idempotent
+        self.assertEqual(g.record_late_evidence("r1", 10, 99, wm).classification, V.GENUINE_LATE); self.assertEqual(g.record_late_evidence("r1", 9, 50, wm).classification, V.RESOLVER_FAULT)
+        self.assertEqual(code(g.record_late_evidence, "r1", 9, 50, wm, omitted_by_resolver=False), "NOT_LATE"); self.assertEqual(code(g.record_late_evidence, "nope", 9, 51, wm), "NO_OUTCOME_TO_ANNOTATE")
+        self.assertEqual(code(g.record_late_evidence, "r1", 9, 51, (50, 12)), "LATE_EVIDENCE_INPUT_INVALID")
+        o = AD.from_gateway_late_evidence(g); self.assertEqual(o.facts, {"late_evidence": 3, "by_classification": {"GENUINE_LATE": 1, "RESOLVER_FAULT": 1, "SETTLEMENT_BREACH": 1}}); self.assertEqual((o.scope, o.admitted), ("GLOBAL:GATEWAY_LATE_EVIDENCE", False))
 if __name__ == "__main__": unittest.main()

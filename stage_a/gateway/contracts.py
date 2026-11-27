@@ -60,6 +60,11 @@ class AbsenceApplied:
     request_id: str; feature_id: bytes; feature_version: str; absence_handling_applied_ref: Ref
 
 @dataclass(frozen=True)
+class LateEvidence:
+    """Immutable forensic evidence (V0.38 FORENSIC CLASSIFICATION) recorded BESIDE a stored outcome; it never rewrites the outcome. classification in GENUINE_LATE | SETTLEMENT_BREACH | RESOLVER_FAULT."""
+    request_id: str; consumer_id: Optional[str]; fence: int; classification: str; available_asof: int; publish_log_position: int; watermark_position: int
+
+@dataclass(frozen=True)
 class Binding:
     request_id: str; entry: O.DeliveredFeatureEntry; delivered_feature_hash: bytes; fence: int
 
@@ -78,6 +83,7 @@ class SimulatedGateway:
         self.rows: Dict[tuple, list] = {}
         self._outcomes: Dict[str, object] = {}
         self._later_lineage: Dict[str, list] = {}
+        self._late_evidence: Dict[tuple, list] = {}
     def publish(self, row: PublishedRow):
         k = (row.feature_id, row.feature_version, row.instrument_id, row.timeframe_id)
         self.rows.setdefault(k, []).append(row)
@@ -172,6 +178,20 @@ class SimulatedGateway:
         elif canon != out: raise Refusal(request_id, code="WINDOW_OUTCOME_STORE_DISAGREES")
         self._window_issued.setdefault((cid, getattr(canon, "request_id", request_id)), canon)      # the outcome object names the request that first decided it; the identity record (not that request's binding) is the commit
         return self._window_issued.setdefault((cid, request_id), canon)
+
+    def record_late_evidence(self, request_id: str, available_asof: int, publish_log_position: int, watermark, *, omitted_by_resolver: bool = True, consumer_id: Optional[str] = None) -> "LateEvidence":
+        """The emitter for `v038.classify_late`: when data with AVAILABLE_ASOF before the stored outcome's fence is observed to have become visible LATER than the outcome's visibility watermark, classify it (SETTLEMENT_BREACH when its publish-log position is past the watermark) and append immutable evidence beside the outcome.
+        The stored outcome is NOT rewritten, re-evaluated or widened. The SETTLEMENT_DELAY / certified lag themselves are not supplied here (no invented bound; `v038.check_settlement` takes them from a governed slot that stays held). Identical evidence is idempotent. `watermark` is the VisibilityWatermark the outcome was resolved under (supplied)."""
+        from . import v038 as V
+        o = self.outcome(request_id, consumer_id)
+        if o is None: raise Refusal(request_id, code="NO_OUTCOME_TO_ANNOTATE")
+        if not isinstance(watermark, V.VisibilityWatermark) or not all(type(x) is int for x in (available_asof, publish_log_position)): raise Refusal(request_id, code="LATE_EVIDENCE_INPUT_INVALID")
+        ev = LateEvidence(request_id, consumer_id, o.fence, V.classify_late(available_asof, o.fence, publish_log_position, watermark, omitted_by_resolver), available_asof, publish_log_position, watermark.status_log_position)
+        lst = self._late_evidence.setdefault((consumer_id, request_id), [])
+        if ev not in lst: lst.append(ev)
+        return ev
+    def late_evidence(self, request_id: str, consumer_id: Optional[str] = None): return tuple(self._late_evidence.get((consumer_id, request_id), ()))
+    def all_late_evidence(self): return tuple(e for k in sorted(self._late_evidence, key=repr) for e in self._late_evidence[k])
 
     def note_correction_after_bind(self, request_id: str, evidence: Ref):
         """Correction after bind: the stored binding is NOT rewritten; later lineage evidence is appended beside it."""
