@@ -130,3 +130,33 @@ class ClaimService:
 
     def verify_projection(self):
         self._p.verify_against(self._j)
+
+    def claim(self, claim_id: str):
+        """Fresh-synced copy of a claim row, or None."""
+        self._p.sync(self._j)
+        c = self._p.claims.get(claim_id)
+        return None if c is None else dict(c)
+
+    def consumed_record(self, claim_id: str):
+        """The journal record that consumed this claim (the exercised-authority witness), or None."""
+        self._p.sync(self._j)
+        for rec in self._j.read_from(1):
+            if rec.kind == CLAIM_CONSUMED and rec.body().get("claim_id") == claim_id:
+                return rec
+        return None
+
+    def authorizes(self, subject_key: str, request_id: str) -> bool:
+        """True only if, on the freshly synced journal, a BOUND claim for exactly this subject and request
+        exists under an order that still verifies. Never raises: any doubt is False (fail-closed)."""
+        try:
+            self._p.sync(self._j)
+            cid = self._p.subject_claim.get(subject_key)
+            if cid is None:
+                return False
+            c = self._p.claims[cid]
+            if c["state"] != "BOUND" or c["request_id"] != request_id:
+                return False
+            self._verify_order(c["order_id"], subject_key, self._j.head().seq)
+            return True
+        except Exception:
+            return False
