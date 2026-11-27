@@ -79,58 +79,117 @@ LEGACY_COVERAGE = {"COVERED_WITH_EVENTS": ("AVAILABLE", "COMPLETE", "EVENTS_PRES
 
 def _has(rec, names): return any(rec.get(n) is not None for n in names)
 
+TS_FIELDS = ("REVISION_AVAILABLE_AT", "PUBLICLY_AVAILABLE_AT", "SALIX_RECEIVED_AT", "AVAILABLE_ASOF")
+ACTUAL_TS_FIELDS = ("ACTUAL_PUBLICLY_AVAILABLE_AT", "ACTUAL_SALIX_RECEIVED_AT", "ACTUAL_AVAILABLE_ASOF")
+# Per-value availability stamps (News Hub V2 sec 9.0 conditional list + legacy body; paraphrased, not copied): a consensus/previous value is consumable only with its own
+# available-as-of stamp; a value present WITHOUT its stamp is unverified => withheld (fail closed).
+VALUE_STAMPS = (("CONSENSUS_VALUE", "CONSENSUS", "CONSENSUS_AVAILABLE_ASOF"), ("PREVIOUS", "PREVIOUS", "PREVIOUS_AVAILABLE_ASOF"))
+KNOWN_REVISION_RULES = ("HIGHEST_REVISION_SEQ",)
+
+def _is_ts(v) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
+
+def _need_ts(rec: dict, names, code: str) -> None:
+    bad = [n for n in names if not _is_ts(rec.get(n))]
+    if bad:
+        raise Refusal(",".join(bad), code=code)
+
 def check_event_record(rec: dict) -> None:
+    if not isinstance(rec, dict):
+        raise Refusal("event record not a mapping", code="EVENT_RECORD_MALFORMED")
     missing = [("/".join(g)) for g in EVENT_REQUIRED if not _has(rec, g)]
     if missing:
         raise Refusal(",".join(missing), code="EVENT_RECORD_FIELD_MISSING")
     if rec["KNOWABILITY_MODE"] not in KNOWABILITY:
         raise Refusal(str(rec["KNOWABILITY_MODE"]), code="BAD_KNOWABILITY_MODE")
+    _need_ts(rec, TS_FIELDS, "EVENT_TIMESTAMP_MALFORMED")                                 # missing / non-integer / bool causal stamps fail closed
     if _has(rec, ("ACTUAL_VALUE", "ACTUAL")):
-        need = [k for k in ("ACTUAL_PUBLICLY_AVAILABLE_AT", "ACTUAL_SALIX_RECEIVED_AT", "ACTUAL_AVAILABLE_ASOF") if rec.get(k) is None]
+        need = [k for k in ACTUAL_TS_FIELDS if rec.get(k) is None]
         if need:
             raise Refusal(",".join(need), code="ACTUAL_NOT_CAUSALLY_CONSUMABLE")             # fail closed for authority-bearing use
+        _need_ts(rec, ACTUAL_TS_FIELDS, "EVENT_TIMESTAMP_MALFORMED")
         if rec["ACTUAL_AVAILABLE_ASOF"] != max(rec["ACTUAL_PUBLICLY_AVAILABLE_AT"], rec["ACTUAL_SALIX_RECEIVED_AT"]):
             raise Refusal("ACTUAL_AVAILABLE_ASOF", code="ACTUAL_AVAILABLE_ASOF_NOT_MAX_OF_PUBLIC_AND_RECEIPT")
+    for a, b, stamp in VALUE_STAMPS:
+        if rec.get(stamp) is not None and not _is_ts(rec[stamp]):
+            raise Refusal(stamp, code="EVENT_TIMESTAMP_MALFORMED")
     if rec.get("IMPACT_RATING") is not None and rec.get("IMPACT_RATING_VINTAGE") is None:
         raise Refusal("IMPACT_RATING", code="IMPACT_RATING_WITHOUT_VINTAGE")
 
 def check_daily_record(rec: dict) -> None:
+    if not isinstance(rec, dict):
+        raise Refusal("daily record not a mapping", code="DAILY_RECORD_MALFORMED")
     if "NO_EVENT_RECORDED" in rec:
         raise Refusal("NO_EVENT_RECORDED", code="NO_EVENT_RECORDED_IS_A_VALUE_NOT_A_BOOLEAN_FIELD")
     missing = [k for k in DAILY_REQUIRED if rec.get(k) is None]
     if missing:
         raise Refusal(",".join(missing), code="DAILY_RECORD_FIELD_MISSING")
+    if not _is_ts(rec["ISSUED_AT"]):
+        raise Refusal("ISSUED_AT", code="DAILY_TIMESTAMP_MALFORMED")
+    if rec.get("PRIOR_COVERAGE_ISSUED_AT") is not None and not _is_ts(rec["PRIOR_COVERAGE_ISSUED_AT"]):
+        raise Refusal("PRIOR_COVERAGE_ISSUED_AT", code="DAILY_TIMESTAMP_MALFORMED")
     if not (rec.get("SOURCE_SET") is not None or rec.get("SOURCE_POLICY_VERSION") is not None):
         raise Refusal("SOURCE_SET/SOURCE_POLICY_VERSION", code="DAILY_RECORD_FIELD_MISSING")
     req = rec["CONTEXT_REQUIREMENT_CLASS"]
+    if req not in REQ:
+        raise Refusal(str(req), code="BAD_CONTEXT_DIMENSION")
     # Record legality only (section 2 lines + conditional OPTIONAL_DEGRADED_POLICY_REF). 'Is this usable for a REQUIRED consumer' is a consumer decision (resolve_context).
     check_dimensions("OPTIONAL" if req == "OPTIONAL" else "NOT_REQUESTED", rec["SOURCE_AVAILABILITY_STATE"], rec["COVERAGE_STATE"], rec["EVENT_PRESENCE_STATE"],
                      rec["COVERAGE_BASIS"], rec.get("OPTIONAL_DEGRADED_POLICY_REF"), rec.get("PRIOR_COVERAGE_OBJECT_REF") is not None,
                      rec.get("PRIOR_COVERAGE_ISSUED_AT"), rec["ISSUED_AT"])
-    if req not in REQ:
-        raise Refusal(str(req), code="BAD_CONTEXT_DIMENSION")
 
 def event_consumable(ev: dict, cutoff: int):
-    """(consumable: bool, reason). ACTUAL and revisions are consumable only when their own availability <= the decision cutoff."""
+    """(consumable: bool, reason). Consumable at a decision cutoff only when EVERY causal stamp is a verified integer <= cutoff: REVISION_AVAILABLE_AT (sec 9.0 revision rule),
+    PUBLICLY_AVAILABLE_AT and SALIX_RECEIVED_AT (sec 9.0 keeps them distinct and forbids backfilling a publicly-earlier fact into an earlier SALIX state, so SALIX receipt must
+    also be <= cutoff), the general AVAILABLE_ASOF, and ACTUAL_AVAILABLE_ASOF when ACTUAL is present. DERIVATION (fail-closed, NOT a source formula): AVAILABLE_ASOF earlier
+    than max(PUBLIC, RECEIPT) is withheld. Per-value stamps gate consensus/previous: unstamped => withheld. Malformed/missing stamps raise rather than compare."""
+    if not _is_ts(cutoff):
+        raise Refusal("decision cutoff", code="CUTOFF_MALFORMED")
+    check_event_record(ev)                                                              # never rely on the caller having validated
     if ev["REVISION_AVAILABLE_AT"] > cutoff:
         return False, "REVISION_NOT_YET_AVAILABLE"
+    if ev["PUBLICLY_AVAILABLE_AT"] > cutoff:
+        return False, "PUBLICLY_NOT_YET_AVAILABLE"
+    if ev["SALIX_RECEIVED_AT"] > cutoff:
+        return False, "SALIX_NOT_YET_RECEIVED"
+    if ev["AVAILABLE_ASOF"] > cutoff:
+        return False, "AVAILABLE_ASOF_AFTER_CUTOFF"
+    if ev["AVAILABLE_ASOF"] < max(ev["PUBLICLY_AVAILABLE_AT"], ev["SALIX_RECEIVED_AT"]):
+        return False, "AVAILABLE_ASOF_BEFORE_PUBLIC_OR_RECEIPT"
     if _has(ev, ("ACTUAL_VALUE", "ACTUAL")) and ev["ACTUAL_AVAILABLE_ASOF"] > cutoff:
         return False, "ACTUAL_NOT_YET_AVAILABLE"
+    for a, b, stamp in VALUE_STAMPS:
+        if _has(ev, (a, b)):
+            if ev.get(stamp) is None:
+                return False, stamp + "_MISSING_VALUE_UNVERIFIED"
+            if ev[stamp] > cutoff:
+                return False, stamp + "_AFTER_CUTOFF"
     return True, ""
 
-def resolve_context(requirement: str, daily_record, event_records, decision_cutoff: int) -> dict:
+def resolve_context(requirement: str, daily_record, event_records, decision_cutoff: int, governed_revision_rule: Optional[str] = None) -> dict:
     """Deterministic view of context at a decision cutoff. Never infers a quiet day: a missing or not-yet-issued daily record is UNKNOWN, and for REQUIRED it refuses.
-    Revisions: of the records sharing an event id, the highest revision sequence available <= cutoff is used; two different payloads at the same revision are returned as
-    MULTIPLE_CANDIDATES (a deterministic-tie rule taken from the native Tracker reference, which is NAVIGATION ONLY until the exact frozen clause is compared)."""
+    The supplied daily record and every event record are VALIDATED here (check_daily_record / event_consumable -> check_event_record), not trusted to the caller.
+    Revisions: News Hub V2 gives no revision-selection rule; the frozen Tracker architecture (sec 7A, raw DOCX 15mPi14mG5MAOerZTnhbWfWXwcOIpzWsA) says that when several causally
+    valid, non-equivalent candidates exist and NO GOVERNED deterministic rule authorizes one, the resolver returns MULTIPLE_CANDIDATES / REQUIRE_EXPLICIT_SELECTION. So by default
+    (governed_revision_rule=None) distinct payloads for one event id => multiple_candidates; only a caller-supplied rule identity that this module implements
+    ('HIGHEST_REVISION_SEQ') selects, and it is disclosed in 'selection_rule'. The rule's governed ref/version is a named gap (not supplied by any source read)."""
     if requirement not in REQ:
         raise Refusal(str(requirement), code="BAD_CONTEXT_DIMENSION")
+    if not _is_ts(decision_cutoff):
+        raise Refusal("decision cutoff", code="CUTOFF_MALFORMED")
+    if governed_revision_rule is not None and governed_revision_rule not in KNOWN_REVISION_RULES:
+        raise Refusal(str(governed_revision_rule), code="UNKNOWN_REVISION_RULE")
     if requirement == "NOT_REQUESTED":
-        return {"verdict": "USABLE", "coverage": "NOT_REQUESTED", "exhaustive": False, "events": [], "withheld": [], "multiple_candidates": []}
-    joinable = daily_record is not None and daily_record_joinable(daily_record["ISSUED_AT"], decision_cutoff)
-    if not joinable:
+        return {"verdict": "USABLE", "coverage": "NOT_REQUESTED", "exhaustive": False, "events": [], "withheld": [], "multiple_candidates": [], "selection_rule": None}
+    if daily_record is None:
         if requirement == "REQUIRED":
-            raise Refusal("daily record missing or not yet issued", code="REQUIRED_CONTEXT_FAIL_CLOSED")
+            raise Refusal("daily record missing", code="REQUIRED_CONTEXT_FAIL_CLOSED")
         raise Refusal("OPTIONAL with no joinable daily record", code="OPTIONAL_DEGRADED_WITHOUT_POLICY")     # UNKNOWN is never quiet-day inference
+    check_daily_record(daily_record)
+    if not daily_record_joinable(daily_record["ISSUED_AT"], decision_cutoff):
+        if requirement == "REQUIRED":
+            raise Refusal("daily record not yet issued", code="REQUIRED_CONTEXT_FAIL_CLOSED")
+        raise Refusal("OPTIONAL with no joinable daily record", code="OPTIONAL_DEGRADED_WITHOUT_POLICY")
     check_dimensions(requirement, daily_record["SOURCE_AVAILABILITY_STATE"], daily_record["COVERAGE_STATE"], daily_record["EVENT_PRESENCE_STATE"],
                      daily_record.get("COVERAGE_BASIS"), daily_record.get("OPTIONAL_DEGRADED_POLICY_REF"),
                      daily_record.get("PRIOR_COVERAGE_OBJECT_REF") is not None, daily_record.get("PRIOR_COVERAGE_ISSUED_AT"), decision_cutoff)
@@ -139,12 +198,22 @@ def resolve_context(requirement: str, daily_record, event_records, decision_cuto
         check_event_record(ev)
         by_id.setdefault(ev.get("EVENT_ID") or ev.get("EVENT_RECORD_ID"), []).append(ev)
     used, withheld, multi = [], [], []
-    for eid in sorted(by_id):
+    for eid in sorted(by_id, key=str):
         avail = []
         for ev in by_id[eid]:
             ok, why = event_consumable(ev, decision_cutoff)
-            (avail if ok else withheld).append(ev if ok else (eid, why))
+            if ok:
+                avail.append(ev)
+            else:
+                withheld.append((eid, why))
         if not avail:
+            continue
+        distinct = {e["FACTUAL_PAYLOAD_HASH"] for e in avail}
+        if len(distinct) == 1:
+            used.append(avail[0])
+            continue
+        if governed_revision_rule is None:
+            multi.append(eid)                                                            # REQUIRE_EXPLICIT_SELECTION: no governed rule authorizes a choice
             continue
         top = max(e.get("REVISION_SEQ", 0) for e in avail)
         cands = [e for e in avail if e.get("REVISION_SEQ", 0) == top]
@@ -152,5 +221,9 @@ def resolve_context(requirement: str, daily_record, event_records, decision_cuto
             multi.append(eid)
         else:
             used.append(cands[0])
+    if daily_record["EVENT_PRESENCE_STATE"] == "NO_EVENT_RECORDED" and used:
+        # DERIVATION (fail-closed, not a source clause): a COMPLETE no-event attestation cannot coexist with a consumable event in the same view; the source says late
+        # information creates a CORRECTING daily record, it never silently coexists.
+        raise Refusal("NO_EVENT_RECORDED with consumable events", code="DAILY_PRESENCE_CONTRADICTS_EVENTS")
     return {"verdict": "USABLE", "coverage": daily_record["COVERAGE_STATE"], "exhaustive": daily_record["COVERAGE_STATE"] == "COMPLETE",
-            "events": used, "withheld": withheld, "multiple_candidates": multi}
+            "events": used, "withheld": withheld, "multiple_candidates": multi, "selection_rule": governed_revision_rule}

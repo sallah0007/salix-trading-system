@@ -20,14 +20,14 @@ M = [(BO, "    bad = sorted(set(bo) & FORBIDDEN_FIELDS)\n    if bad:", "    bad 
      (NH, 'if rec.get("IMPACT_RATING") is not None and rec.get("IMPACT_RATING_VINTAGE") is None:', "if False:"),
      (NH, '    if "NO_EVENT_RECORDED" in rec:', "    if False:"), (NH, "    if missing:\n        raise Refusal(\",\".join(missing), code=\"DAILY_RECORD_FIELD_MISSING\")", "    if False:\n        raise Refusal(\",\".join(missing), code=\"DAILY_RECORD_FIELD_MISSING\")"),
      (NH, "    if ev[\"REVISION_AVAILABLE_AT\"] > cutoff:", "    if False:"), (NH, 'ev["ACTUAL_AVAILABLE_ASOF"] > cutoff', "False"),
-     (NH, "    if not joinable:", "    if False:"), (NH, "top = max(e.get(\"REVISION_SEQ\", 0) for e in avail)", "top = min(e.get(\"REVISION_SEQ\", 0) for e in avail)"),
+     (NH, "top = max(e.get(\"REVISION_SEQ\", 0) for e in avail)", "top = min(e.get(\"REVISION_SEQ\", 0) for e in avail)"),
      (NH, 'if len({e["FACTUAL_PAYLOAD_HASH"] for e in cands}) > 1:', "if False:"), (NH, '"exhaustive": daily_record["COVERAGE_STATE"] == "COMPLETE"', '"exhaustive": True'),
-     (NH, "    for eid in sorted(by_id):", "    for eid in list(by_id):"),
+     (NH, "    for eid in sorted(by_id, key=str):", "    for eid in list(by_id):"),
      (BR, "    return \"REFUSE_UNPROVEN_INDEPENDENCE\" if required else", "    return \"ALLOW_PROVEN_INDEPENDENT\" if required else"),
      (BR, "    if impact.verdict == UNAFFECTED:\n        return \"ALLOW", "    if False:\n        return \"ALLOW"),
      (FR, "    if not classes:", "    if False:"), (FR, "    if bad:", "    if False:"), (FR, "if fw_derived_predictive and augmented is None:", "if False:"),
      (ML, '"fw_generation_identity_ref", "research_exposure_ref"):', '):')]
-T = ["tests/trk_stage_a/test_r13_build_output.py", "tests/trk_stage_a/test_r13_status_event.py", "tests/trk_stage_a/test_r13_context_resolver.py",
+T = ["tests/trk_stage_a/test_r13_build_output.py", "tests/trk_stage_a/test_r13_status_event.py", "tests/trk_stage_a/test_r13_context_resolver.py", "tests/trk_stage_a/test_r14_event_causality.py",
      "tests/trk_stage_a/test_r13_fw_return.py", "tests/trk_stage_a/test_r12_blast_radius.py", "tests/trk_stage_a/test_r12_ml_augmented.py"]
 def run():
     try: return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", *[str(ROOT / t) for t in T]], cwd=ROOT, capture_output=True, text=True, timeout=60, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1")).returncode
