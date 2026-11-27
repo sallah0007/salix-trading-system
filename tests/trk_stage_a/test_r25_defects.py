@@ -168,3 +168,42 @@ class B22ReviewerCarrier(unittest.TestCase):
     def test_survives_restart_replay(self):
         c = self.mk(); c.accept_review_finding(self.carrier()); j = c._j; c2 = TrackerCore(j, simulation=True)
         self.assertEqual(code(c2.accept_review_finding, self.carrier(proposed_investigation="x")), "FINDING_ID_REUSED")
+
+class R26Defects(unittest.TestCase):
+    """Codex R26 reproductions + wider negatives."""
+    def mkres(self, status, names=None, key=KEY, **kw):
+        from stage_a.tracker.verification.verification_result import PASS_PROFILE
+        return make_result(status, SCOPE_MATERIALIZATION, {"expect_scope_key": key}, [(n, True) for n in (names if names is not None else sorted(PASS_PROFILE))], kw.get("reasons", []))
+    def rec(self, c, r, version="1", l1="PASS", l2="PASS", key=KEY):
+        from stage_a.tracker.verification.verification_result import COMPOSED_VERIFIER_ID
+        return code(c.record_verification, key, version, "REQUIRED", l2, l1, 10, 5, COMPOSED_VERIFIER_ID, r.result_hash, evidence_class=COMPOSED_RECOMPUTATION, result=r)
+    def test_profile_is_pinned_to_the_real_verifier_pass(self):
+        from stage_a.tracker.verification.verification_result import PASS_PROFILE
+        self.assertEqual({n for n, _ in world_pass().checks}, set(PASS_PROFILE))
+    def test_typed_fail_or_unknown_status_over_all_true_checks_is_never_healthy(self):
+        c = core()
+        self.assertEqual(self.rec(c, self.mkres("FAIL", reasons=["deliberate failure"])), "HEALTH_COMPOSED_RESULT_UNBOUND")        # claims PASS/PASS over a FAIL status
+        self.assertEqual(self.rec(c, self.mkres("MAYBE")), "HEALTH_COMPOSED_RESULT_UNBOUND")
+        self.assertEqual(c.recording_health(KEY, "1", 11).state, "UNKNOWN")
+        r = self.mkres("FAIL"); self.assertIsNone(self.rec(c, r, l1="FAIL", l2="FAIL")); self.assertEqual(c.recording_health(KEY, "1", 11).state, "NOT_HEALTHY")   # honest failure evidence is preserved
+    def test_truncated_all_true_pass_is_not_a_receipt(self):
+        c = core(); r = self.mkres("PASS", names=["structure_sound", "equivalence_probe_batch", "equivalence_probe_incremental"])
+        self.assertEqual(self.rec(c, r), "HEALTH_COMPOSED_RESULT_UNBOUND"); self.assertIsNone(self.rec(c, r, l1="FAIL", l2="UNAVAILABLE")); self.assertEqual(c.recording_health(KEY, "1", 11).state, "NOT_HEALTHY")
+    def test_wrong_version_is_refused_and_right_version_passes(self):
+        c = core(); r = self.mkres("PASS")
+        for v in ("999", "2", "", "XAUUSD/H4/mom3/1"): self.assertIn(self.rec(c, r, version=v), ("HEALTH_COMPOSED_RESULT_UNBOUND", "HEALTH_BINDING_INCOMPLETE"), v)
+        self.assertIsNone(self.rec(c, r)); self.assertEqual(c.recording_health(KEY, "999", 11).state, "UNKNOWN"); self.assertEqual(c.recording_health(KEY, "1", 11).state, "HEALTHY")
+    def test_scheduler_due_inspects_the_bound_expected_version(self):
+        from stage_a.tracker import reverify_scheduler as S
+        m = Manifest.from_dict(momentum_manifest()); c = core(); c.record_verification(KEY, "999", "REQUIRED", "PASS", "PASS", 10, 50, "v", "d")             # fresh foreign-version evidence
+        r = S.run_reverification_pass(c, {KEY: (m, declared(m), SIMS())}, [KEY], now=11, max_age=50)
+        self.assertEqual([(i.trigger, i.outcome, i.detail) for i in r], [("ABSENT", "VERIFIED", "PASS")]); self.assertEqual(c.recording_health(KEY, "1", 12).state, "HEALTHY")
+        c2 = core(); S.run_reverification_pass(c2, {KEY: (m, declared(m), SIMS())}, [KEY], now=10, max_age=50)
+        self.assertEqual(S.run_reverification_pass(c2, {KEY: (m, declared(m), SIMS())}, [KEY], now=11, max_age=50), [])                                           # matching fresh version: still not due
+        c3 = core(); c3.record_verification("BASE", "1", "REQUIRED", "PASS", "PASS", 10, 50, "v", "d"); self.assertEqual(c3.due_for_reverification(["BASE"], 11), [])      # unrelated baseline: no versions map, untouched
+    def test_conflicting_parent_completeness_is_refused_in_both_orders(self):
+        for ps in ([("A", 5, True), ("A", 5, False)], [("A", 5, False), ("A", 5, True)]): self.assertEqual(code(TF.latest_visible_parent, ps, 10), "PARENT_LISTED_WITH_CONFLICTING_COMPLETENESS")
+        self.assertEqual(TF.latest_visible_parent([("A", 5, False), ("A", 5, False)], 10).state, TF.NONE_VISIBLE)
+        self.assertEqual(TF.latest_visible_parent([("A", 5, True), ("A", 5, True)], 10).parent_id, "A")
+def world_pass():
+    m, store, rec, get = world(); return verify(rec, get, declared(m))

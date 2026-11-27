@@ -17,7 +17,7 @@ def run_reverification_pass(core, bindings: dict, subjects, *, now: int, max_age
     """bindings: {feature_key: (manifest, declared_hashes, store)}. Returns [PassItem]. Only subjects that Core itself reports due are touched (unrelated healthy baselines are left unchanged)."""
     if not isinstance(max_items, int) or isinstance(max_items, bool) or max_items < 1: raise Refusal("max_items", code="SCHEDULER_BOUND_INVALID")
     out = []
-    for n, (subject, trigger) in enumerate(core.due_for_reverification(list(subjects), now)):
+    for n, (subject, trigger) in enumerate(core.due_for_reverification(list(subjects), now, {k: b[0].feature_version for k, b in bindings.items()})):
         if n >= max_items: out.append(PassItem(subject, trigger, "SKIPPED_BOUND_EXCEEDED")); continue
         b = bindings.get(subject)
         if b is None: out.append(PassItem(subject, trigger, "UNBOUND")); continue

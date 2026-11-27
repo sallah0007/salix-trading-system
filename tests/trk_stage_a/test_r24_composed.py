@@ -10,7 +10,7 @@ from stage_a.composer.expression.hashing import manifest_hash, graph_hash, progr
 from stage_a.core.tracker_core import TrackerCore, COMPOSED_RECOMPUTATION
 from stage_a.core import time_family as TF
 from stage_a.tracker import reverification as RV
-from stage_a.tracker.verification.verification_result import make_result, FAIL, INSUFFICIENT_EVIDENCE, SCOPE_MATERIALIZATION
+from stage_a.tracker.verification.verification_result import make_result, FAIL, INSUFFICIENT_EVIDENCE, SCOPE_MATERIALIZATION, PASS_PROFILE
 from .fixtures import momentum_manifest
 from .test_r24_core import code
 
@@ -52,7 +52,7 @@ class ComposedReverification(unittest.TestCase):
         self.assertEqual(RV.split_levels(mk(INSUFFICIENT_EVIDENCE, [("structure_sound", True), ("equivalence_probe_batch", True), ("equivalence_probe_incremental", True)])), ("FAIL", "UNAVAILABLE"))   # the typed status wins over the check list
         self.assertEqual(RV.split_levels(mk(FAIL, [("record_field_set", False)])), ("FAIL", "UNAVAILABLE"))            # early return: recomputation never ran
         self.assertEqual(RV.split_levels(mk(FAIL, [("structure_sound", True), ("equivalence_probe_batch", False), ("equivalence_probe_incremental", True)])), ("PASS", "FAIL"))
-        self.assertEqual(RV.split_levels(mk("PASS", [("structure_sound", True), ("equivalence_probe_batch", True), ("equivalence_probe_incremental", True)])), ("PASS", "PASS"))
+        self.assertEqual(RV.split_levels(mk("PASS", [(n, True) for n in sorted(PASS_PROFILE)])), ("PASS", "PASS"))       # R26: only a COMPLETE PASS profile yields PASS/PASS
     def test_unknown_evidence_class_is_refused(self):
         c = core(); self.assertEqual(code(c.record_verification, "S", "1", "REQUIRED", "PASS", "PASS", 1, 5, "v", "d", None, "FORGED_QUALIFIED"), "HEALTH_EVIDENCE_CLASS_UNKNOWN")
 

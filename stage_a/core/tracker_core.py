@@ -375,7 +375,8 @@ class TrackerCore:
             if result is None: raise Refusal("composed evidence needs the verifier result", code="HEALTH_COMPOSED_RESULT_MISSING")
             if not result_is_self_consistent(result): raise Refusal("result not self-consistent", code="HEALTH_COMPOSED_RESULT_FORGED")
             if (result.scope != SCOPE_MATERIALIZATION or verifier_id != COMPOSED_VERIFIER_ID or result_digest != result.result_hash
-                    or dict(result.subject).get("expect_scope_key") != subject or l2_requirement != "REQUIRED" or (l1, l2_status) != split_levels(result)):
+                    or dict(result.subject).get("expect_scope_key") != subject or l2_requirement != "REQUIRED" or (l1, l2_status) != split_levels(result)
+                    or str(dict(result.subject).get("expect_scope_key")).rsplit("/", 1)[-1] != version):      # the verified VERSION (last scope-key segment), not only the scope-key string
                 raise Refusal("composed evidence not bound to result", code="HEALTH_COMPOSED_RESULT_UNBOUND")
         elif result is not None: raise Refusal("result only for composed evidence", code="HEALTH_RESULT_WITHOUT_COMPOSED_CLASS")
         if l2_requirement not in REQ or l2_status not in L2_ST or l1 not in L1_ST: raise Refusal("vocabulary", code="HEALTH_VOCABULARY_UNKNOWN")
@@ -396,11 +397,12 @@ class TrackerCore:
         if trigger not in ("STALE", "ABSENT", "EPOCH_ADVANCED", "QUARANTINE_CLEARED", "SCHEDULED"): raise Refusal(trigger, code="UNKNOWN_REVERIFY_TRIGGER")
         self._commit(lambda st: (None, ("REVERIFY_REQUESTED", {"key": subject, "trigger": trigger})))
 
-    def due_for_reverification(self, subjects, now: int) -> list:
+    def due_for_reverification(self, subjects, now: int, versions: dict = None) -> list:
+        """versions: optional {subject: expected_version}. Health recorded for a DIFFERENT version never satisfies the expected one (it is ABSENT for that version) and never suppresses needed work."""
         st = self._replay(); due = []
         for s in subjects:
             h = st["health"].get(s)
-            if h is None: due.append((s, "ABSENT"))
+            if h is None or (versions is not None and s in versions and h["version"] != versions[s]): due.append((s, "ABSENT"))
             elif h["at"] > now or now - h["at"] > h["max_age"]: due.append((s, "STALE"))
             elif st["reverify"].get(s, 0) >= h["seq"]: due.append((s, "EPOCH_ADVANCED"))
         return due

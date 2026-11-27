@@ -56,6 +56,7 @@ def latest_visible_parent(parents, query_asof: int) -> ParentSelection:
     seen = {}
     for pid, asof, complete in parents:
         if pid in seen and seen[pid][0] != asof: raise Refusal(str(pid), code="PARENT_LISTED_WITH_TWO_AVAILABILITIES")
+        if pid in seen and seen[pid][1] != complete: raise Refusal(str(pid), code="PARENT_LISTED_WITH_CONFLICTING_COMPLETENESS")      # conflicting facts are held, never last-wins/order-dependent
         seen[pid] = (asof, complete)
     vis = {pid: a for pid, (a, c) in seen.items() if c is True and parent_visible_asof(a, query_asof)}
     if not vis: return ParentSelection(NONE_VISIBLE)
