@@ -19,7 +19,7 @@ from ..coordination import transition_record as T
 from ..coordination.recovery import resolve_unknown_commit, COMMITTED
 from ..replay import replay
 from ..authority import AuthorityRef
-from .terminal_identity import subject_terminal_identities
+from .terminal_identity import subject_terminal_resolution, UNRESOLVED
 from .quant_intake_adapter import (admit, reserve_authority, build_safe_intake_report, build_candidate,
                                    QUANT_FEATURE, NO_QUANT_FEATURE, CLASSIFICATION_UNRESOLVED, FAILED_REQUESTED_BUILD, BuildPackage, DutyEvidence, unresolved_mandatory)
 from ..composer.expression.canonical_encoding import encode_manifest
@@ -203,7 +203,9 @@ class TrackerPipeline:
         lk = identity_lookup(store=b.store, subject=subject, request_id=pkg.request_id, search_policy=b.search_policy, normalizer=b.normalizer)
         if lk.absent_claim_token is None:
             # fail closed exactly as before; the terminal identity AND state of any noncurrent match are REPORTED (never authority: no claim, no resurrection, no substitution)
-            return (list(lk.errors) or ["BASELINE_LOOKUP_NO_CLAIM"]), subject_terminal_identities(subject, b.store.all(), b.normalizer, active_era_id=b.store.active_era_id, searched_scopes=tuple(b.search_policy.searched_scopes))
+            tr = subject_terminal_resolution(subject, b.store.all(), b.normalizer, active_era_id=b.store.active_era_id, searched_scopes=tuple(b.search_policy.searched_scopes))
+            extra = ["TERMINAL_IDENTITY_UNRESOLVED:" + tr.reason] if tr.status == UNRESOLVED else []
+            return (list(lk.errors) or ["BASELINE_LOOKUP_NO_CLAIM"]) + extra, tr.identities
         cand = build_candidate(pkg, adm.definition, claim_request_id=pkg.request_id,
                                creation_evidence_ref="verification:" + ver.result_hash)
         res = safe_intake_built_identity(target_store=b.store, candidate=cand, era_boundary=b.era_boundary,

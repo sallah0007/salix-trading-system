@@ -9,10 +9,12 @@ actual verifier bindings exist (all source-owned, unbound). Therefore:
 Unassigned slots (never defaulted): observation byte encoding (fact NAMES are source-present; `OBS_FACTS_CANDIDATE` + canonical_bytes is an internal carrier), manifest bytes, DATA_VINTAGE_MODE values,
 calendar/DST, per-provider contract instances, L2 appointment/profile/interval, governed mixed-declared policy, definition-proof for NOT_APPLICABLE, reconstruction-proof, D25 clear/retry policy."""
 import json
+from dataclasses import dataclass
 from ..errors import Refusal, UnknownCommit
 from ..storage.byte_primitives import canonical_bytes, domain_hash
 from ..storage.authority_class import authority_class_of, QUALIFIED
-from tracker_component.journal_port import HeadMismatch
+from tracker_component.journal_port import HeadMismatch, record_hash
+from tracker_component.canonical import canonical_json
 
 OBS_FACTS_CANDIDATE = ("instrument", "timeframe", "bar_identity", "broker_time", "utc_time", "broker_utc_rule", "source_provider", "raw_source_version", "schema_version")
 REQ = ("REQUIRED", "NOT_APPLICABLE_BY_GOVERNED_DEFINITION")
@@ -35,13 +37,15 @@ class TrackerCore:
 
     # ---- replay: pure function of the journal up to a given sequence ---------------------------
     def _replay(self, upto=None):
-        st = dict(obs={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={})
+        st = dict(obs={}, cands={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={})
         for r in self._j.read_from(0):
             if upto is not None and r.seq > upto: break
             b = json.loads(r.body_json); k = r.kind
-            if k == "OBS_ADMITTED": st["obs"][b["key"]] = b
-            elif k == "OBS_AMBIGUOUS": st["amb"][b["key"]] = sorted(set(st["amb"].get(b["key"], []) + b["digests"]))
-            elif k == "OBS_AMBIGUITY_RESOLVED": st["amb"].pop(b["key"], None); st["obs"][b["key"]] = dict(st["obs"][b["key"]], digest=b["digest"]) if b["key"] in st["obs"] else b
+            if k == "OBS_ADMITTED": st["obs"][b["key"]] = b; st["cands"].setdefault(b["key"], {})[b["cid"]] = b
+            elif k == "OBS_AMBIGUOUS":
+                st["cands"].setdefault(b["key"], {})[b["candidate"]["cid"]] = b["candidate"]
+                st["amb"][b["key"]] = sorted(set(st["amb"].get(b["key"], [])) | {b["candidate"]["cid"]} | ({st["obs"][b["key"]]["cid"]} if b["key"] in st["obs"] else set()))
+            elif k == "OBS_AMBIGUITY_RESOLVED": st["amb"].pop(b["key"], None); st["obs"][b["key"]] = st["cands"][b["key"]][b["cid"]]     # materialized view = the exact chosen candidate; history stays in the journal
             elif k == "CONTRACT_REGISTERED": st["contracts"][(b["id"], b["version"])] = b
             elif k == "CONTRACT_QUARANTINED": st["quar_raw"][b["raw_digest"]] = b["why"]
             elif k == "SNAPSHOT_SEALED": st["snaps"][b["hash"]] = b
@@ -50,31 +54,40 @@ class TrackerCore:
             elif k == "DEPENDENCY":
                 st["deps"].setdefault(b["upstream"], []).append(b["dependent"]); st["ups"].setdefault(b["dependent"], []).append(b["upstream"])
             elif k == "EPOCH":
-                st["epoch"][b["key"]] = b["epoch"]; stack = list(st["deps"].get(b["key"], []))
-                st["reverify"][b["key"]] = r.seq
-                while stack:
+                st["epoch"][b["key"]] = b["epoch"]; st["reverify"][b["key"]] = r.seq
+                seen, stack = set(), list(st["deps"].get(b["key"], []))
+                while stack:                                                    # full closure: `seen` is the traversal guard, NOT 'already invalid'
                     d = stack.pop()
-                    if d not in st["inval"]: st["inval"][d] = (b["key"], r.seq); st["reverify"][d] = r.seq; stack += st["deps"].get(d, [])
+                    if d in seen: continue
+                    seen.add(d); st["inval"][d] = (b["key"], r.seq); st["reverify"][d] = r.seq; stack += st["deps"].get(d, [])    # the LATEST invalidation supersedes an earlier one
             elif k == "RERESOLVED": st["inval"].pop(b["key"], None)
             elif k == "REVERIFY_REQUESTED": st["reverify"][b["key"]] = r.seq
             elif k == "Q_REASON": st["q"].setdefault(b["subject"], {"reasons": set(), "status": "QUARANTINED"})["reasons"].add(b["reason"]); st["q"][b["subject"]]["status"] = "QUARANTINED"
             elif k == "Q_CLEAR": st["q"][b["subject"]]["reasons"].discard(b["reason"])
             elif k == "Q_REOPEN": st["q"][b["subject"]]["status"] = "REOPENED"
-            elif k == "Q_REACTIVATE": st["q"][b["subject"]]["status"] = "ACTIVE"
+            elif k == "Q_REACTIVATE": st["q"][b["subject"]]["status"] = "ACTIVE"; st["reverify"][b["subject"]] = r.seq        # eligibility must be re-evidenced after reactivation
             elif k == "HEALTH": st["health"][b["subject"]] = dict(b, seq=r.seq)
             elif k == "FINDING": st["findings"].append(b)
         return st
 
     # ---- atomic semantic operation: validate against the EXACT committed head, append with that head, revalidate on any race -----
     def _commit(self, decide):
+        """decide(state) -> (result, (kind, body) | None). On HeadMismatch another writer moved the head: re-read and revalidate. On UnknownCommit the ATTEMPTED record is resolved against the
+        authoritative chain: if the journal holds exactly this record (same prev head, kind and body) at head.seq+1 the attempt COMMITTED and its stored result is returned (no double effect, no
+        re-evaluation as a fresh operation); otherwise it did not land (dropped write / another writer) and the operation is revalidated from the new head. No provider-proof inference."""
         for _ in range(8):
             head = self._j.head(); st = self._replay(head.seq)
             out, rec = decide(st)
             if rec is None: return out
+            body = _s(rec[1]); want = record_hash(head.seq + 1, head.hash, rec[0], canonical_json(body))
             try:
-                self._j.append(head, rec[0], _s(rec[1])); return out
-            except (HeadMismatch, UnknownCommit):
-                continue                                   # another writer (or an unknown commit) moved the head: re-read and revalidate, never overwrite
+                self._j.append(head, rec[0], body); return out
+            except HeadMismatch:
+                continue
+            except UnknownCommit:
+                landed = [r for r in self._j.read_from(0) if r.seq == head.seq + 1]
+                if landed and landed[0].record_hash == want: return out
+                continue
         raise Refusal("core commit contention", code="CORE_COMMIT_CONTENTION")
 
     # ---- B01 observation identity -----------------------------------------------------------------
@@ -84,35 +97,48 @@ class TrackerCore:
             raise Refusal("observation facts", code="OBSERVATION_FACTS_INVALID")
         return domain_hash("TRK/OBS_CANDIDATE", canonical_bytes({k: facts[k] for k in OBS_FACTS_CANDIDATE}))
 
+    @staticmethod
+    def _cid(digest, available_asof, vintage):
+        return domain_hash("TRK/OBS_CANDIDATE_ID", canonical_bytes({"digest": digest, "available_asof": available_asof, "vintage": vintage}))     # internal engineering identity, not a canonical encoding
+
     def admit_observation(self, facts: dict, payload: bytes, available_asof: int, vintage: str) -> str:
         key = self.obs_key(facts)
         if not _int(available_asof) or available_asof < 0 or not isinstance(vintage, str) or not vintage or not isinstance(payload, bytes):
             raise Refusal("observation fields", code="OBSERVATION_FIELDS_INVALID")
-        dg = domain_hash("TRK/PAYLOAD", payload)
-        rec = {"key": key, "digest": dg, "facts": dict(facts), "available_asof": available_asof, "vintage": vintage, "payload_hex": payload.hex()}
+        dg = domain_hash("TRK/PAYLOAD", payload); cid = self._cid(dg, available_asof, vintage)
+        cand = {"cid": cid, "key": key, "digest": dg, "facts": dict(facts), "available_asof": available_asof, "vintage": vintage, "payload_hex": payload.hex()}
         def decide(st):
+            known = st["cands"].get(key, {})
             if key in st["amb"]:
-                return CONFLICT, (None if dg in st["amb"][key] else ("OBS_AMBIGUOUS", {"key": key, "digests": [dg]}))
+                return CONFLICT, (None if cid in known else ("OBS_AMBIGUOUS", {"key": key, "candidate": cand}))
             if key in st["obs"]:
-                o = st["obs"][key]
-                if o["digest"] == dg and o["available_asof"] == available_asof and o["vintage"] == vintage: return REPEAT, None
-                return CONFLICT, ("OBS_AMBIGUOUS", {"key": key, "digests": sorted({o["digest"], dg})})     # never overwritten
-            return NEW, ("OBS_ADMITTED", rec)
+                if st["obs"][key]["cid"] == cid: return REPEAT, None
+                return CONFLICT, (None if cid in known else ("OBS_AMBIGUOUS", {"key": key, "candidate": cand}))     # complete candidate retained; never overwritten
+            return NEW, ("OBS_ADMITTED", cand)
         return self._commit(decide)
 
-    def resolve_ambiguity(self, key: str, chosen_digest: str, creator: str, certifier: str):
+    def candidates(self, key: str) -> dict:
+        """The complete immutable candidate evidence for a key (cid -> record)."""
+        return dict(self._replay()["cands"].get(key, {}))
+
+    def resolve_ambiguity(self, key: str, chosen_cid: str, creator: str, certifier: str):
+        """Selects the EXACT candidate (by candidate id: payload digest + availability + vintage). Restorative resolution is source-approved evidence; the approval source is unbound, so a QUALIFIED core holds it
+        (two caller names are not approval). The materialized view becomes the chosen candidate and the full history stays in the journal."""
+        if not self.simulation: raise Refusal("source approval/evidence binding unbound", code="SOURCE_APPROVAL_BINDING_UNBOUND_HELD")
         if not creator or not certifier or creator == certifier: raise Refusal("creator!=certifier", code="CREATOR_IS_CERTIFIER")
         def decide(st):
-            if key not in st["amb"] or chosen_digest not in st["amb"][key]: raise Refusal(key, code="NOT_A_PENDING_CANDIDATE")
-            return None, ("OBS_AMBIGUITY_RESOLVED", {"key": key, "digest": chosen_digest, "certifier": certifier})
+            if key not in st["amb"] or chosen_cid not in st["amb"][key]: raise Refusal(key, code="NOT_A_PENDING_CANDIDATE")
+            if not self._payload_reconstructs(st["cands"][key][chosen_cid]): raise Refusal(key, code="CANDIDATE_INTEGRITY_FAILED")
+            return None, ("OBS_AMBIGUITY_RESOLVED", {"key": key, "cid": chosen_cid, "certifier": certifier})
         self._commit(decide)
 
     def observation_usable(self, key: str) -> bool:
-        st = self._replay(); return key in st["obs"] and key not in st["amb"]
+        st = self._replay(); return key in st["obs"] and key not in st["amb"] and self._payload_reconstructs(st["obs"][key])
 
     @staticmethod
     def _payload_reconstructs(o) -> bool:
-        try: return domain_hash("TRK/PAYLOAD", bytes.fromhex(o["payload_hex"])) == o["digest"]
+        try:
+            return domain_hash("TRK/PAYLOAD", bytes.fromhex(o["payload_hex"])) == o["digest"] and TrackerCore._cid(o["digest"], o["available_asof"], o["vintage"]) == o["cid"]
         except Exception: return False
 
     # ---- B04 source contract: exactly one match + freshness ---------------------------------------
@@ -153,7 +179,7 @@ class TrackerCore:
         out = []
         for k in member_keys:
             o = st["obs"].get(k)
-            if o is None or k in st["amb"]: raise Refusal(k, code="MEMBER_NOT_USABLE_OBSERVATION")
+            if o is None or k in st["amb"] or not TrackerCore._payload_reconstructs(o): raise Refusal(k, code="MEMBER_NOT_USABLE_OBSERVATION")
             f = o["facts"]
             if f["instrument"] != instrument: raise Refusal(k, code="CROSS_INSTRUMENT_MEMBER")
             m = {"key": k, "timeframe": f["timeframe"], "vintage": o["vintage"], "available_asof": o["available_asof"], "digest": o["digest"], "schema_version": f["schema_version"]}
@@ -219,15 +245,19 @@ class TrackerCore:
             return None, ("EPOCH", {"key": key, "epoch": epoch})
         self._commit(decide)
 
+    def _basis(self, st, subject):
+        """The current epoch basis of a subject: its own epoch and every recorded ancestor's. A witness is valid only for the basis it was recorded under."""
+        return [[k, st["epoch"].get(k, 0)] for k in sorted({subject, *self._closure(st, subject)})]
+
     def reresolve(self, key: str):
-        """Clears an invalidation only with a FRESH witness (a verification recorded after the invalidation) and only when every recorded upstream is itself valid. The witness is caller-asserted
-        evidence, so a QUALIFIED core holds this (verifier binding unbound)."""
+        """Clears an invalidation only with a FRESH witness (recorded after the LATEST invalidation AND under the current epoch basis) and only when every recorded upstream is itself valid. The witness
+        is caller-asserted evidence, so a QUALIFIED core holds this (verifier binding unbound). D25 clearance policy is source-owned and unresolved: nothing is restored automatically."""
         if not self.simulation: raise Refusal("fresh permitted witness/materialization binding unbound", code="VERIFIER_BINDING_UNBOUND_HELD")
         def decide(st):
             if key not in st["inval"]: raise Refusal(key, code="NOT_INVALIDATED")
             if any(u in st["inval"] or self._blocked(st, u) for u in st["ups"].get(key, [])): raise Refusal(key, code="UPSTREAM_STILL_INVALID")
             h = st["health"].get(key)
-            if h is None or h["seq"] <= st["inval"][key][1]: raise Refusal(key, code="NO_FRESH_WITNESS")
+            if h is None or h["seq"] <= st["inval"][key][1] or h["basis"] != self._basis(st, key): raise Refusal(key, code="NO_FRESH_WITNESS")
             return None, ("RERESOLVED", {"key": key})
         self._commit(decide)
 
@@ -235,6 +265,7 @@ class TrackerCore:
     def quarantine(self, subject: str, reason: str):
         self._commit(lambda st: (None, ("Q_REASON", {"subject": subject, "reason": reason})))
     def clear_reason(self, subject: str, reason: str, certifier: str, creator: str):
+        if not self.simulation: raise Refusal("source approval/evidence binding unbound", code="SOURCE_APPROVAL_BINDING_UNBOUND_HELD")
         if not certifier or certifier == creator: raise Refusal("creator!=certifier", code="CREATOR_IS_CERTIFIER")
         def decide(st):
             if reason not in st["q"].get(subject, {"reasons": set()})["reasons"]: raise Refusal(reason, code="REASON_NOT_OPEN")
@@ -256,11 +287,14 @@ class TrackerCore:
             seen.add(c); stack += st["ups"].get(c, [])
         return sorted(seen)
 
-    def _reconstructable(self, st, up) -> bool:
+    def _reconstructable(self, st, up, _seen=frozenset()) -> bool:
+        """Genuine reconstruction only: a persisted raw observation whose payload reproduces its digest, or a derived node whose ENTIRE recorded ancestry is itself so reconstructable. A Health record or an
+        identity is never reconstruction evidence (R23). Current source/code/environment/contract proof is unbound, hence the qualified hold in `reactivate`."""
+        if up in _seen or self._blocked(st, up): return False
         o = st["obs"].get(up)
-        if o is not None: return up not in st["amb"] and self._payload_reconstructs(o)     # a stored digest alone is not reconstruction: the persisted payload must reproduce it
-        h = st["health"].get(up)
-        return h is not None and not self._blocked(st, up) and h["l1"] == "PASS" and h["l2"] != "FAIL"
+        if o is not None: return up not in st["amb"] and self._payload_reconstructs(o)
+        ups = st["ups"].get(up, [])
+        return bool(ups) and all(self._reconstructable(st, u, _seen | {up}) for u in ups)
 
     def reactivate(self, subject: str):
         """The closure is the RECORDED dependency closure (the caller supplies no list). Dependency identity recorded != dependency reconstructable: every ancestor must reproduce from persisted
@@ -293,7 +327,8 @@ class TrackerCore:
         if not all(isinstance(x, str) and x for x in (subject, version, verifier_id, result_digest)): raise Refusal("binding", code="HEALTH_BINDING_INCOMPLETE")
         if l2_requirement == "NOT_APPLICABLE_BY_GOVERNED_DEFINITION" and not definition_ref: raise Refusal("definition proof", code="NOT_APPLICABLE_NEEDS_DEFINITION_PROOF")
         self._commit(lambda st: (None, ("HEALTH", {"subject": subject, "version": version, "req": l2_requirement, "l2": l2_status, "l1": l1, "at": at, "max_age": max_age,
-                                                    "verifier_id": verifier_id, "result_digest": result_digest, "definition_ref": definition_ref or "", "evidence_class": "CALLER_ASSERTED"})))
+                                                    "verifier_id": verifier_id, "result_digest": result_digest, "definition_ref": definition_ref or "", "evidence_class": "CALLER_ASSERTED",
+                                                    "basis": self._basis(st, subject)})))
 
     def reverify(self, subject: str, version: str, verifier, now: int, l2_requirement: str, max_age: int, definition_ref: str = None):
         """Re-verification trigger path: RUNS the supplied verifier (callable(subject, version) -> (l1, l2, result_digest)) and records its result. Binding this to the real L2 recomputation
@@ -318,11 +353,16 @@ class TrackerCore:
         h = st["health"].get(subject)
         if h is None or h["version"] != version: return "UNKNOWN"
         if h["at"] > now or now - h["at"] > h["max_age"]: return "UNKNOWN"                # future or stale evidence never certifies
+        if h["basis"] != self._basis(st, subject): return "UNKNOWN"                      # recorded under a different epoch basis
         if st["reverify"].get(subject, 0) >= h["seq"]: return "UNKNOWN"                   # a later epoch/reverification request supersedes this evidence
         if h["l1"] == "FAIL" or h["l2"] == "FAIL": return "NOT_HEALTHY"
         if h["req"] == "REQUIRED": return "HEALTHY" if h["l2"] == "PASS" else "UNKNOWN"   # UNAVAILABLE L2 never falls back to L1
         return "HEALTHY"
-    def recording_health(self, subject: str, version: str, now: int) -> str: return self._health(self._replay(), subject, version, now)
+    def recording_health(self, subject: str, version: str, now: int) -> "HealthReading":
+        """Typed reading. The calculation is over CALLER-ASSERTED evidence, so it is never presented as qualified Recording Health: a qualified core reports state HELD (the local calculation stays visible as
+        `local_state`); a simulation core reports the calculation labelled SIMULATION_CALLER_ASSERTED. NOT_APPLICABLE is not an admitted definition proof; reverify() is an injected callable."""
+        local = self._health(self._replay(), subject, version, now)
+        return HealthReading(local if self.simulation else HELD, "SIMULATION_CALLER_ASSERTED" if self.simulation else "QUALIFIED_HELD", local, False)
 
     # ---- as-of eligibility: bound to the ONE existing chain-status authority; qualified use is HELD -----
     def eligible_asof(self, subject: str, version: str, asof_seq: int, now: int, *, mv=None, fence=None) -> dict:
@@ -359,3 +399,11 @@ from ..gateway.contracts import HealthSnapshot as _HS
 class CoreHealthSnapshot(_HS):
     """A Health snapshot from Core that carries its evidence class. `acceptable` can be True ONLY for SIMULATION evidence; a qualified Core always reports QUALIFIED_HELD (acceptable=False)."""
     evidence_class: str = "SIMULATION"
+
+
+@dataclass(frozen=True)
+class HealthReading:
+    state: str            # HEALTHY / NOT_HEALTHY / UNKNOWN for a simulation core; HELD for a qualified core
+    evidence_class: str
+    local_state: str      # the caller-asserted calculation, always visible, never qualified
+    qualified: bool       # always False: no admitted verifier/definition proof/appointment exists

@@ -2,7 +2,7 @@
 Simulation evidence over internal CANDIDATE carriers. Qualified-class Core holds anything that would assert eligibility/health/reconstruction/mixed-declared (typed HELD), while qualified mechanics
 that need no external authority (admission, contract resolution, snapshot sealing, quarantine opening) are positively controlled. Includes the Codex PR45 reproductions."""
 import unittest
-from stage_a.errors import Refusal, StaleFence
+from stage_a.errors import Refusal, StaleFence, UnknownCommit
 from stage_a.storage.object_store import InMemoryObjectStore
 from stage_a.storage.authority_class import SimulationStore
 from stage_a.coordination.object_store_journal import ObjectStoreJournal
@@ -20,6 +20,7 @@ def mk(sim=True, ns="core1", store=None):
     j = ObjectStoreJournal(st, ns, "w"); j.acquire_epoch(); return TrackerCore(j, simulation=sim)
 def facts(**o):
     f = {k: k + "-v" for k in OBS_FACTS_CANDIDATE}; f.update(instrument="XAUUSD", timeframe="H4"); f.update(o); return f
+def rh(c, *a): return c.recording_health(*a).state
 def adm(c, p=b"p", av=5, v="V1", **fo): return c.admit_observation(facts(**fo), p, av, v)
 def ver(c, s="K", version="1", req="REQUIRED", l2="PASS", l1="PASS", at=10, age=5, **k): c.record_verification(s, version, req, l2, l1, at, age, "verifier-1", "digest-1", **k)
 
@@ -34,9 +35,10 @@ class Observation(unittest.TestCase):
         c = mk(); self.assertNotEqual(c.obs_key(facts()), c.obs_key(facts(instrument="EURUSD")))
         self.assertEqual(code(c.obs_key, {"instrument": "x"}), "OBSERVATION_FACTS_INVALID"); self.assertEqual(code(adm, c, av=-1), "OBSERVATION_FIELDS_INVALID")
     def test_resolution_needs_independent_certifier_and_candidate(self):
-        c = mk(); adm(c); adm(c, b"b"); k = c.obs_key(facts()); d = domain_hash("TRK/PAYLOAD", b"p")
+        c = mk(); adm(c); adm(c, b"b"); k = c.obs_key(facts()); d = TrackerCore._cid(domain_hash("TRK/PAYLOAD", b"p"), 5, "V1")
         self.assertEqual(code(c.resolve_ambiguity, k, d, "x", "x"), "CREATOR_IS_CERTIFIER"); self.assertEqual(code(c.resolve_ambiguity, k, "nope", "x", "y"), "NOT_A_PENDING_CANDIDATE")
         c.resolve_ambiguity(k, d, "x", "y"); self.assertTrue(c.observation_usable(k))
+        self.assertEqual(code(mk(False).resolve_ambiguity, k, d, "x", "y"), "SOURCE_APPROVAL_BINDING_UNBOUND_HELD")      # qualified: two caller names are not approval
     def test_qualified_class_core_admits_observations_positive_control(self):
         c = mk(False); self.assertEqual(adm(c), NEW); self.assertEqual(adm(c), REPEAT)
 class Atomicity(unittest.TestCase):
@@ -129,19 +131,19 @@ class EpochQuarantine(unittest.TestCase):
         c.clear_reason("S", "R1", "cert", "maker"); self.assertFalse(c.retry_allowed("S")); self.assertEqual(code(c.reactivate, "S"), "REASONS_STILL_OPEN")
         c.clear_reason("S", "R2", "cert", "maker"); c.reopen("S"); self.assertFalse(c.retry_allowed("S")); c.reactivate("S"); self.assertTrue(c.retry_allowed("S"))
         self.assertEqual(code(c.clear_reason, "S", "R1", "x", "x"), "CREATOR_IS_CERTIFIER")
-        q = mk(False); q.quarantine("S", "R"); q.clear_reason("S", "R", "c", "m"); self.assertEqual(code(q.reactivate, "S"), "RECONSTRUCTION_PROOF_BINDING_UNBOUND_HELD")
+        q = mk(False); q.quarantine("S", "R"); self.assertEqual(code(q.clear_reason, "S", "R", "c", "m"), "SOURCE_APPROVAL_BINDING_UNBOUND_HELD"); self.assertEqual(code(q.reactivate, "S"), "RECONSTRUCTION_PROOF_BINDING_UNBOUND_HELD")
         q.quarantine("T", "R"); self.assertFalse(q.retry_allowed("T"))                              # qualified quarantine opening works
     def test_reverse_dependents_are_blocked_by_a_quarantined_ancestor(self):
         c = mk(); c.declare_dependency("D", "U"); c.quarantine("U", "R"); self.assertEqual(c.blocked("D"), ["UPSTREAM_BLOCKED"])
 class Health(unittest.TestCase):
     def test_required_l2_never_falls_back_and_stale_future_never_certify(self):
-        c = mk(); ver(c, l2="UNAVAILABLE"); self.assertEqual(c.recording_health("K", "1", 11), "UNKNOWN")
-        ver(c); self.assertEqual(c.recording_health("K", "1", 11), "HEALTHY"); self.assertEqual(c.recording_health("K", "1", 99), "UNKNOWN")
-        self.assertEqual(c.recording_health("K", "2", 11), "UNKNOWN")                                  # wrong version
-        ver(c, req="NOT_APPLICABLE_BY_GOVERNED_DEFINITION", l2="UNAVAILABLE", definition_ref="DEF-1"); self.assertEqual(c.recording_health("K", "1", 11), "HEALTHY")
-        ver(c, l2="FAIL"); self.assertEqual(c.recording_health("K", "1", 11), "NOT_HEALTHY"); self.assertEqual(mk().recording_health("x", "1", 1), "UNKNOWN")
+        c = mk(); ver(c, l2="UNAVAILABLE"); self.assertEqual(rh(c, "K", "1", 11), "UNKNOWN")
+        ver(c); self.assertEqual(rh(c, "K", "1", 11), "HEALTHY"); self.assertEqual(rh(c, "K", "1", 99), "UNKNOWN")
+        self.assertEqual(rh(c, "K", "2", 11), "UNKNOWN")                                  # wrong version
+        ver(c, req="NOT_APPLICABLE_BY_GOVERNED_DEFINITION", l2="UNAVAILABLE", definition_ref="DEF-1"); self.assertEqual(rh(c, "K", "1", 11), "HEALTHY")
+        ver(c, l2="FAIL"); self.assertEqual(rh(c, "K", "1", 11), "NOT_HEALTHY"); self.assertEqual(rh(mk(), "x", "1", 1), "UNKNOWN")
     def test_codex_repro_future_evidence_does_not_certify_and_inputs_are_validated(self):
-        c = mk(); ver(c, "future", at=999, age=1); self.assertEqual(c.recording_health("future", "1", 2), "UNKNOWN")
+        c = mk(); ver(c, "future", at=999, age=1); self.assertEqual(rh(c, "future", "1", 2), "UNKNOWN")
         self.assertEqual(code(ver, c, at=-1), "HEALTH_INTERVAL_INVALID"); self.assertEqual(code(ver, c, age=0), "HEALTH_INTERVAL_INVALID")
         self.assertEqual(code(ver, c, req="NOT_APPLICABLE_BY_GOVERNED_DEFINITION", l2="UNAVAILABLE"), "NOT_APPLICABLE_NEEDS_DEFINITION_PROOF")
         self.assertEqual(code(c.record_verification, "K", "1", "UNAVAILABLE", "PASS", "PASS", 1, 1, "v", "d"), "HEALTH_VOCABULARY_UNKNOWN")
@@ -149,12 +151,12 @@ class Health(unittest.TestCase):
     def test_reverification_trigger_and_epoch_supersession(self):
         c = mk(); self.assertEqual(c.due_for_reverification(["K"], 11), [("K", "ABSENT")]); ver(c)
         self.assertEqual(c.due_for_reverification(["K"], 11), []); self.assertEqual(c.due_for_reverification(["K"], 50), [("K", "STALE")])
-        c.advance_epoch("K", 2); self.assertEqual(c.recording_health("K", "1", 11), "UNKNOWN"); self.assertEqual(c.due_for_reverification(["K"], 11), [("K", "EPOCH_ADVANCED")])
-        c.reverify("K", "1", lambda s, v: ("PASS", "PASS", "dg"), 11, "REQUIRED", 5); self.assertEqual(c.recording_health("K", "1", 12), "HEALTHY")
-        c.request_reverification("K", "SCHEDULED"); self.assertEqual(c.recording_health("K", "1", 12), "UNKNOWN")
+        c.advance_epoch("K", 2); self.assertEqual(rh(c, "K", "1", 11), "UNKNOWN"); self.assertEqual(c.due_for_reverification(["K"], 11), [("K", "EPOCH_ADVANCED")])
+        c.reverify("K", "1", lambda s, v: ("PASS", "PASS", "dg"), 11, "REQUIRED", 5); self.assertEqual(rh(c, "K", "1", 12), "HEALTHY")
+        c.request_reverification("K", "SCHEDULED"); self.assertEqual(rh(c, "K", "1", 12), "UNKNOWN")
         self.assertEqual(code(c.request_reverification, "K", "WHENEVER"), "UNKNOWN_REVERIFY_TRIGGER")
         def bad(s, v): return ("FAIL", "PASS", "dg")
-        c.reverify("K", "1", bad, 13, "REQUIRED", 5); self.assertEqual(c.recording_health("K", "1", 14), "NOT_HEALTHY")
+        c.reverify("K", "1", bad, 13, "REQUIRED", 5); self.assertEqual(rh(c, "K", "1", 14), "NOT_HEALTHY")
 class Eligibility(unittest.TestCase):
     def test_codex_repro_qualified_core_cannot_assert_eligibility_from_a_caller_pass(self):
         c = mk(False); ver(c, "never-observed"); r = c.eligible_asof("never-observed", "1", c._j.head().seq, 11)
@@ -196,4 +198,109 @@ class Composition(unittest.TestCase):
     def test_quarantine_or_epoch_invalidation_blocks_delivery_downstream(self):
         for mut in (lambda c: c.quarantine("K", "R"), lambda c: (c.declare_dependency("K", "U"), c.advance_epoch("U", 2)), lambda c: c.advance_epoch("K", 2)):
             c = mk(); ver(c, "K", at=4, age=10); mut(c); gw = _gw(); out = gw.resolve("o", _entry(), I, I, 3, 10, c.gateway_health("K", "1", 5, R("hl"), 4)); self.assertNotIsInstance(out, G.Binding)
+
+
+from stage_a.storage.authority_class import approve_test_adapter, _APPROVED_TEST_ADAPTERS
+class Flaky(InMemoryObjectStore):
+    """Approved fault-injection adapter. kind: lost_ack (HEAD CAS lands, ack lost) | dropped (HEAD CAS never lands) | pre_object (fails before the immutable record is written)."""
+    kind = None; fail_at = None; calls = 0; hook = None
+    def arm(self, kind, hook=None): self.kind, self.hook, self.calls = kind, hook, 0; self.fail_at = 1
+    def put_if_match(self, k, d, e):
+        if self.kind in ("lost_ack", "dropped") and k.endswith("/" + "core1") or (self.kind in ("lost_ack", "dropped") and "head" in k):
+            self.calls += 1
+            if self.calls == self.fail_at:
+                self.kind_now = self.kind
+                if self.hook: self.hook()
+                if self.kind == "lost_ack": super().put_if_match(k, d, e)
+                raise UnknownCommit(self.kind)
+        return super().put_if_match(k, d, e)
+    def put_if_absent(self, k, d):
+        if self.kind == "pre_object" and "journal" in k:
+            self.kind = None; raise UnknownCommit("pre_object")
+        return super().put_if_absent(k, d)
+class UnknownCommitResolution(unittest.TestCase):
+    def setUp(self): approve_test_adapter(Flaky)
+    def tearDown(self): _APPROVED_TEST_ADAPTERS.remove(Flaky)
+    def rig(self):
+        st = Flaky(); c = mk(True, "core1", st); return st, c
+    def effects(self, c, kind): return sum(1 for r in c._j.read_from(0) if r.kind == kind)
+    def test_codex_repro_committed_lost_ack_returns_the_stored_result_with_one_effect(self):
+        st, c = self.rig(); st.arm("lost_ack"); c.advance_epoch("A", 1)                    # was: EPOCH_NOT_ADVANCING while epoch 1 was committed
+        self.assertEqual(self.effects(c, "EPOCH"), 1); self.assertEqual(c._replay()["epoch"]["A"], 1)
+    def test_lost_ack_on_admission_is_not_reported_as_a_repeat_and_does_not_duplicate(self):
+        st, c = self.rig(); st.arm("lost_ack"); self.assertEqual(adm(c), NEW); self.assertEqual(self.effects(c, "OBS_ADMITTED"), 1); self.assertEqual(adm(c), REPEAT)
+    def test_dropped_write_is_revalidated_and_lands_once(self):
+        st, c = self.rig(); st.arm("dropped"); c.advance_epoch("A", 1); self.assertEqual(self.effects(c, "EPOCH"), 1)
+    def test_unknown_before_the_immutable_object_is_retried_once(self):
+        st, c = self.rig(); st.arm("pre_object"); c.advance_epoch("A", 1); self.assertEqual(self.effects(c, "EPOCH"), 1)
+    def test_competing_writer_lands_first_then_this_operation_revalidates_and_lands_once(self):
+        st, c = self.rig(); other = TrackerCore(c._j, simulation=True)
+        st.arm("dropped", hook=lambda: other.advance_epoch("B", 1))                      # another writer lands first; our write is dropped
+        c.advance_epoch("A", 1); e = c._replay()["epoch"]; self.assertEqual((e["A"], e["B"]), (1, 1)); self.assertEqual(self.effects(c, "EPOCH"), 2)
+    def test_identical_record_landed_by_another_writer_is_one_effect(self):
+        st, c = self.rig(); other = TrackerCore(c._j, simulation=True); st.arm("dropped", hook=lambda: other.advance_epoch("A", 1))
+        c.advance_epoch("A", 1); self.assertEqual(self.effects(c, "EPOCH"), 1)           # identical record at the same position: the effect exists exactly once
+    def test_ordinary_success_and_restart_after_a_resolved_unknown(self):
+        st, c = self.rig(); c.advance_epoch("A", 1); st.arm("lost_ack"); c.advance_epoch("A", 2)
+        j2 = ObjectStoreJournal(c._j._s, "core1", "w2"); j2.acquire_epoch(); c2 = TrackerCore(j2, simulation=True)
+        self.assertEqual(c2._replay()["epoch"]["A"], 2); self.assertEqual(self.effects(c2, "EPOCH"), 2)
+class ConflictResolutionRestoresChosenBytes(unittest.TestCase):
+    def two(self, p1=b"A", p2=b"B", av2=5, v2="V1"):
+        c = mk(); adm(c, p1); adm(c, p2, av=av2, v=v2); return c, c.obs_key(facts())
+    def test_codex_repro_choosing_the_second_candidate_restores_its_exact_bytes(self):
+        c, k = self.two(); cands = c.candidates(k); self.assertEqual(len(cands), 2)
+        cb = [cid for cid, r in cands.items() if r["payload_hex"] == b"B".hex()][0]
+        self.assertFalse(c.observation_usable(k)); c.resolve_ambiguity(k, cb, "maker", "cert"); self.assertTrue(c.observation_usable(k))
+        st = c._replay(); self.assertEqual(st["obs"][k]["payload_hex"], b"B".hex()); self.assertTrue(c._payload_reconstructs(st["obs"][k]))
+        self.assertEqual(c.seal("XAUUSD", 10, 10, [k])[0], "SEALED"); self.assertEqual(len(c.candidates(k)), 2)                     # history retained
+        self.assertEqual(adm(c, b"B"), REPEAT)                                                                                       # the chosen candidate is a plain repeat
+    def test_metadata_only_conflicts_are_uniquely_selectable(self):
+        c, k = self.two(b"A", b"A", av2=6)                                                                                           # same payload, different availability
+        cands = c.candidates(k); self.assertEqual(len(cands), 2); c6 = [cid for cid, r in cands.items() if r["available_asof"] == 6][0]
+        c.resolve_ambiguity(k, c6, "m", "c"); self.assertEqual(c._replay()["obs"][k]["available_asof"], 6)
+        c2, k2 = self.two(b"A", b"A", v2="V2"); self.assertEqual(len(c2.candidates(k2)), 2)
+    def test_a_rejected_known_candidate_does_not_reopen_the_ambiguity_and_restart_replays(self):
+        c, k = self.two(); ca = [cid for cid, r in c.candidates(k).items() if r["payload_hex"] == b"A".hex()][0]; c.resolve_ambiguity(k, ca, "m", "c")
+        self.assertEqual(adm(c, b"B"), CONFLICT); self.assertTrue(c.observation_usable(k)); self.assertEqual(sum(1 for r in c._j.read_from(0) if r.kind == "OBS_AMBIGUOUS"), 1)
+        j2 = ObjectStoreJournal(c._j._s, "core1", "w2"); j2.acquire_epoch(); c2 = TrackerCore(j2, simulation=True); self.assertTrue(c2.observation_usable(k))
+    def test_corrupted_candidate_cannot_be_selected_or_used_or_sealed(self):
+        c = mk(); adm(c); k = c.obs_key(facts()); st = c._replay(); good = dict(st["obs"][k])
+        bad = dict(good, payload_hex=b"tampered".hex(), cid="x"); bad["cid"] = TrackerCore._cid(good["digest"], 5, "V9"); bad["vintage"] = "V9"
+        c._j.append(c._j.head(), "OBS_AMBIGUOUS", {"key": k, "candidate": bad})
+        self.assertEqual(code(c.resolve_ambiguity, k, bad["cid"], "m", "c"), "CANDIDATE_INTEGRITY_FAILED")
+        c3 = mk(ns="c3"); head = c3._j.head(); c3._j.append(head, "OBS_ADMITTED", dict(good, payload_hex=b"tampered".hex()))
+        self.assertFalse(c3.observation_usable(k)); self.assertEqual(code(c3.seal, "XAUUSD", 10, 10, [k]), "MEMBER_NOT_USABLE_OBSERVATION")
+    def test_unchanged_identical_replay_and_other_instrument_control(self):
+        c = mk(); self.assertEqual(adm(c), NEW); self.assertEqual(adm(c), REPEAT); self.assertEqual(adm(c, instrument="EURUSD"), NEW)
+class EpochSupersession(unittest.TestCase):
+    def chain(self):
+        c = mk(); c.declare_dependency("B", "A"); c.declare_dependency("C", "B"); return c
+    def test_codex_repro_second_epoch_before_reresolution_invalidates_old_witnesses(self):
+        c = self.chain(); c.advance_epoch("A", 1); ver(c, "B"); ver(c, "C"); c.advance_epoch("A", 2)
+        self.assertEqual(code(c.reresolve, "B"), "NO_FRESH_WITNESS"); self.assertEqual(rh(c, "C", "1", 11), "UNKNOWN"); self.assertNotEqual(c.blocked("C"), [])
+        ver(c, "B"); c.reresolve("B"); self.assertEqual(code(c.reresolve, "C"), "NO_FRESH_WITNESS"); ver(c, "C"); c.reresolve("C"); self.assertEqual(c.blocked("C"), [])
+    def test_witness_must_match_the_current_basis_not_only_follow_an_old_marker(self):
+        c = self.chain(); c.advance_epoch("A", 1); ver(c, "B"); c.advance_epoch("A", 2)                              # witness recorded under epoch 1 basis
+        self.assertEqual(code(c.reresolve, "B"), "NO_FRESH_WITNESS")
+    def test_branching_shared_ancestry_and_unaffected_baseline(self):
+        c = mk(); c.declare_dependency("B", "A"); c.declare_dependency("C", "A"); c.declare_dependency("D", "B"); c.declare_dependency("D", "C"); c.declare_dependency("X", "Z")
+        ver(c, "X"); c.advance_epoch("A", 1); c.advance_epoch("A", 2)
+        self.assertTrue(all(c.blocked(n) for n in "BCD")); self.assertEqual(c.blocked("X"), []); self.assertEqual(rh(c, "X", "1", 11), "HEALTHY")      # unaffected positive control
+        c.advance_epoch("B", 1); self.assertEqual(code(c.reresolve, "D"), "UPSTREAM_STILL_INVALID")                                                  # a new failure before outstanding re-resolution
+class ReconstructabilityAndHealthTyping(unittest.TestCase):
+    def test_codex_repro_health_record_is_not_reconstruction(self):
+        c = mk(); c.declare_dependency("S", "derived-missing-raw"); ver(c, "derived-missing-raw", l2="UNAVAILABLE", age=100)
+        c.quarantine("S", "R"); c.clear_reason("S", "R", "cert", "maker"); self.assertEqual(code(c.reactivate, "S"), "NOT_RECONSTRUCTABLE"); self.assertFalse(c.retry_allowed("S"))
+    def test_genuine_reconstruction_positive_blocked_and_incomplete_closure(self):
+        c = mk(); adm(c, bar_identity="raw"); raw = c.obs_key(facts(bar_identity="raw")); c.declare_dependency("D1", raw); c.declare_dependency("S", "D1")
+        c.quarantine("S", "R"); c.clear_reason("S", "R", "cert", "maker"); c.reactivate("S"); self.assertTrue(c.retry_allowed("S"))                         # raw -> derived -> S
+        self.assertEqual(rh(c, "S", "1", 11), "UNKNOWN")                                                                                                     # reactivation does not restore eligibility evidence
+        d = mk(); adm(d, bar_identity="raw"); raw = d.obs_key(facts(bar_identity="raw")); d.declare_dependency("D1", raw); d.declare_dependency("D1", "missing"); d.declare_dependency("S", "D1")
+        d.quarantine("S", "R"); d.clear_reason("S", "R", "c", "m"); self.assertEqual(code(d.reactivate, "S"), "NOT_RECONSTRUCTABLE")                          # incomplete transitive closure
+        e = mk(); adm(e, bar_identity="raw"); raw = e.obs_key(facts(bar_identity="raw")); e.declare_dependency("S", raw); e.quarantine(raw, "R2"); e.quarantine("S", "R"); e.clear_reason("S", "R", "c", "m")
+        self.assertEqual(code(e.reactivate, "S"), "NOT_RECONSTRUCTABLE")                                                                                    # blocked raw ancestor
+    def test_codex_repro_qualified_recording_health_is_held_with_the_local_calculation_visible(self):
+        q = mk(False); ver(q, "K"); r = q.recording_health("K", "1", 11)
+        self.assertEqual((r.state, r.evidence_class, r.local_state, r.qualified), ("HELD", "QUALIFIED_HELD", "HEALTHY", False))
+        s = mk(); ver(s, "K"); r = s.recording_health("K", "1", 11); self.assertEqual((r.state, r.evidence_class, r.qualified), ("HEALTHY", "SIMULATION_CALLER_ASSERTED", False))
 if __name__ == "__main__": unittest.main()

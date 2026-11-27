@@ -82,18 +82,52 @@ def subject_start_rows(subject, records: Iterable, normalizer) -> list:
             out.append(r)
     return out
 
-def subject_terminal_identities(subject, records: Iterable, normalizer, active_era_id=None, searched_scopes=None) -> Tuple[TerminalIdentity, ...]:
-    """Typed, subject-bound terminal results (identity + governed state + full facts) for the lookup subject: one per matching noncurrent row, in a deterministic order. This is what the
-    pipeline returns on its Outcome. Report-only: authorizes no claim, resurrection, delivery or near-match substitution, and the narrow lookup stays CURRENT-ONLY and fail-closed."""
-    recs = list(records)
+RESOLVED, UNRESOLVED = "RESOLVED", "UNRESOLVED_SUBJECT_NOT_VALIDATED"
+
+@dataclass(frozen=True)
+class TerminalResolution:
+    """Typed result: UNRESOLVED means the subject failed the baseline's own validity rules (mode / era scope / governed normalizer / content key); nothing is asserted and it is NOT 'not found'."""
+    status: str
+    reason: str
+    identities: Tuple[TerminalIdentity, ...] = ()
+
+def _subject_valid(subject, normalizer, active_era_id):
+    """The same validity rules identity_lookup applies before it may rely on a subject (mode, era scope, governed normalizer, recomputed content key). Returns a reason or ''."""
+    from tracker_identity.models import SUBJECT_MODES, LOOKUP_ERA_SCOPES
+    from tracker_identity.normalizer import normalize_subject
+    from tracker_identity.normalizer_registry import resolve_governed_normalizer
+    from tracker_identity.content_identity import build_content_identity_key
+    mode = str(subject.get("subject_mode", "CANONICAL_ID")).strip().upper() or "CANONICAL_ID"
+    if mode not in SUBJECT_MODES: return "SUBJECT_MODE_INVALID"
     ls = str(subject.get("lookup_era_scope", "ALL_ERAS")).strip().upper() or "ALL_ERAS"
-    if ls not in ("ERA_1_ONLY", "ALL_ERAS"):
-        return ()                                                       # invalid scope: nothing asserted
-    if ls == "ERA_1_ONLY":
-        if active_era_id != "ERA_1":
-            return ()                                                   # unverified/unsupported active era: fail closed
-        recs = [r for r in recs if r.era_id == active_era_id]            # the verified lookup's era bound, not all store rows
+    if ls not in LOOKUP_ERA_SCOPES: return "LOOKUP_ERA_SCOPE_INVALID"
+    if ls == "ALL_ERAS": return "ALL_ERAS_COVERAGE_INCOMPLETE"
+    if active_era_id != "ERA_1": return "STORE_ACTIVE_ERA_NOT_ERA1"
+    if any(k in subject for k in ("content_key", "content_identity_key", "content_key_composite")): return "SUPPLIED_CONTENT_KEY_NOT_ACCEPTED"
+    try:
+        errs = list(resolve_governed_normalizer(normalizer))
+        normalize_subject(subject, normalizer)
+    except Exception:
+        return "NORMALIZER_INVALID"
+    if errs: return "NORMALIZER_NOT_GOVERNED"
+    payload = subject.get("candidate_content")
+    if payload is not None:
+        _, cerrs = build_content_identity_key(payload)
+        if cerrs: return "CANDIDATE_CONTENT_INVALID"
+    elif mode == "PRE_ID":
+        return "CANDIDATE_CONTENT_REQUIRED"
+    return ""
+
+def subject_terminal_resolution(subject, records: Iterable, normalizer, active_era_id=None, searched_scopes=None) -> TerminalResolution:
+    """Typed, subject-bound terminal results. Report-only: authorizes no claim, resurrection, delivery or near-match substitution; the narrow lookup stays CURRENT-ONLY and fail-closed."""
+    why = _subject_valid(subject, normalizer, active_era_id)
+    if why: return TerminalResolution(UNRESOLVED, why)
+    recs = [r for r in records if r.era_id == active_era_id]            # the verified lookup's era bound, not all store rows
     if searched_scopes is not None:
         ss = set(searched_scopes); recs = [r for r in recs if r.scope in ss]   # rows outside the searched scopes are not evidence of anything
     starts = sorted(subject_start_rows(subject, recs, normalizer), key=full_facts)
-    return tuple(resolve_terminal_identity(r, recs) for r in starts)
+    return TerminalResolution(RESOLVED, "", tuple(resolve_terminal_identity(r, recs) for r in starts))
+
+def subject_terminal_identities(subject, records: Iterable, normalizer, active_era_id=None, searched_scopes=None) -> Tuple[TerminalIdentity, ...]:
+    """Identities of a RESOLVED subject; () for an UNRESOLVED one (use `subject_terminal_resolution` to tell the two apart)."""
+    return subject_terminal_resolution(subject, records, normalizer, active_era_id, searched_scopes).identities
