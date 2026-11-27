@@ -77,6 +77,7 @@ class SimulatedGateway:
         self.allow_uncommitted_status = allow_uncommitted_status
         self.health_source = health_source                    # object with confirm_snapshot(snapshot)->bool (the Core that issued the snapshot); no source => Core snapshots are NOT confirmable and are denied
         self.allow_shape_only_health = allow_shape_only_health  # LEGACY shape-only harness switch: a plain HealthSnapshot proves nothing about any subject. Default False: denied.
+        self.cross_instrument = None                            # R36: optional gateway.cross_instrument.CrossInstrumentPolicy; with `target_instrument` given and no policy/grant the dependency is DENIED (default cross-instrument deny)
         self.final_store = None                                 # R35: optional v038.FinalResolutionStore; `resolve_window` is the ONLY path that uses it
         self._window_outcome: Dict[object, object] = {}       # identity -> the durably CONFIRMED outcome object
         self._window_issued: Dict[tuple, object] = {}         # (consumer_id, request_id) -> confirmed outcome; consumer-local namespace, never mixed with the legacy request-id cache
@@ -102,16 +103,18 @@ class SimulatedGateway:
 
     def resolve(self, request_id: str, entry: DependencyEntry, instrument_id: bytes, timeframe_id: bytes, step_index: int,
                 fence: int, health: HealthSnapshot, require_current: bool = True, data_vintage_mode: Optional[str] = None,
-                observed_at: Optional[int] = None):
+                observed_at: Optional[int] = None, target_instrument: Optional[bytes] = None, consumer_id: Optional[str] = None):
         done = self._outcomes.get(request_id)
         if done is not None:                                         # G4: retry returns the identical stored outcome
             return done
-        return self._compute(request_id, entry, instrument_id, timeframe_id, step_index, fence, health, require_current, data_vintage_mode, observed_at, self._store)
+        return self._compute(request_id, entry, instrument_id, timeframe_id, step_index, fence, health, require_current, data_vintage_mode, observed_at, self._store, target_instrument, consumer_id)
 
-    def _compute(self, request_id, entry, instrument_id, timeframe_id, step_index, fence, health, require_current, data_vintage_mode, observed_at, _sink):
+    def _compute(self, request_id, entry, instrument_id, timeframe_id, step_index, fence, health, require_current, data_vintage_mode, observed_at, _sink, target_instrument=None, consumer_id=None):
         """Pure evaluation of one dependency at a fence. `_sink(request_id, outcome)` is the ONLY place an outcome is published: `resolve` passes the request-id cache; `resolve_window` passes an identity function so a provisional outcome is NOT visible to any consumer until the durable final store has confirmed it (R36)."""
         def nd(reason):
             return _sink(request_id, NonDeliveryResolution(request_id, entry.feature_id, entry.feature_version, reason, fence))
+        if target_instrument is not None and target_instrument != instrument_id and not (self.cross_instrument is not None and self.cross_instrument.allows(consumer_id, target_instrument, instrument_id)):
+            return nd("CROSS_INSTRUMENT_DENIED")                       # DOCX s7A: default cross-instrument access = DENY; explicit grant only
         if self.watermark < fence:                                   # G7: stale currentness/revocation watermark
             return nd("STALE_WATERMARK")
         cands = [r for r in self.rows.get((entry.feature_id, entry.feature_version, instrument_id, timeframe_id), [])
@@ -160,7 +163,7 @@ class SimulatedGateway:
         return _sink(request_id, Binding(request_id, d, O.delivered_hash(self.t, d), fence))
 
     def resolve_window(self, request_id: str, identity, entry: DependencyEntry, instrument_id: bytes, timeframe_id: bytes, step_index: int, fence: int, health,
-                       require_current: bool = True, data_vintage_mode: Optional[str] = None, observed_at: Optional[int] = None):
+                       require_current: bool = True, data_vintage_mode: Optional[str] = None, observed_at: Optional[int] = None, target_instrument: Optional[bytes] = None):
         """Window-level resolution (Contract V0.38 FINAL RESOLUTION IDENTITY, current 52-56): a NEW REQUEST_ID for the SAME final resolution identity reuses the stored outcome and is never re-evaluated. REQUEST_ID alone is not the identity.
         The identity (consumer_id, binding id, scope, window/fence id) is SUPPLIED and its string encoding is not defined by any source read, so it is not derived here; instead the FIRST evaluation pins the exact evaluation parameters to the identity
         and a later call that names the same identity with DIFFERENT parameters (dependency, version, instrument, timeframe, step, fence, vintage mode, observation time) is refused rather than silently answered with another window's outcome.
@@ -168,13 +171,13 @@ class SimulatedGateway:
         if self.final_store is None: raise Refusal("no final store", code="GATEWAY_FINAL_RESOLUTION_STORE_NOT_CONFIGURED")
         if not isinstance(request_id, str) or not request_id: raise Refusal("request_id", code="GATEWAY_REQUEST_ID_INVALID")
         cid = getattr(identity, "consumer_id", None)
-        gov = [x.hex() if isinstance(x, bytes) else x for x in (entry.feature_id, entry.feature_version, entry.requirement_class, entry.expected_projection, instrument_id, timeframe_id, step_index, fence, require_current, data_vintage_mode)]
+        gov = [x.hex() if isinstance(x, bytes) else x for x in (entry.feature_id, entry.feature_version, entry.requirement_class, entry.expected_projection, instrument_id, timeframe_id, step_index, fence, require_current, data_vintage_mode, target_instrument)]
         prior = self.final_store.pin_of(identity)
         if prior is not None and prior != gov: raise Refusal(request_id, code="RESOLUTION_IDENTITY_PARAMETERS_DIFFER")        # governing parameters only; the retry's observation clock is NOT part of the identity
         if request_id in self._outcomes: raise Refusal(request_id, code="REQUEST_ID_USED_OUTSIDE_THIS_WINDOW")                # the legacy global request-id cache already owns this id (misuse guard retained)
         def evaluate():
             if prior is None: self.final_store.set_pin(identity, gov, {"observed_at": observed_at, "watermark": self.watermark})   # facts of the FIRST evaluation: immutable, never compared
-            return self._compute(request_id, entry, instrument_id, timeframe_id, step_index, fence, health, require_current, data_vintage_mode, observed_at, lambda rid, o: o)   # provisional: published nowhere
+            return self._compute(request_id, entry, instrument_id, timeframe_id, step_index, fence, health, require_current, data_vintage_mode, observed_at, lambda rid, o: o, target_instrument, cid)   # provisional: published nowhere
         out = self.final_store.resolve(request_id, identity, evaluate)                    # COMMIT POINT: raises, with nothing published, unless the store durably holds this outcome
         canon = self._window_outcome.get(identity)
         if canon is None: canon = self._window_outcome[identity] = out                  # first confirmation (or restart: adopt the STORED outcome, the store is the authority)
