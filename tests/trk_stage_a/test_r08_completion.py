@@ -24,10 +24,10 @@ def test_least_privilege_and_unknowns_fail_closed():
     assert code(P.authorize, "root", P.READ_CANONICAL) == "UNKNOWN_PRINCIPAL"
     assert code(P.authorize, "tracker-acceptor", "ANYTHING_ELSE") == "CAPABILITY_NOT_GRANTED"
 
-def test_r7_principals_are_refused_because_r7_is_not_operative():
+def test_e06_lookup_refuses_replica_only_names_by_name():
     for p in ("acceptance-origin", "replica-commit-service"):
-        assert code(P.capabilities, p) == "R7_PRINCIPAL_NOT_OPERATIVE"
-        assert code(P.check_no_prohibited_merge, ["scheduler", p]) == "R7_PRINCIPAL_NOT_OPERATIVE"
+        assert code(P.capabilities, p) == "REPLICA_ONLY_ROLE_NOT_IN_E06"
+        assert code(P.check_no_prohibited_merge, ["scheduler", p]) == "REPLICA_ONLY_ROLE_NOT_IN_E06"
 
 def test_prohibited_merges_refused_and_allowed_bundles_pass():
     for a, b in P.PROHIBITED_MERGES:

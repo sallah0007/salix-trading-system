@@ -49,7 +49,10 @@ def test_grant_evidence_shape_only_and_lookup_is_labelled_not_authentication():
         assert code(P.check_grant_evidence_shape, r) == "GRANT_EVIDENCE_FIELD_MISSING"
     assert code(P.check_grant_evidence_shape, {**GRANT, "x": "y"}) == "GRANT_EVIDENCE_UNKNOWN_FIELD"
     assert code(P.check_grant_evidence_shape, {**GRANT, "role": "root"}) == "UNKNOWN_PRINCIPAL"
-    assert code(P.check_grant_evidence_shape, {**GRANT, "role": "acceptance-origin"}) == "R7_PRINCIPAL_NOT_OPERATIVE"
+    assert code(P.check_grant_evidence_shape, {**GRANT, "role": "acceptance-origin"}) == "REPLICA_ONLY_ROLE_NOT_IN_E06"
+    assert P.check_grant_evidence_shape({**GRANT, "role": "acceptance-origin"}, "REPLICA")["role"] == "acceptance-origin"
+    assert code(P.check_grant_evidence_shape, {**GRANT, "role": "tracker-acceptor"}, "REPLICA") == "REPLICA_ACCEPTOR_SPLIT_REQUIRED"
+    assert code(P.check_grant_evidence_shape, dict(GRANT), "elsewhere") == "GRANT_EVIDENCE_SCOPE_UNKNOWN"
     assert code(P.check_grant_evidence_shape, []) == "GRANT_EVIDENCE_NOT_A_RECORD"
 
 def test_health_envelope_refuses_second_local_state_field():
@@ -78,3 +81,10 @@ def test_provider_proof_requires_named_provider_and_all_five_classes_passing():
         bad = {"provider_id": "p", "results": {**ok["results"], c: "NOT_RUN"}}
         assert code(C.require_provider_proof, bad) == "PROVIDER_CONFORMANCE_NOT_PROVEN"
     assert len(C.REQUIRED_CONFORMANCE) == 5
+
+def test_provider_proof_is_labelled_claimed_fields_only_and_has_no_stage_a_consumer():
+    import pathlib, re
+    assert C.CLAIMED_FIELDS_ONLY_NOT_AUTHENTICATED is True
+    root = pathlib.Path(__file__).resolve().parents[2] / "stage_a"
+    users = [str(p) for p in root.rglob("*.py") if p.name != "provider_contract.py" and re.search(r"require_provider_proof", p.read_text())]
+    assert users == []          # any new caller must revisit this label and the closeout's consumer statement
