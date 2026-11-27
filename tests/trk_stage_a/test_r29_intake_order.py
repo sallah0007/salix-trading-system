@@ -102,3 +102,27 @@ class HealthBlastRadius(unittest.TestCase):
         self.assertFalse(c.gateway_health("TOP", "1", 13, None, 11).acceptable); self.assertFalse(c.gateway_health("MID", "1", 13, None, 11).acceptable)
         self.assertTrue(c.gateway_health("BASE", "1", 13, None, 11).acceptable)                                                                 # unrelated baseline unaffected
         self.assertFalse(c.gateway_health("NEVER_VERIFIED", "1", 13, None, 11).acceptable)                                                      # required, unknown => held, not healthy
+
+class HealthRequiredAncestry(unittest.TestCase):
+    def test_undeclared_ancestry_fails_closed_proven_empty_and_unrelated_pass_and_completeness_is_unadmitted(self):
+        from .test_r24_core import ver
+        c = mk(); c.declare_dependency("MID", "UP"); c.declare_dependency("TOP", "MID")
+        for s in ("UP", "MID", "TOP", "BASE", "LEAF"): ver(c, s, version="1", at=11, age=50)
+        ok = lambda s, **k: c.gateway_health(s, "1", 12, None, 11, **k).acceptable
+        self.assertTrue(ok("TOP") and ok("TOP", require_ancestry=True) is False)                                                         # not required: unchanged; required but undeclared => UNKNOWN, fails closed
+        c.declare_ancestry_complete("TOP", "src-1"); c.declare_ancestry_complete("MID", "src-1")
+        self.assertFalse(ok("TOP", require_ancestry=True))                                                                              # UP (an ancestor) still undeclared: the unknown propagates to dependents
+        c.declare_ancestry_complete("UP", "src-1"); self.assertTrue(ok("TOP", require_ancestry=True))                                  # complete chain, healthy: positive
+        c.declare_ancestry_complete("BASE", "src-2"); self.assertTrue(ok("BASE", require_ancestry=True))                               # PROVEN-EMPTY (declared, no edges) is not UNKNOWN
+        self.assertFalse(ok("LEAF", require_ancestry=True)); self.assertTrue(ok("BASE", require_ancestry=True))                         # an unrelated undeclared subject does not affect BASE, and BASE's declaration does not rescue LEAF
+        self.assertEqual(c._replay()["anc"]["BASE"]["admission"], "CALLER_ASSERTED_UNADMITTED")                                         # completeness is supplied, not verified
+        self.assertEqual(code(c.declare_dependency, "TOP", "BASE"), "ANCESTRY_ALREADY_DECLARED_COMPLETE")                               # late edge contradicts the assertion
+        c.quarantine("UP", "DEFECT"); self.assertFalse(ok("TOP", require_ancestry=True)); self.assertTrue(ok("BASE", require_ancestry=True))
+        self.assertEqual(code(c.declare_ancestry_complete, "", "s"), "ANCESTRY_DECLARATION_INVALID")
+    def test_snapshot_binds_the_ancestry_requirement(self):
+        from .test_r24_core import ver
+        from stage_a.core.tracker_core import CoreHealthSnapshot
+        c = mk(); ver(c, "S", version="1", at=11, age=50); c.declare_ancestry_complete("S", "src")
+        a = c.gateway_health("S", "1", 12, None, 11, require_ancestry=False); b = c.gateway_health("S", "1", 12, None, 11, require_ancestry=True)
+        self.assertEqual((a.require_ancestry, b.require_ancestry), (False, True))
+        self.assertNotEqual(c._snapshot_id("S", "1", None, None, 11, True, "SIMULATION", 12, "", False, False, False), c._snapshot_id("S", "1", None, None, 11, True, "SIMULATION", 12, "", False, False, True))

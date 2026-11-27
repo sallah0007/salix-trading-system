@@ -6,9 +6,9 @@ TC = "stage_a/core/tracker_core.py"; VR = "stage_a/tracker/verification/verifica
 M = [
  (TC, 'return json.dumps(list(parts), separators=(",", ":"), ensure_ascii=True)', 'return "|".join(",".join(x) if isinstance(x, list) else x for x in parts)'),
  (TC, 'if not self.confirm_snapshot(snap) or not _int(use_at) or use_at < snap.evaluated_at: return False', 'if False: return False'),
- (TC, 'return self._current_ok(st, snap.subject, snap.version, use_at, snap.require_authority_evidence, snap.require_transform_proof)', 'return True'),
- (TC, 'return self._current_ok(st, snap.subject, snap.version, use_at, snap.require_authority_evidence, snap.require_transform_proof)', 'return self._current_ok(st, snap.subject, snap.version, snap.evaluated_at, snap.require_authority_evidence, snap.require_transform_proof)'),
- (TC, 'snap.held_reason, snap.require_authority_evidence, snap.require_transform_proof) != snap.snapshot_id', 'snap.held_reason) != snap.snapshot_id' ),
+ (TC, 'return self._current_ok(st, snap.subject, snap.version, use_at, snap.require_authority_evidence, snap.require_transform_proof, snap.require_ancestry)', 'return True'),
+ (TC, 'return self._current_ok(st, snap.subject, snap.version, use_at, snap.require_authority_evidence, snap.require_transform_proof, snap.require_ancestry)', 'return self._current_ok(st, snap.subject, snap.version, snap.evaluated_at, snap.require_authority_evidence, snap.require_transform_proof, snap.require_ancestry)'),
+ (TC, 'snap.held_reason, snap.require_authority_evidence, snap.require_transform_proof, snap.require_ancestry) != snap.snapshot_id', 'snap.held_reason) != snap.snapshot_id' ),
  (TC, 'if not issued_by_verifier_run(result): raise', 'if False: raise'),
  (GC, 'if type(health) is CoreHealthSnapshot and not self.health_source.snapshot_current_at_use(health, fence):', 'if False:'),
  (GC, 'd = B.build_delivered_entry(row, st.status, health.resolution_ref, health.resolved_at)', 'd = B.build_delivered_entry(row, "CURRENT", health.resolution_ref, health.resolved_at)'),
@@ -102,6 +102,11 @@ M = [
  (GL, 'if event.instrument_id not in m.fit_instrument_set: raise', 'if False: raise'),
  (GL, 'if not (current_read_freshness == "PASS" and historical_slice_completeness == "PASS"):', 'if False:'),
  (GL, 'if old is not None and old != snap: raise', 'if False: raise'),
+ (TC, 'if c not in st["anc"]: out.append("REQUIRED_ANCESTRY_UNKNOWN:" + c)', 'if False: pass'),
+ (TC, 'else: stack += st["ups"].get(c, [])\n        return out', 'else: pass\n        return out'),
+ (TC, 'if dependent in st["anc"]: raise Refusal', 'if False: raise Refusal'),
+ (TC, 'and not (rn and self._ancestry_blocks(st, subject))', ''),
+ (TC, '"ra": ra, "rt": rt, "rn": rn}', '"ra": ra, "rt": rt}'),
 ]
 T = ["tests/trk_stage_a/test_r25_defects.py", "tests/trk_stage_a/test_r26_evidence_truth.py", "tests/trk_stage_a/test_r27_binding.py", "tests/trk_stage_a/test_boundaries.py", "tests/trk_stage_a/test_r24_core.py", "tests/trk_stage_a/test_r25_scheduler.py", "tests/trk_stage_a/test_r28_closure.py", "tests/trk_stage_a/test_r28_h3.py", "tests/trk_stage_a/test_r29_generation_lifecycle.py", "tests/trk_stage_a/test_r29_intake_order.py", "tests/trk_stage_a/test_r11_both.py", "tests/trk_stage_a/test_v038_conformance.py"]
 def run():
