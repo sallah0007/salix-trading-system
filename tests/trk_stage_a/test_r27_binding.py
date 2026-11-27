@@ -58,3 +58,14 @@ def test_schema_drift_and_independent_refusal_are_refused():
     finally: B.ANNEX_XII_FIELDS = old
     with pytest.raises(Refusal) as e: B.verify_delivered(T, dataclasses.replace(b.entry, published_projection_bits=b"\x01"), b.delivered_feature_hash)     # wrong fixed width: the independent side refuses
     assert e.value.code == "DELIVERED_ENTRY_NOT_INDEPENDENTLY_COMPOSABLE"
+
+def test_independent_composition_is_actually_the_verifier_path_under_producer_fault_injection(monkeypatch):
+    """R29 E: if verify_delivered used the producer composition, faulting the producer would break (or, mirrored, mask) it. A genuine entry still verifies through the independent X path while the producer
+    returns wrong bytes, and a changed bound-Health time still fails with HASH_MISMATCH."""
+    gw, b = _bound(); good = b.delivered_feature_hash
+    monkeypatch.setattr(O, "delivered_hash", lambda tables, d: b"\xde\xad" * 16)             # producer composition is now WRONG everywhere
+    B.verify_delivered(T, b.entry, good)                                                       # independent path unaffected
+    with pytest.raises(Refusal) as e: B.verify_delivered(T, dataclasses.replace(b.entry, bound_health_resolved_at=b.entry.bound_health_resolved_at + 1), good)
+    assert e.value.code == "HASH_MISMATCH"
+    with pytest.raises(Refusal) as e: B.verify_delivered(T, b.entry, b"\xde\xad" * 16)         # and the faulty producer's bytes are not accepted as the claimed hash
+    assert e.value.code == "HASH_MISMATCH"

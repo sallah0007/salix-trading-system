@@ -66,12 +66,12 @@ def make_result(status, scope, subject: dict, checks, reasons) -> VerificationRe
 
 
 # ---- invocation receipts (R27 defect 3) -------------------------------------------------------------------------------
-# A well-formed, self-hashing result proves STRUCTURE, not that a verifier RAN. Results produced by an actual verifier run are issued through `issue_result`, which leaves a process-local receipt keyed by the result hash;
+# R29: there is NO public mint-any-result API. `_issue_result` is module-private and is called ONLY from stateful_verifier at the end of an actual verification run; a result issued there leaves a receipt. A well-formed, self-hashing result proves STRUCTURE, not that a verifier RAN. Results produced by an actual verifier run are issued through `issue_result`, which leaves a process-local receipt keyed by the result hash;
 # the public `make_result` constructor leaves none. Core's COMPOSED_RECOMPUTATION label requires a receipt. This is NOT a security boundary (in-process code can call `issue_result`); it makes the label mean "this
 # process's verifier produced this result" instead of "someone built a PASS-shaped object", and it does not survive a restart (the journal keeps the digest and class, not the receipt).
 _RECEIPTS = set()
 
-def issue_result(status, scope, subject: dict, checks, reasons) -> VerificationResult:
+def _issue_result(status, scope, subject: dict, checks, reasons) -> VerificationResult:
     r = make_result(status, scope, subject, checks, reasons); _RECEIPTS.add(r.result_hash); return r
 
 def issued_by_verifier_run(result) -> bool:

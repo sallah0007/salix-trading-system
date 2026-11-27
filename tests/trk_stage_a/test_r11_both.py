@@ -10,7 +10,7 @@ def lane(name, ml=False, **over):
     f = {k: "x-" + name for k in V.H1_REQUIRED}
     f.update(ISSUER="TRACKER_CONSUMER_GATEWAY", PACKAGE_CLASS=cls, TARGET_CONSUMER="BOTH", CONSUMER_ID=name, REQUEST_ID="request",
              RESOLUTION_VISIBILITY_WATERMARK="w", MANIFEST_OR_DATASET_BINDING_ID="b-" + name)
-    if ml: f.update(ML_MANIFEST_CLASS="m", GENERATION_AUTHORITY_CLASS="g")
+    if ml: f.update(ML_MANIFEST_CLASS="RESEARCH_MANIFEST", GENERATION_AUTHORITY_CLASS="ML_STANDALONE")
     f.update(over); return f
 def pair(): return lane("FW"), lane("ML", ml=True)
 def ids(): return I("FW", "b-FW", "s", "w"), I("ML", "b-ML", "s", "w")
@@ -112,3 +112,40 @@ class BothResolution(unittest.TestCase):
         fw, ml = pair(); a, _ = ids()
         self.assertIsNotNone(refused(V.resolve_both, V.FinalResolutionStore(), fw, ml, a, a, lambda: 1, lambda: 2))
 if __name__ == "__main__": unittest.main()
+
+class R29H1MlApplicability(unittest.TestCase):
+    """R29 D: ML applicability is derived from the record, never waived by a caller flag; single-consumer and BOTH paths; classes must be source-vocabulary values and (with the owner input) the bound ones."""
+    def test_ml_consumer_or_ml_package_without_classes_is_refused_by_default(self):
+        from stage_a.gateway import v038 as V
+        fw, ml = pair()
+        for k in ("ML_MANIFEST_CLASS", "GENERATION_AUTHORITY_CLASS"):
+            bad = dict(ml); del bad[k]
+            with self.assertRaises(Refusal) as e: V.check_h1(bad)
+            self.assertEqual(e.exception.code, "H1_FIELD_MISSING")
+        only_pkg = dict(ml, CONSUMER_ID="OTHER"); del only_pkg["ML_MANIFEST_CLASS"]
+        with self.assertRaises(Refusal): V.check_h1(only_pkg)                        # ML_PACKAGE alone triggers the requirement
+        only_consumer = dict(ml, PACKAGE_CLASS="NEUTRAL_GOVERNED_PACKAGE"); del only_consumer["GENERATION_AUTHORITY_CLASS"]
+        with self.assertRaises(Refusal): V.check_h1(only_consumer)                   # CONSUMER_ID = ML alone triggers it
+        V.check_h1(fw)                                                               # positive control: FW needs neither
+        V.check_h1(dict(fw, CONSUMER_ID="OTHER", PACKAGE_CLASS="NEUTRAL_GOVERNED_PACKAGE"))
+    def test_caller_flag_is_gone_and_vocabulary_and_consumer_package_pairing_enforced(self):
+        from stage_a.gateway import v038 as V
+        fw, ml = pair()
+        with self.assertRaises(TypeError): V.check_h1(ml, consumer_is_ml=False)
+        for k, v in (("ML_MANIFEST_CLASS", "m"), ("GENERATION_AUTHORITY_CLASS", "g")):
+            with self.assertRaises(Refusal): V.check_h1(dict(ml, **{k: v}))
+        with self.assertRaises(Refusal) as e: V.check_h1(dict(fw, PACKAGE_CLASS="ML_PACKAGE", ML_MANIFEST_CLASS="RESEARCH_MANIFEST", GENERATION_AUTHORITY_CLASS="ML_STANDALONE"))
+        self.assertEqual(e.exception.code, "H1_CONSUMER_PACKAGE_CLASS_MISMATCH")
+    def test_both_path_ml_lane_cannot_omit_classes_by_mislabelling(self):
+        from stage_a.gateway import v038 as V
+        fw, ml = pair(); V.check_both_separation(fw, ml)
+        bad = dict(ml); del bad["ML_MANIFEST_CLASS"]
+        with self.assertRaises(Refusal): V.check_both_separation(fw, bad)
+        mislabel = dict(ml, CONSUMER_ID="FW"); del mislabel["GENERATION_AUTHORITY_CLASS"]
+        with self.assertRaises(Refusal): V.check_both_separation(fw, mislabel)       # ML_PACKAGE still derives ML applicability
+    def test_source_owned_binding_check_requires_the_actual_bound_classes(self):
+        from stage_a.gateway import v038 as V
+        fw, ml = pair(); V.check_h1_ml_binding(ml, "RESEARCH_MANIFEST", "ML_STANDALONE")
+        with self.assertRaises(Refusal) as e: V.check_h1_ml_binding(ml, "OFFICIAL_ML_TRAINING_MANIFEST", "ML_STANDALONE")
+        self.assertEqual(e.exception.code, "H1_ML_CLASSES_NOT_THE_BOUND_ONES")
+        with self.assertRaises(Refusal): V.check_h1_ml_binding(fw, "RESEARCH_MANIFEST", "ML_STANDALONE")

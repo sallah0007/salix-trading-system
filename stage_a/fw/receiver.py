@@ -43,6 +43,7 @@ def receive(binding, expected: DependencyEntry, instrument_id: bytes, timeframe_
 
 
 def receive_outcome_series(pkg, ctx):
-    """H3 outcome/target-series receipt: the Gateway-side validator decides; WITHHELD raises. Segment authorization and conditional applicability in `ctx` are caller-supplied and UNADMITTED (see gateway.outcome_series)."""
-    from ..gateway.outcome_series import require_delivery
-    return require_delivery(pkg, ctx)
+    """H3 structural receipt: a pass is a STRUCTURAL CANDIDATE only (`authorized_delivery` stays False); WITHHELD/UNDETERMINED raise. Authorization, sealed regions, unseal resolver, applicability and the boundary convention in `ctx` are
+    caller-supplied UNADMITTED inputs (see gateway.outcome_series)."""
+    from ..gateway.outcome_series import require_structural_pass
+    return require_structural_pass(pkg, ctx)

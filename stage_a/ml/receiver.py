@@ -134,12 +134,17 @@ def union_closure(root: str, edges, taint_sources) -> tuple:
                 seen.add(parent); stack.append(parent)
     return tuple(sorted(seen - {root}))
 
-def check_standalone_with_closure(m: ConsumerManifest, target: bytes, graph, kind: str, closure) -> StandaloneCheck:
-    """Linear structural lane + the Contract section X.1 closure record DERIVED over the union of content-carrying edges. FAIL_CLOSED (unknown/unresolved/missing edge, incomplete closure, FW taint, contradiction) refuses.
-    A candidate PASS is still never qualified (`require_standalone_qualified` holds: no accepted completeness witness/provider exists in any source read)."""
+def check_standalone_with_closure(m: ConsumerManifest, target: bytes, graph, kind: str, closure, manifest_version_or_hash=None, version_not_applicable: bool = False) -> StandaloneCheck:
+    """Linear structural lane + the Contract section X.1 closure record DERIVED over the union of content-carrying edges. FAIL_CLOSED (unknown/unresolved/missing edge, incomplete closure, declared or derived FW taint,
+    declared augmented ancestry, contradiction) refuses. Subject linkage is exact: manifest id AND version/hash. ConsumerManifest carries no version, so the caller must SUPPLY the manifest's version/hash (from its owner);
+    `version_not_applicable=True` is a caller-labelled UNADMITTED waiver that requires the closure to carry no version either. A candidate PASS is still never qualified."""
     from . import closure as CL
     lane = check_generation(m, target, graph, kind); v = CL.derive(closure)
     if closure.subject_id != m.manifest_id: raise Refusal(closure.subject_id, code="CLOSURE_SUBJECT_NOT_THIS_MANIFEST")
+    if version_not_applicable:
+        if closure.subject_version_or_hash is not None or manifest_version_or_hash is not None: raise Refusal("version waiver with a version present", code="CLOSURE_VERSION_BINDING_INCONSISTENT")
+    elif not (isinstance(manifest_version_or_hash, str) and manifest_version_or_hash): raise Refusal("manifest version/hash not supplied", code="CLOSURE_MANIFEST_VERSION_NOT_SUPPLIED")
+    elif closure.subject_version_or_hash != manifest_version_or_hash: raise Refusal("closure is for another version", code="CLOSURE_SUBJECT_VERSION_MISMATCH")
     if v.verdict != "PASS": raise Refusal(",".join(v.reasons), code="ML_STANDALONE_CLOSURE_FAIL_CLOSED")
     return StandaloneCheck(lane, "CLOSURE_RECORD_DERIVED_CANDIDATE_WITNESS_UNADMITTED", v.reached, v)
 

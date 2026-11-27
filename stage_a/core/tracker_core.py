@@ -384,11 +384,11 @@ class TrackerCore:
             from ..tracker.verification.verification_result import SCOPE_MATERIALIZATION, COMPOSED_VERIFIER_ID, split_levels, result_is_self_consistent, issued_by_verifier_run
             if result is None: raise Refusal("composed evidence needs the verifier result", code="HEALTH_COMPOSED_RESULT_MISSING")
             if not result_is_self_consistent(result): raise Refusal("result not self-consistent", code="HEALTH_COMPOSED_RESULT_FORGED")
-            if not issued_by_verifier_run(result): raise Refusal("a structurally valid result is not a verifier run", code="HEALTH_COMPOSED_RESULT_NOT_FROM_VERIFIER_RUN")   # asserted PASS-shaped objects stay CALLER_ASSERTED
             if (result.scope != SCOPE_MATERIALIZATION or verifier_id != COMPOSED_VERIFIER_ID or result_digest != result.result_hash
                     or dict(result.subject).get("expect_scope_key") != subject or l2_requirement != "REQUIRED" or (l1, l2_status) != split_levels(result)
                     or str(dict(result.subject).get("expect_scope_key")).rsplit("/", 1)[-1] != version):      # the verified VERSION (last scope-key segment), not only the scope-key string
                 raise Refusal("composed evidence not bound to result", code="HEALTH_COMPOSED_RESULT_UNBOUND")
+            if not issued_by_verifier_run(result): raise Refusal("a structurally valid result is not a verifier run", code="HEALTH_COMPOSED_RESULT_NOT_FROM_VERIFIER_RUN")   # asserted PASS-shaped objects (incl. FAIL-shaped) stay CALLER_ASSERTED; checked after binding so mismatches keep their exact code
         elif result is not None: raise Refusal("result only for composed evidence", code="HEALTH_RESULT_WITHOUT_COMPOSED_CLASS")
         if l2_requirement not in REQ or l2_status not in L2_ST or l1 not in L1_ST: raise Refusal("vocabulary", code="HEALTH_VOCABULARY_UNKNOWN")
         if not _int(at) or at < 0 or not _int(max_age) or max_age <= 0: raise Refusal("interval", code="HEALTH_INTERVAL_INVALID")
