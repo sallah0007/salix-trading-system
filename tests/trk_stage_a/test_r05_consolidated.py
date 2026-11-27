@@ -10,8 +10,8 @@ def _ident(n="w1"):
 
 def test_d14_news_hub_now_follows_the_frozen_half_open_fence_and_agrees_with_the_gateway():
     # R21: frozen Stage A Blueprint s28 (NEWS-02/03, para 393): equality at the fence is EXCLUDED; the retained News Hub `<=` wording is subordinate. News Hub and Gateway now agree at the boundary.
-    assert N.actual_available_asof(True, 7, 9, 10) == 9
-    with pytest.raises(Refusal): N.actual_available_asof(True, 7, 10, 10)
+    assert N.actual_available_asof(True, 7, 9, 10, cutoff_kind="SNAPSHOT_FENCE") == 9
+    with pytest.raises(Refusal): N.actual_available_asof(True, 7, 10, 10, cutoff_kind="SNAPSHOT_FENCE")
     wm = V.VisibilityWatermark(5, 20)
     assert V.classify_late(10, 10, 1, wm) == V.GENUINE_LATE
     assert V.classify_late(9, 10, 1, wm) != V.GENUINE_LATE
