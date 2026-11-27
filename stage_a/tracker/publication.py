@@ -5,6 +5,7 @@ from tracker_component.journal_port import HeadMismatch
 from ..errors import Refusal, StaleFence
 from ..coordination import transition_record as T
 from ..replay import replay
+from ..storage.authority_class import require_qualified
 from .verification.verification_result import SCOPE_MATERIALIZATION
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ def _commit(journal, namespace, build, retries=3):
     raise Refusal("head race exhausted", code="FENCE_RACE_EXHAUSTED")
 
 def publish(journal, feature_key, verification) -> PublicationRecord:
+    require_qualified(journal, "publication")          # a simulated record can never become ordinary PUBLISHABLE eligibility
     verification.require_pass(SCOPE_MATERIALIZATION)
     ns, ver = feature_key.namespace(), feature_key.feature_version
     def build(states):

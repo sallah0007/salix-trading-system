@@ -6,6 +6,7 @@ Authority: orders/claims are journal-verified (tracker_component.ClaimService). 
 the claim (CLAIM_CONSUMED, compare-and-append on the claims journal re-verifying order validity at the commit
 point) and then appends CANONICAL_ACCEPTED carrying that consumption record as its witness. A crash between the two
 leaves a consumed claim with no acceptance; a retry of the same request completes it (idempotent)."""
+from ..storage.authority_class import QUALIFIED, SIMULATION, authority_class_of
 from dataclasses import dataclass, field
 from typing import Optional, Any
 from tracker_component.canonical import canonical_json
@@ -20,7 +21,7 @@ from ..replay import replay
 from ..authority import AuthorityRef
 from .terminal_identity import terminal_notes
 from .quant_intake_adapter import (admit, reserve_authority, build_safe_intake_report, build_candidate,
-                                   QUANT_FEATURE, NO_QUANT_FEATURE, FAILED_REQUESTED_BUILD, BuildPackage, DutyEvidence, unresolved_mandatory)
+                                   QUANT_FEATURE, NO_QUANT_FEATURE, CLASSIFICATION_UNRESOLVED, FAILED_REQUESTED_BUILD, BuildPackage, DutyEvidence, unresolved_mandatory)
 from ..composer.expression.canonical_encoding import encode_manifest
 from .quant_certification import certify
 from .materialization.stateful_materializer import StatefulMaterializer
@@ -69,6 +70,12 @@ class TrackerPipeline:
         self._fits = dict(accepted_fit_generations or {})
         self._baseline = baseline
         self._conformance_source = conformance_source
+        # AUTHORITY-CLASS BOUNDARY: the caller's simulation flag cannot choose where records land. Simulation needs a SIMULATION store/journals/claims; a qualified run needs QUALIFIED ones,
+        # so a simulated acceptance can never be written into an ordinary namespace and the distinction survives restart/replay/rebuild/publication (it is a property of the store).
+        want = SIMULATION if simulation else QUALIFIED
+        for nm, obj in (("store", store), ("journals", journals), ("claims", claims)):
+            if authority_class_of(obj) != want:
+                raise Refusal("%s is %s but pipeline simulation=%s" % (nm, authority_class_of(obj), bool(simulation)), code="AUTHORITY_CLASS_MISMATCH")
         self._simulation = bool(simulation)                  # explicit SIMULATION only: DutyEvidence may stand in and the baseline may be absent; such outcomes are never qualified
         self._duty_source = duty_source                      # Tracker-originated DutyEvidence provider; None (the only real state today) holds every mandatory duty
         self._mat = StatefulMaterializer(store)
@@ -109,8 +116,16 @@ class TrackerPipeline:
             if lineage:                                       # a caller flag cannot erase governed requested-build lineage (TR-06 / D8): fail closed
                 adm.classification = FAILED_REQUESTED_BUILD
                 return self._reject(pkg, adm, "CLASSIFICATION", None, [("CLASSIFICATION", "NO_QUANT_FLAG_CONTRADICTS_GOVERNED_LINEAGE:" + ",".join(lineage))])
+            if not self._simulation:
+                # QUALIFIED route: the three-way DIRECT_TRACKER / COMPOSER_BUILT_QUANT / NO_QUANT router sits at Tracker<->Composer (Build Plan para 1256) and its source-owned mapping from the governed
+                # request to a classification is NOT bound here. An empty ClaimService.lineage() is absence in THIS journal, not proof that the governed request asked for no feature (unknown or
+                # unbound order/request ids give the same empty answer). Unknown source identity is therefore HELD/UNRESOLVED, never interpreted as NO_QUANT_FEATURE. A genuine no-quant positive
+                # exists only in explicit simulation until a verified Tracker classification source is supplied by its owner.
+                self._events.emit("CLASSIFICATION_UNRESOLVED_HELD", attempt=pkg.attempt_id)
+                return Outcome("CLASSIFICATION", CLASSIFICATION_UNRESOLVED, admission=adm,
+                               failures=[("CLASSIFICATION", "NO_QUANT_NOT_VERIFIED_NO_SOURCE_OWNED_REQUEST_CLASSIFICATION_MAPPING")])
             self._events.emit("NO_QUANT_FEATURE", attempt=pkg.attempt_id)
-            return Outcome("CLASSIFICATION", NO_QUANT_FEATURE, admission=adm)
+            return Outcome("CLASSIFICATION", NO_QUANT_FEATURE, admission=adm, simulation=self._simulation)
         if not adm.admissible:
             return self._reject(pkg, adm, "ADMISSIBILITY")
         duty_ev = None if self._duty_source is None else self._duty_source(pkg, adm)
@@ -186,7 +201,7 @@ class TrackerPipeline:
             request_id=pkg.request_id, search_policy=b.search_policy, normalizer=b.normalizer)
         if lk.absent_claim_token is None:
             # fail closed exactly as before; the terminal identity AND state of any noncurrent match are REPORTED (never authority: no claim, no resurrection, no substitution)
-            return (list(lk.errors) or ["BASELINE_LOOKUP_NO_CLAIM"]) + terminal_notes(lk, b.store.all())
+            return (list(lk.errors) or ["BASELINE_LOOKUP_NO_CLAIM"]) + terminal_notes(lk, b.store.all(), scope=("ERA_1", adm.definition.instrument, adm.definition.timeframe))
         cand = build_candidate(pkg, adm.definition, claim_request_id=pkg.request_id,
                                creation_evidence_ref="verification:" + ver.result_hash)
         res = safe_intake_built_identity(target_store=b.store, candidate=cand, era_boundary=b.era_boundary,

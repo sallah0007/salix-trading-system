@@ -33,6 +33,7 @@ REQUIRED_IDENTITY_FIELDS = ("scope", "lifecycle_state", "is_current", "declared_
 
 QUANT_FEATURE = "QUANT_FEATURE"
 NO_QUANT_FEATURE = "NO_QUANT_FEATURE"
+CLASSIFICATION_UNRESOLVED = "CLASSIFICATION_UNRESOLVED_HELD"   # qualified route: the caller flag says no-quant but no source-owned mapping can confirm it; neither no-quant nor a failed build
 FAILED_REQUESTED_BUILD = "FAILED_REQUESTED_BUILD"
 
 @dataclass(frozen=True)

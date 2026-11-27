@@ -8,6 +8,7 @@ grant validation likewise belong to that boundary. No principal is appointed her
 from typing import Callable, Optional
 from tracker_component.journal_port import GENESIS_HEAD, Head
 from ..errors import Refusal
+from ..storage.authority_class import require_qualified
 from .chain_status import ChainStatusAuthority, StatusFact
 
 class StatusProjection:
@@ -15,6 +16,7 @@ class StatusProjection:
         if not callable(decode_fact):
             raise Refusal("decoder", code="STATUS_DECODER_REQUIRED")
         self._j, self._decode = journal, decode_fact
+        require_qualified(journal, "chain-status projection")
         self._auth = ChainStatusAuthority()
         self._built: Optional[Head] = None
         self._invalid: Optional[str] = None

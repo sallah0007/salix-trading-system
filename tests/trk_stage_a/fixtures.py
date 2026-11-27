@@ -9,6 +9,7 @@ from stage_a.coordination.object_store_journal import ObjectStoreJournal
 from stage_a.clocks import FixedClock
 from stage_a.observability import EventSink
 from stage_a.tracker.registry import FeatureJournalSet
+from stage_a.storage.authority_class import SimulationStore
 from stage_a.tracker.pipeline import TrackerPipeline
 from stage_a.tracker.quant_intake_adapter import BuildPackage, admit
 from stage_a.composer.expression.manifest import Manifest
@@ -79,7 +80,8 @@ SIM_CONF = ConformanceEvidence(False, "SIMULATED:test-fixture (no real Tracker v
 
 class Rig:
     def __init__(self, store=None, fits=None, baseline=None, conformance_source=lambda pkg: SIM_CONF, duty_source=lambda pkg, adm: SIM_DUTIES, simulation=True):
-        self.store = store or InMemoryObjectStore()
+        self.raw_store = store or InMemoryObjectStore()
+        self.store = SimulationStore(self.raw_store) if simulation else self.raw_store
         self.claims_journal = ObjectStoreJournal(self.store, "claims", "claims-writer")
         self.claims_journal.acquire_epoch()
         self.claims = ClaimService(self.claims_journal, ANCHOR)
@@ -94,3 +96,14 @@ class Rig:
         assert adm.subject_key, adm.failed
         self.claims.issue_order(ConstructionOrder(pkg.order_id, adm.subject_key, binding, issuer))
         return adm
+
+
+def qualified_journal_from_simulated(rig, ns="XAUUSD/H4/mom3"):
+    """TEST-ONLY. Publication/read-model mechanics are only reachable on a QUALIFIED journal, and no real qualified acceptance can be produced (no DutyEvidence provider exists). This helper
+    HAND-WRITES the simulated CANONICAL_ACCEPTED body into a fresh QUALIFIED store purely to exercise publication mechanics; it is not an acceptance path and is never called by production code."""
+    import json
+    from stage_a.storage.object_store import InMemoryObjectStore as _S
+    src = rig.journals.journal(ns).read_from(1)[0]
+    j = ObjectStoreJournal(_S(), ns, "qualified-test-writer"); j.acquire_epoch()
+    j.append(j.head(), src.kind, json.loads(src.body_json))
+    return j
