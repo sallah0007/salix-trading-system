@@ -62,3 +62,8 @@ class Scope(unittest.TestCase):
         base = TI.terminal_notes(lk, rows); self.assertEqual(len(base), 2)                       # only noncurrent rows that carry a survivor pointer are starts
         for perm in itertools.permutations(rows): self.assertEqual(TI.terminal_notes(lk, list(perm)), base)
 if __name__ == "__main__": unittest.main()
+
+class CycleChain(unittest.TestCase):
+    def test_cycle_reports_the_repeated_node_not_just_a_status(self):
+        a = rec("a", survivor="b"); b = rec("b", survivor="a"); t = TI.resolve_terminal_identity(a, [a, b])
+        self.assertEqual((t.status, t.chain), (TI.CYCLE, ("a", "b", "a")))

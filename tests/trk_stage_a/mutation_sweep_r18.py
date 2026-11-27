@@ -1,4 +1,5 @@
-"""R18 mutants (Health consumer-specific incompleteness, graph-key binding). Run: python3 -B tests/trk_stage_a/mutation_sweep_r18.py (60 s per mutant)"""
+"""NOTE (R20): the blast_radius entries below reference the removed `upstream_incomplete` and are SUPERSEDED by mutation_sweep_r20.py; do not rerun them as current evidence.
+R18 mutants (Health consumer-specific incompleteness, graph-key binding). Run: python3 -B tests/trk_stage_a/mutation_sweep_r18.py (60 s per mutant)"""
 import subprocess, sys, pathlib, os
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 BR = "stage_a/health/blast_radius.py"; LN = "stage_a/fw/lanes.py"; QI = "stage_a/tracker/quant_intake_adapter.py"; PL = "stage_a/tracker/pipeline.py"; ML = "stage_a/ml/receiver.py"; VR = "stage_a/tracker/version_relationship.py"

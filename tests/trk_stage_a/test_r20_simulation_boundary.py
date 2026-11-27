@@ -61,3 +61,18 @@ class Boundary(unittest.TestCase):
         publication.publish(q, self.o.admission.feature_key, self.o.verification)
         self.assertEqual(resolve_asof(NS, q.read_from(1), mode=EVENTUAL).available_version, "1")
 if __name__ == "__main__": unittest.main()
+
+class ReadModelEveryEntryPoint(unittest.TestCase):
+    def test_status_and_verify_each_refuse_a_simulation_journal_even_after_a_qualified_rebuild(self):
+        from .fixtures import qualified_journal_from_simulated
+        r = Rig(simulation=True); p = package(); r.issue(p); o = r.pipe.run(p)
+        q = qualified_journal_from_simulated(r); m = RM(); m.rebuild(NS, q)
+        sim = r.journals.journal(NS)
+        self.assertEqual(code(m.status, NS, "1", sim), "SIMULATION_NOT_ELIGIBLE")
+        self.assertEqual(code(m.verify_against, NS, sim), "SIMULATION_NOT_ELIGIBLE")
+        self.assertEqual(m.status(NS, "1", q), "CANONICAL_ACCEPTED")                     # positive control
+class Lineage(unittest.TestCase):
+    def test_request_claim_lineage_alone_is_reported(self):
+        r = Rig(simulation=True); p = package(); r.issue(p); r.pipe.run(p)
+        self.assertEqual(r.claims.lineage("NO-SUCH-ORDER", p.request_id), ["REQUEST_CLAIM_EXISTS"])
+        self.assertEqual(r.claims.lineage("NO-SUCH-ORDER", "NO-SUCH-REQUEST"), [])

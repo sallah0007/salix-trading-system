@@ -118,3 +118,8 @@ class ProbeEdges(unittest.TestCase):
         r = B.blast_radius(Q, {"c": M("c", "FW", (A,))}, {A: ()}, CT, closure_features=bad)["c"]
         self.assertEqual((r.verdict, r.reason), (B.UNDETERMINED, "PROBE_REFUSED"))
 if __name__ == "__main__": unittest.main()
+
+class FailedSubjectEndpoint(unittest.TestCase):
+    def test_the_failed_subject_is_a_proof_endpoint_even_with_no_lineage_of_its_own(self):
+        self.assertIsNone(B.upstream_lineage_defect([b"f"], b"f", {}, ()))
+        self.assertEqual(B.upstream_lineage_defect([b"x"], b"f", {}, ()), "FEATURE_LINEAGE_INCOMPLETE")

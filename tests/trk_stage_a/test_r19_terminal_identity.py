@@ -67,4 +67,23 @@ class Callpath(unittest.TestCase):
         msgs = [m for _, m in o.failures]
         self.assertTrue(any(m.startswith("TERMINAL_IDENTITY_HINT:'old.mom3'>'succ':'REJECTED_INVALID':TERMINAL_NONCURRENT") for m in msgs), msgs)
         self.assertEqual(rig.claims.claim("CLAIM:REQ-1")["state"], "RELEASED")              # no new claim authority was created
+    def test_pipeline_does_not_report_a_foreign_instrument_chain(self):
+        from tests.trk_stage_a.fixtures import Rig, package
+        from tests.trk_stage_a.test_pipeline import baseline_binding
+        from stage_a.tracker.quant_intake_adapter import admit
+        from tracker_identity import store as S
+        p = package(); d = admit(p, accepted_fit_generations={}).definition
+        key = d.content_identity_key()[0]
+        old = T.keyed_row(key, feature_id="old.mom3", current=False, scope="canonical_survivor_discarded")
+        old = FeatureIdentity(**{**old.__dict__, "lifecycle_state": "RETIRED", "canonical_survivor": "succ"})
+        succ = rec("succ", state="REJECTED_INVALID")
+        old = FeatureIdentity(**{**old.__dict__, "instrument": "OTHERFX", "timeframe": d.timeframe}); succ = FeatureIdentity(**{**succ.__dict__, "instrument": "OTHERFX", "timeframe": d.timeframe})   # same identity scope as the package
+        bb = baseline_binding()
+        with mock.patch.object(S, "_fixture_seeding_permitted", lambda: True): bb.store._fixture_write_records([old, succ]) if hasattr(bb.store, "_fixture_write_records") else T.seed_fixture(bb.store, [old, succ])
+        rig = Rig(baseline=bb); rig.issue(p); o = rig.pipe.run(p)
+        self.assertFalse(o.accepted_ok); self.assertEqual(o.stage, "BASELINE_REGISTRATION")
+        msgs = [m for _, m in o.failures]
+        self.assertFalse(any(m.startswith("TERMINAL_IDENTITY_HINT") for m in msgs), msgs)
+        self.assertEqual(rig.claims.claim("CLAIM:REQ-1")["state"], "RELEASED")              # no new claim authority was created
+if __name__ == "__main__": unittest.main()
 if __name__ == "__main__": unittest.main()
