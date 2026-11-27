@@ -105,21 +105,22 @@ class FinalResolutionStore:
         import threading
         self._lock = threading.RLock()
         self._by_identity: Dict[FinalResolutionIdentity, object] = {}
-        self._req_ids: Dict[str, FinalResolutionIdentity] = {}
+        self._req_ids: Dict[tuple, FinalResolutionIdentity] = {}      # key = (consumer_id, request_id): H1 REQUEST_ID is consumer-local
         self._inflight = set()
         self.evaluations = 0
     def resolve(self, request_id: str, identity: FinalResolutionIdentity, evaluate):
         with self._lock:
-            bound = self._req_ids.get(request_id)               # includes reservations held by in-flight evaluations
+            rk = (identity.consumer_id, request_id)
+            bound = self._req_ids.get(rk)               # includes reservations held by in-flight evaluations
             if bound is not None and bound != identity:
                 raise Refusal(request_id, code="REQUEST_ID_REBOUND_TO_OTHER_IDENTITY")
             if identity in self._by_identity:
-                self._req_ids.setdefault(request_id, identity)
+                self._req_ids.setdefault(rk, identity)
                 return self._by_identity[identity]          # never fish for a different result
             if identity in self._inflight:
                 raise Refusal(identity, code="REENTRANT_RESOLUTION")
             reserved_here = bound is None
-            self._req_ids[request_id] = identity            # reserve BEFORE evaluating: nested calls cannot rebind it
+            self._req_ids[rk] = identity            # reserve BEFORE evaluating: nested calls cannot rebind it
             self._inflight.add(identity)
             try:
                 self.evaluations += 1
@@ -130,7 +131,7 @@ class FinalResolutionStore:
                 return out
             except BaseException:
                 if reserved_here:
-                    self._req_ids.pop(request_id, None)     # failure policy: a failed call leaves no binding it created
+                    self._req_ids.pop(rk, None)     # failure policy: a failed call leaves no binding it created
                 raise
             finally:
                 self._inflight.discard(identity)
@@ -164,40 +165,49 @@ def to_v038(nd: "C.NonDeliveryResolution", identity: FinalResolutionIdentity, ke
     return NonDeliveryResolutionV038(nd.request_id, identity, status_for_reason(nd.reason), target_consumer, nd.fence,
                                      causal_policy_id, resolver_policy_id, temporal_contract_id, wm, (om,), (nd.reason,), created_ts)
 
-# ---- BOTH (R11): one request, two consumers -> two separate packages, bindings and final resolutions -------------------------
-BOTH_LANES = ("FORWARD_WALK", "MACHINE_LEARNING")
-BOTH_DISTINCT_FIELDS = ("CONSUMER_ID", "CONSUMER_BINDING_ID", "BOUND_PAYLOAD_OR_PACKAGE_ID", "PACKAGE_HASH", "FINAL_PACKAGE_HASH")
-_LANE_PACKAGE_CLASS = {"FORWARD_WALK": "FW_PACKAGE", "MACHINE_LEARNING": "ML_PACKAGE"}
+# ---- BOTH: one request, two consumers -> two separate packages, bindings and final resolutions -------------------------------
+# Connected Contract V0.37 H1: CONSUMER_ID = FW | ML | other authorized consumer; PACKAGE_CLASS = FW_PACKAGE | ML_PACKAGE | NEUTRAL...;
+# REQUEST_ID is a consumer-local reference; TARGET_CONSUMER comes from the request context. Companion D02 (supporting proposal): BOTH = separate
+# FW/ML package and binding ids and hashes.
+BOTH_LANES = {"FW": {"PACKAGE_CLASS": "FW_PACKAGE", "ML": False}, "ML": {"PACKAGE_CLASS": "ML_PACKAGE", "ML": True}}
+BOTH_DISTINCT_FIELDS = ("CONSUMER_BINDING_ID", "BOUND_PAYLOAD_OR_PACKAGE_ID", "PACKAGE_HASH", "FINAL_PACKAGE_HASH")
 
 def check_both_separation(fw: dict, ml: dict) -> None:
-    """Companion D02 (supporting proposal, not authority): BOTH = separate FW and ML package/binding identities and hashes.
-    Each lane is H1-checked on its own (ML with its ML-only fields); the lanes must carry distinct values for every identity field and
-    the lane-correct PACKAGE_CLASS; a shared value in any field is refused (one lane's package can never stand in for the other's).
-    Hash BYTE ENCODING is still undefined (D13): this compares claimed values for inequality only; it does not recompute them."""
-    check_h1(fw, consumer_is_ml=False)
-    check_h1(ml, consumer_is_ml=True)
+    """Each record is H1-checked for ITS lane (ML with ML-only fields), must carry that lane's source-defined CONSUMER_ID ('FW'/'ML') and
+    PACKAGE_CLASS, TARGET_CONSUMER == 'BOTH' (target comes from the request context), and the two must differ in every identity field.
+    Swapped, unknown or arbitrary consumer labels are refused. Hash BYTE ENCODING is undefined (D13): inequality of claimed values only."""
+    for lane, rec in (("FW", fw), ("ML", ml)):
+        check_h1(rec, consumer_is_ml=BOTH_LANES[lane]["ML"])
+        if rec["CONSUMER_ID"] != lane:
+            raise Refusal("%s:%r" % (lane, rec["CONSUMER_ID"]), code="BOTH_LANE_CONSUMER_ID_WRONG")
+        if rec["PACKAGE_CLASS"] != BOTH_LANES[lane]["PACKAGE_CLASS"]:
+            raise Refusal("%s:%s" % (lane, rec["PACKAGE_CLASS"]), code="BOTH_LANE_PACKAGE_CLASS_MISMATCH")
+        if rec["TARGET_CONSUMER"] != "BOTH":
+            raise Refusal("%s:%s" % (lane, rec["TARGET_CONSUMER"]), code="BOTH_LANE_TARGET_NOT_BOTH")
     for f in BOTH_DISTINCT_FIELDS:
         if fw[f] == ml[f]:
             raise Refusal("%s=%r" % (f, fw[f]), code="BOTH_LANES_SHARE_IDENTITY_FIELD")
-    for lane, rec in (("FORWARD_WALK", fw), ("MACHINE_LEARNING", ml)):
-        if rec["PACKAGE_CLASS"] != _LANE_PACKAGE_CLASS[lane]:
-            raise Refusal("%s:%s" % (lane, rec["PACKAGE_CLASS"]), code="BOTH_LANE_PACKAGE_CLASS_MISMATCH")
-        if rec["TARGET_CONSUMER"] not in (lane, "BOTH"):
-            raise Refusal("%s:%s" % (lane, rec["TARGET_CONSUMER"]), code="BOTH_LANE_TARGET_MISMATCH")
-    if fw["REQUEST_ID"] != ml["REQUEST_ID"]:
-        raise Refusal("request", code="BOTH_LANES_DIFFERENT_REQUEST")
 
-def resolve_both(store: FinalResolutionStore, request_id: str, fw_identity: FinalResolutionIdentity, ml_identity: FinalResolutionIdentity,
-                 evaluate_fw, evaluate_ml) -> dict:
-    """Resolve each lane independently (per-consumer failure separation). The lane-qualified request key lets one REQUEST_ID own two
-    identities without tripping REQUEST_ID_REBOUND (the lane suffix is this implementation's choice; an OPEN source decision).
-    A lane failure is returned as that lane's refusal and never alters or blocks the other lane's stored outcome."""
-    if fw_identity.consumer_id == ml_identity.consumer_id or fw_identity == ml_identity:
-        raise Refusal(request_id, code="BOTH_LANES_SHARE_RESOLUTION_IDENTITY")
+def check_binding_matches_identity(h1: dict, identity: FinalResolutionIdentity) -> None:
+    """The checked binding and the resolution identity must agree: same consumer, and the same manifest/dataset binding id when the binding carries one."""
+    if identity.consumer_id != h1["CONSUMER_ID"]:
+        raise Refusal("%r!=%r" % (identity.consumer_id, h1["CONSUMER_ID"]), code="IDENTITY_CONSUMER_DIFFERS_FROM_BINDING")
+    b = h1.get("MANIFEST_OR_DATASET_BINDING_ID")
+    if b is not None and identity.manifest_or_dataset_binding_id != b:
+        raise Refusal("%r!=%r" % (identity.manifest_or_dataset_binding_id, b), code="IDENTITY_BINDING_DIFFERS_FROM_BINDING")
+
+def resolve_both(store: FinalResolutionStore, fw_h1: dict, ml_h1: dict, fw_identity: FinalResolutionIdentity,
+                 ml_identity: FinalResolutionIdentity, evaluate_fw, evaluate_ml) -> dict:
+    """Pair-validate first (a pair defect refuses BOTH lanes before any evaluation), then resolve each lane independently under its own
+    consumer-local (consumer_id, REQUEST_ID) key through the ordinary store path: no alias namespace, no request-key suffix. A lane's
+    failure is returned as that lane's refusal and never alters or blocks the other lane's stored outcome."""
+    check_both_separation(fw_h1, ml_h1)
+    check_binding_matches_identity(fw_h1, fw_identity)
+    check_binding_matches_identity(ml_h1, ml_identity)
     out = {}
-    for lane, ident, ev in (("FORWARD_WALK", fw_identity, evaluate_fw), ("MACHINE_LEARNING", ml_identity, evaluate_ml)):
+    for lane, h1, ident, ev in (("FW", fw_h1, fw_identity, evaluate_fw), ("ML", ml_h1, ml_identity, evaluate_ml)):
         try:
-            out[lane] = ("RESOLVED", store.resolve("%s#%s" % (request_id, lane), ident, ev))
+            out[lane] = ("RESOLVED", store.resolve(h1["REQUEST_ID"], ident, ev))
         except Refusal as e:
             out[lane] = ("REFUSED", e.code)
     return out
