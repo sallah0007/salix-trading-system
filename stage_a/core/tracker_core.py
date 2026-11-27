@@ -512,7 +512,6 @@ class TrackerCore:
         (freshness uses the Health evidence's own max_age against `use_at`)."""
         if not self.confirm_snapshot(snap) or not _int(use_at) or use_at < snap.evaluated_at: return False
         st = self._replay()
-        if snap.binding is not None and self._bhex(snap.binding) not in st["assoc"].get(snap.subject, []): return False
         return self._current_ok(st, snap.subject, snap.version, use_at, snap.require_authority_evidence, snap.require_transform_proof)
 
     # ---- composition output: the health the downstream Gateway actually consumes -------------------

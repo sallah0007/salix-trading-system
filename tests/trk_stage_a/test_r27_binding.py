@@ -41,3 +41,20 @@ def test_ml_without_tables_fails_closed_unless_explicitly_unverified():
     bad = dataclasses.replace(b, entry=dataclasses.replace(b.entry, available_asof=b.entry.available_asof + 1))
     with pytest.raises(Refusal) as e: FW.receive(bad, _entry(), I, I, T)               # shape-only path, no gateway: the hash check itself must catch it
     assert e.value.code == "HASH_MISMATCH"
+
+def test_ml_verifies_hash_of_a_gateway_stored_binding_with_corrupt_entry():
+    from tests.trk_stage_a.test_boundaries import _entry, NONE_
+    gw, b = _bound(); bad = dataclasses.replace(b, entry=dataclasses.replace(b.entry, available_asof=b.entry.available_asof + 1)); gw._outcomes[bad.request_id] = bad   # the Gateway really stores this object
+    with pytest.raises(Refusal) as e: ML.build_row("r", R("gen"), [_entry()], [bad], gw, "ORIGINAL_AS_OBSERVED", NONE_, lambda o: NONE_, tables=T)
+    assert e.value.code == "HASH_MISMATCH"
+
+def test_schema_drift_and_independent_refusal_are_refused():
+    gw, b = _bound()
+    old = B.ANNEX_XII_FIELDS
+    try:
+        B.ANNEX_XII_FIELDS = old[:-1]
+        with pytest.raises(Refusal) as e: B.verify_delivered(T, b.entry, b.delivered_feature_hash)
+        assert e.value.code == "DELIVERED_ENTRY_FIELDS_DIFFER_FROM_ANNEX"
+    finally: B.ANNEX_XII_FIELDS = old
+    with pytest.raises(Refusal) as e: B.verify_delivered(T, dataclasses.replace(b.entry, published_projection_bits=b"\x01"), b.delivered_feature_hash)     # wrong fixed width: the independent side refuses
+    assert e.value.code == "DELIVERED_ENTRY_NOT_INDEPENDENTLY_COMPOSABLE"

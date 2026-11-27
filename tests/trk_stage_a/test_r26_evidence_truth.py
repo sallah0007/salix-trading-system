@@ -157,3 +157,16 @@ class IssuedSnapshotIsNotCurrentPermission(unittest.TestCase):
         self.assertEqual(self._use(c, hs, "s", 40).reason, "HEALTH_SNAPSHOT_NOT_CURRENT_AT_USE")                  # S's own max_age (5) elapsed by the use time
         self.assertIsInstance(self._use(c, ht, "t", 40), G.Binding)                                                # T unaffected: positive control
         c.quarantine("S", "X"); self.assertIsInstance(self._use(c, ht, "t2", 40), G.Binding)                       # an unrelated subject blocked later does not block T
+
+class SnapshotIdentityAtUse(unittest.TestCase):
+    def test_forged_ghost_or_flag_flipped_snapshot_never_current_at_use(self):
+        from dataclasses import replace
+        from stage_a.core.tracker_core import CoreHealthSnapshot
+        from .strict_gateway import bind
+        from .test_boundaries import R
+        c = mk(); ver(c, "S", version="1", at=11, age=50); c.judge_transition_evidence(claim(version_or_hash="1"), {"E1": rec(version_or_hash="1")}, 12)
+        hs = c.gateway_health("S", "1", 12, R("hl"), 11, binding=bind(c, "S"), require_authority_evidence=True); self.assertTrue(c.snapshot_current_at_use(hs, 13))   # positive control
+        self.assertFalse(c.snapshot_current_at_use(replace(hs, require_authority_evidence=False), 13))        # weakening a REQUIRED flag changes the id
+        self.assertFalse(c.snapshot_current_at_use(replace(hs, snapshot_id="0" * 64), 13))                     # ghost id never issued
+        self.assertFalse(c.snapshot_current_at_use(hs, 11))                                                    # use before the evaluation it claims to rest on
+        self.assertFalse(c.snapshot_current_at_use(object(), 13))
