@@ -25,3 +25,9 @@ class D(unittest.TestCase):
         self.assertEqual(code(DB.read_descriptor, dict(PAY, s=30), {f: B for f in DIRECT}, KEYS), "DESCRIPTOR_INTERVAL_NOT_ORDERED")
         self.assertIsNotNone(code(DB.read_descriptor, PAY, {"HORIZON_ID": {"scope": "s"}}, KEYS)); self.assertEqual(code(DB.read_descriptor, PAY, {"BOGUS": B}, KEYS), "UNKNOWN_DESCRIPTOR_FIELD")
         self.assertEqual(code(DB.read_descriptor, [], {}, {}), "DESCRIPTOR_INPUT_INVALID")
+
+class R33Boundaries(unittest.TestCase):
+    def test_zero_length_interval_is_refused_fail_closed(self):
+        # the source does not say a zero-length dependency interval is valid; no default is invented, so start == end is refused (start > end already is)
+        self.assertEqual(code(DB.read_descriptor, dict(PAY, s=20), {f: B for f in DIRECT}, KEYS), "DESCRIPTOR_INTERVAL_NOT_ORDERED")
+        self.assertFalse(DB.read_descriptor(dict(PAY, s=19), {f: B for f in DIRECT}, KEYS).complete)

@@ -203,3 +203,9 @@ class UnrelatedBaselineResolvedAtTheGateway(unittest.TestCase):
         self.assertNotIsInstance(dep, G.Binding); self.assertEqual(dep.reason, "HEALTH_UNACCEPTABLE")
         self.assertIsInstance(base, G.Binding)                                                               # the unrelated baseline is actually DELIVERED
         self.assertNotIsInstance(gw.resolve("cross", _entry(fid=F2, ver="1"), I, I, 3, 20, hd), G.Binding)   # a snapshot for another subject cannot deliver the baseline entry
+
+class SlotShape(TriggeredPass):
+    def test_slot_records_with_extra_keys_are_refused(self):
+        c = core()
+        for n in S.SLOT_NAMES:
+            sl = self.slots(); sl[n] = dict(sl[n], extra="x"); self.assertEqual(code(S.run_triggered_pass, c, self.b, [], [], slots=sl, costs={}, now=11, pass_id="x"), "POLICY_SLOT_UNBOUND:" + n)
