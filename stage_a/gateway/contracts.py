@@ -120,7 +120,10 @@ class SimulatedGateway:
             if entry.requirement_class == OPTIONAL:                  # G9: only via the exact governed absence rule
                 return _sink(request_id, AbsenceApplied(request_id, entry.feature_id, entry.feature_version, entry.absence_rule_ref))
             return nd("REQUIRED_DEPENDENCY_ABSENT")                  # G3
-        row = cands[-1]
+        eligible = [r for r in cands if r.available_asof < fence]     # R36 (DOCX s7A RESOLVER DETERMINISM): select among the CAUSALLY VALID candidates, never by registration order; the last-published row may be a later (excluded) one
+        distinct = list(dict.fromkeys(eligible))
+        if len(distinct) > 1: return nd("MULTIPLE_CANDIDATES")          # materially non-equivalent valid candidates and NO governed deterministic tie-break exists in any source read: REQUIRE_EXPLICIT_SELECTION, never a silent pick
+        row = distinct[0] if distinct else cands[-1]
         if row.available_asof >= fence:                              # G1: equality at the fence is excluded
             return nd("NOT_AVAILABLE_BEFORE_FENCE") if entry.requirement_class == REQUIRED else _sink(
                 request_id, AbsenceApplied(request_id, entry.feature_id, entry.feature_version, entry.absence_rule_ref))
