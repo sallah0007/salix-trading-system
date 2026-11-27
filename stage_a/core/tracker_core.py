@@ -57,7 +57,7 @@ class TrackerCore:
 
     # ---- replay: pure function of the journal up to a given sequence ---------------------------
     def _replay(self, upto=None):
-        st = dict(obs={}, cands={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={}, reviews={}, tasks={}, authev={}, xform={}, assoc={}, snapiss={}, orders={}, order_prov={})
+        st = dict(obs={}, cands={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={}, reviews={}, tasks={}, authev={}, xform={}, assoc={}, snapiss={}, anc={})
         for r in self._j.read_from(0):
             if upto is not None and r.seq > upto: break
             b = json.loads(r.body_json); k = r.kind
@@ -93,9 +93,8 @@ class TrackerCore:
             elif k == "FINDING": st["findings"].append(b)
             elif k == "AUTH_EVIDENCE": st["authev"][_scope_key(b["subject"], b["version"], b["instrument"], b["timeframe"], b["battery"], b["vintage"], list(b["dependencies"]))] = b      # keyed by the FULL claim scope: one version/scope never clears another
             elif k == "TRANSFORM_VERDICT": st["xform"][_scope_key(b["subject"], b["version"], b["kind"], b["transform_version"], b["lineage_ref"])] = b
-            elif k == "ORDER_ISSUED": st["orders"][b["order_id"]] = dict(b, seq=r.seq)
-            elif k == "ORDER_PROVENANCE": st["order_prov"].setdefault(b["order_id"], []).append(b)
             elif k == "SUBJECT_ASSOC": st["assoc"].setdefault(b["subject"], []).append(b["binding"])
+            elif k == "ANCESTRY_COMPLETE": st["anc"][b["subject"]] = b
             elif k == "SNAPSHOT_ISSUED": st["snapiss"][b["snapshot_id"]] = b
             elif k == "REVIEW_TASK": st["tasks"][b["task_origin"]] = b
         return st
@@ -262,10 +261,27 @@ class TrackerCore:
     def declare_dependency(self, dependent: str, upstream: str):
         if dependent == upstream: raise Refusal(dependent, code="SELF_DEPENDENCY")
         def decide(st):
+            if dependent in st["anc"]: raise Refusal(dependent, code="ANCESTRY_ALREADY_DECLARED_COMPLETE")           # an edge added after a completeness assertion would contradict it
             if self._reaches(st, upstream, dependent): raise Refusal(dependent, code="DEPENDENCY_CYCLE")
             return None, ("DEPENDENCY", {"dependent": dependent, "upstream": upstream})
         self._commit(decide)
 
+    def declare_ancestry_complete(self, subject: str, source_ref: str):
+        """SUPPLIED, UNADMITTED assertion that the dependency edges recorded for `subject` (possibly none) are its complete ancestry. A declaration with no edges is a PROVEN-EMPTY claim only as far as the supplying source is
+        trusted: nothing here can verify completeness (no source-defined proof adapter exists). Absent declaration is UNKNOWN, never empty. Later edges for the subject are refused."""
+        if not (isinstance(subject, str) and subject and isinstance(source_ref, str) and source_ref): raise Refusal("ancestry declaration", code="ANCESTRY_DECLARATION_INVALID")
+        self._commit(lambda st: (None, None) if subject in st["anc"] and st["anc"][subject]["edges"] == sorted(st["ups"].get(subject, [])) else (None, ("ANCESTRY_COMPLETE", {"subject": subject, "edges": sorted(st["ups"].get(subject, [])), "source_ref": source_ref, "admission": "CALLER_ASSERTED_UNADMITTED"})))
+    @staticmethod
+    def _ancestry_blocks(st, subject):
+        """Required ancestry: the subject AND every transitive upstream must carry a completeness declaration. An undeclared node is UNKNOWN ancestry => blocks. A subject unrelated to the unknown one is unaffected."""
+        out = []; seen, stack = set(), [subject]
+        while stack:
+            c = stack.pop()
+            if c in seen: continue
+            seen.add(c)
+            if c not in st["anc"]: out.append("REQUIRED_ANCESTRY_UNKNOWN:" + c)
+            else: stack += st["ups"].get(c, [])
+        return out
     @staticmethod
     def _reaches(st, start, target):                      # does `start` already depend (transitively) on `target`?
         seen, stack = set(), [start]
@@ -507,15 +523,15 @@ class TrackerCore:
         if not isinstance(binding.feature_id, bytes) or not isinstance(binding.instrument_id, bytes) or not isinstance(binding.timeframe_id, bytes) or not isinstance(binding.feature_version, str): raise Refusal("binding types", code="SUBJECT_ASSOCIATION_INVALID")
         h = self._bhex(binding); self._commit(lambda st: (None, None) if h in st["assoc"].get(subject, []) else (None, ("SUBJECT_ASSOC", {"subject": subject, "binding": h, "source_ref": source_ref, "admission": "CALLER_ASSERTED_UNADMITTED"})))
     @staticmethod
-    def _snapshot_id(subject, version, bhex, ref, resolved_at, acceptable, evidence_class, now, held, ra=False, rt=False):
-        return domain_hash("TRK/HEALTH_SNAPSHOT", canonical_bytes({"s": subject, "v": version, "b": bhex, "ref": repr(ref), "r": resolved_at, "a": acceptable, "c": evidence_class, "n": now, "h": held, "ra": ra, "rt": rt}))
+    def _snapshot_id(subject, version, bhex, ref, resolved_at, acceptable, evidence_class, now, held, ra=False, rt=False, rn=False):
+        return domain_hash("TRK/HEALTH_SNAPSHOT", canonical_bytes({"s": subject, "v": version, "b": bhex, "ref": repr(ref), "r": resolved_at, "a": acceptable, "c": evidence_class, "n": now, "h": held, "ra": ra, "rt": rt, "rn": rn}))
     def confirm_snapshot(self, snap) -> bool:
         """True only if `snap` is a Core-typed snapshot whose id re-derives from its own fields AND is present in this Core's journal as issued (survives restart). A replaced/forged field changes the id."""
         if type(snap) is not CoreHealthSnapshot or snap.binding is None: return False
-        if self._snapshot_id(snap.subject, snap.version, self._bhex(snap.binding), snap.resolution_ref, snap.resolved_at, snap.acceptable, snap.evidence_class, snap.evaluated_at, snap.held_reason, snap.require_authority_evidence, snap.require_transform_proof) != snap.snapshot_id: return False
+        if self._snapshot_id(snap.subject, snap.version, self._bhex(snap.binding), snap.resolution_ref, snap.resolved_at, snap.acceptable, snap.evidence_class, snap.evaluated_at, snap.held_reason, snap.require_authority_evidence, snap.require_transform_proof, snap.require_ancestry) != snap.snapshot_id: return False
         return snap.snapshot_id in self._replay()["snapiss"]
-    def _current_ok(self, st, subject, version, now, ra, rt) -> bool:
-        return self.simulation and not self._blocked(st, subject) and self._health(st, subject, version, now) == "HEALTHY" and not self._proof_blocks(st, subject, version, now, ra, rt)
+    def _current_ok(self, st, subject, version, now, ra, rt, rn=False) -> bool:
+        return self.simulation and not self._blocked(st, subject) and self._health(st, subject, version, now) == "HEALTHY" and not self._proof_blocks(st, subject, version, now, ra, rt) and not (rn and self._ancestry_blocks(st, subject))
     def snapshot_current_at_use(self, snap, use_at: int) -> bool:
         """Journal issuance proves only that THIS Core issued the snapshot; it is not current permission. At USE (a NEW ordinary binding) the issued snapshot must still be confirmable AND the same Health/blocks/epoch/
         evidence-truth/transform predicates, re-read from the CURRENT journal at `use_at`, must still accept the same (subject, version, binding). Quarantine, epoch invalidation, ambiguity, a later re-verification request,
@@ -523,10 +539,10 @@ class TrackerCore:
         (freshness uses the Health evidence's own max_age against `use_at`)."""
         if not self.confirm_snapshot(snap) or not _int(use_at) or use_at < snap.evaluated_at: return False
         st = self._replay()
-        return self._current_ok(st, snap.subject, snap.version, use_at, snap.require_authority_evidence, snap.require_transform_proof)
+        return self._current_ok(st, snap.subject, snap.version, use_at, snap.require_authority_evidence, snap.require_transform_proof, snap.require_ancestry)
 
     # ---- composition output: the health the downstream Gateway actually consumes -------------------
-    def gateway_health(self, subject: str, version: str, now: int, ref, resolved_at: int, *, asof_seq: int = None, binding=None, require_authority_evidence: bool = False, require_transform_proof: bool = False):
+    def gateway_health(self, subject: str, version: str, now: int, ref, resolved_at: int, *, asof_seq: int = None, binding=None, require_authority_evidence: bool = False, require_transform_proof: bool = False, require_ancestry: bool = False):
         """binding: gateway.contracts.HealthBinding naming the dependency this reading speaks for. Without it the Gateway DENIES (HEALTH_BINDING_UNBOUND); its version must equal the queried Health version. A binding for which
         no subject association was ever supplied (`associate_subject`) is HELD (acceptable False, held_reason). The snapshot composes Recording Health, quarantine/epoch blocks AND journaled evidence-truth/transform verdicts
         for exactly (subject, version), checked at use time; the require_* flags make an absent proof held (the caller declares what is required; nothing is invented). The issued snapshot is journaled and confirmable."""
@@ -534,39 +550,16 @@ class TrackerCore:
         from dataclasses import dataclass
         if asof_seq is not None: raise Refusal("historical Health consistency mode has no source-correct rule here", code="HISTORICAL_HEALTH_MODE_UNRESOLVED")
         st = self._replay()
-        ok = self._current_ok(st, subject, version, now, require_authority_evidence, require_transform_proof)
+        ok = self._current_ok(st, subject, version, now, require_authority_evidence, require_transform_proof, require_ancestry)
         if binding is not None and getattr(binding, "feature_version", None) != version: raise Refusal("binding version != Health version", code="HEALTH_BINDING_VERSION_MISMATCH")
         held = ""
         if binding is not None and self._bhex(binding) not in st["assoc"].get(subject, []): ok = False; held = "SUBJECT_ASSOCIATION_UNBOUND"
         ec = "SIMULATION" if self.simulation else "QUALIFIED_HELD"
-        sid = self._snapshot_id(subject, version, self._bhex(binding) if binding is not None else None, ref, resolved_at, ok, ec, now, held, require_authority_evidence, require_transform_proof)
+        sid = self._snapshot_id(subject, version, self._bhex(binding) if binding is not None else None, ref, resolved_at, ok, ec, now, held, require_authority_evidence, require_transform_proof, require_ancestry)
         if binding is not None: self._commit(lambda st2: (None, None) if sid in st2["snapiss"] else (None, ("SNAPSHOT_ISSUED", {"snapshot_id": sid, "subject": subject, "version": version, "at": now})))
-        return CoreHealthSnapshot(ref, resolved_at, ok, ec, binding=binding, subject=subject, version=version, evaluated_at=now, held_reason=held, snapshot_id=sid, require_authority_evidence=require_authority_evidence, require_transform_proof=require_transform_proof)
+        return CoreHealthSnapshot(ref, resolved_at, ok, ec, binding=binding, subject=subject, version=version, evaluated_at=now, held_reason=held, snapshot_id=sid, require_authority_evidence=require_authority_evidence, require_transform_proof=require_transform_proof, require_ancestry=require_ancestry)
 
-    # ---- Tracker-issued construction order (Composer V9 s7A: ORDER_ISSUER = TRACKER ONLY) ---------------------------------------------
-    ORDER_BINDING_FIELDS = ("REQUEST_CLASS", "REQUESTER_TYPE", "REQUESTER_ID", "TARGET_CONSUMER", "REQUEST_CONTEXT", "PURPOSE_STATEMENT", "OUTCOME_INFORMATION_ACCESS", "IDEA_ORIGIN", "IDEA_BASIS", "EXPECTED_DELIVERY_CONTRACT", "CANDIDATE_IDENTITY")
-    def issue_order(self, rec: dict, lookups: dict, now: int) -> dict:
-        """The ONLY order issuer. Runs the s7A disposition; only PROCEED issues, and the order is a JOURNALED fact (ORDER_ISSUED) - a caller-built dict, an equal request, or a Composer-side object is not an order.
-        An ACTIVE order for the same CANDIDATE_IDENTITY (matching on candidate identity ALONE; TARGET_CONSUMER excluded) is not duplicated: the request attaches as provenance (ORDER_PROVENANCE) to the existing order.
-        order_id is an INTERNAL prototype digest (no source-defined ORDER_ID composition); not a normative identity."""
-        from ..composer.intake import evaluate_intake, PROCEED
-        if not (isinstance(now, int) and not isinstance(now, bool) and now >= 0): raise Refusal("now", code="ORDER_TIME_INVALID")
-        d = evaluate_intake(rec, "ORDER", lookups)
-        if d.disposition != PROCEED: return {"status": d.disposition, "reasons": list(d.reasons), "order_id": None}
-        bind = {k: rec[k] for k in self.ORDER_BINDING_FIELDS}
-        key = {k: v for k, v in bind.items() if k not in ("TARGET_CONSUMER", "REQUESTER_ID", "REQUESTER_TYPE", "REQUEST_CONTEXT", "PURPOSE_STATEMENT")}     # consumer/requester do not split the order
-        oid = domain_hash("TRK/CONSTRUCTION_ORDER_PROTOTYPE", canonical_bytes({"identity": rec["CANDIDATE_IDENTITY"], "contract": rec["EXPECTED_DELIVERY_CONTRACT"], "access": rec["OUTCOME_INFORMATION_ACCESS"]}))
-        def dec(st):
-            ex = st["orders"].get(oid)
-            if ex is not None:
-                if any(p["requester_id"] == rec["REQUESTER_ID"] and p["target_consumer"] == rec["TARGET_CONSUMER"] for p in st["order_prov"].get(oid, [])) or (ex["bindings"]["REQUESTER_ID"] == rec["REQUESTER_ID"] and ex["bindings"]["TARGET_CONSUMER"] == rec["TARGET_CONSUMER"]):
-                    return {"status": "ATTACHED_EXISTING_IDEMPOTENT", "order_id": oid, "reasons": list(d.reasons)}, None
-                return {"status": "ATTACHED_AS_PROVENANCE", "order_id": oid, "reasons": list(d.reasons)}, ("ORDER_PROVENANCE", {"order_id": oid, "requester_id": rec["REQUESTER_ID"], "requester_type": rec["REQUESTER_TYPE"], "target_consumer": rec["TARGET_CONSUMER"], "at": now})
-            return {"status": "ISSUED", "order_id": oid, "reasons": list(d.reasons)}, ("ORDER_ISSUED", {"order_id": oid, "bindings": bind, "applicability": d.field_applicability, "lookup_refs": {k: lookups[k]["ref"] for k in sorted(lookups) if isinstance(lookups[k], dict)}, "issuer": "TRACKER", "at": now})
-        return self._commit(dec)
-    def order(self, order_id):
-        o = self._replay()["orders"].get(order_id); return None if o is None else dict(o)
-    def order_provenance(self, order_id): return list(self._replay()["order_prov"].get(order_id, []))
+    # Construction orders are NOT owned by Core: the single order/claim authority is tracker_component.ClaimService (see stage_a/composer/order_authority.py).
 
     # ---- reviewer / write-plane boundary ------------------------------------------------------------
     FINDING_FIELDS = ("finding_id", "task_origin", "summary", "author")
@@ -636,6 +629,7 @@ class CoreHealthSnapshot(_HS):
     snapshot_id: str = ""
     require_authority_evidence: bool = False
     require_transform_proof: bool = False
+    require_ancestry: bool = False
 
 
 @dataclass(frozen=True)

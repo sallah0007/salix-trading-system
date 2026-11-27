@@ -39,29 +39,56 @@ class Intake(unittest.TestCase):
         d = IN.evaluate_intake(rec(REQUEST_CONTEXT="OTHER"), "ORDER", lk()); self.assertEqual((d.disposition, d.reasons), (IN.FAIL_CLOSED, ("REQUEST_OTHER_WITHOUT_GOVERNED_REASON",)))
         self.assertEqual(IN.evaluate_intake(rec(REQUEST_CLASS="ML_DATASET_OR_MODEL_REQUEST"), "ORDER", lk()).disposition, IN.FAIL_CLOSED)       # retired class
 
+from stage_a.composer import order_authority as OA
+from stage_a.composer.build_gate import accept_build_start as abs_
+from .fixtures import Rig, package, ANCHOR, SIM_CONF
+from stage_a.tracker.quant_intake_adapter import admit
+SRC = "SRC-BINDING-1"
+def issue(claims, r=None, l=None, **k): return OA.issue_order(claims, r or rec(), lk() if l is None else l, **dict(dict(subject_key="SUBJ-1", source_binding_hash=SRC, issued_by="MANAGER"), **k))
+def br(**k): return dict(dict((f, "x") for f in IN.CONSUMER_LOCAL_ORDER_FIELDS), **dict(dict(CANDIDATE_IDENTITY="cand-1", EXPECTED_DELIVERY_CONTRACT="edc1", OUTCOME_INFORMATION_ACCESS="FORBIDDEN"), **k))
+
 class TrackerIssuedOrder(unittest.TestCase):
-    def test_only_proceed_issues_a_journaled_order_and_is_idempotent_across_restart(self):
-        from stage_a.core.tracker_core import TrackerCore
-        c = mk(); r = c.issue_order(rec(), lk(), 10); self.assertEqual(r["status"], "ISSUED"); oid = r["order_id"]
-        o = c.order(oid); self.assertEqual((o["issuer"], o["bindings"]["CANDIDATE_IDENTITY"]), ("TRACKER", "cand-1"))
-        self.assertEqual(c.issue_order(rec(), lk(), 11)["status"], "ATTACHED_EXISTING_IDEMPOTENT")
-        c2 = TrackerCore(c._j, simulation=True); self.assertEqual(c2.order(oid)["bindings"]["REQUESTER_ID"], "mgr-1")
-        bad = c.issue_order(rec(), lk(REGISTRY_LOOKUP=1), 12); self.assertEqual((bad["status"], bad["order_id"]), (IN.FAIL_CLOSED, None))
-        self.assertEqual(c.issue_order(rec(CANDIDATE_IDENTITY="other"), {}, 13)["order_id"], None)
-    def test_same_candidate_other_consumer_or_requester_attaches_provenance_not_a_second_order(self):
-        c = mk(); a = c.issue_order(rec(), lk(), 10); b = c.issue_order(rec(TARGET_CONSUMER="MACHINE_LEARNING", REQUESTER_TYPE="AI", REQUESTER_ID="ai-1"), lk(), 11)
-        self.assertEqual((b["status"], b["order_id"]), ("ATTACHED_AS_PROVENANCE", a["order_id"])); self.assertEqual(len(c.order_provenance(a["order_id"])), 1)
-        self.assertEqual(c.issue_order(rec(TARGET_CONSUMER="MACHINE_LEARNING", REQUESTER_TYPE="AI", REQUESTER_ID="ai-1"), lk(), 12)["status"], "ATTACHED_EXISTING_IDEMPOTENT")
-        d = c.issue_order(rec(CANDIDATE_IDENTITY="cand-2"), lk(), 13); self.assertEqual(d["status"], "ISSUED"); self.assertNotEqual(d["order_id"], a["order_id"])      # unrelated candidate: its own order
-    def test_build_gate_accepts_only_journaled_order_ids_not_equal_requests_or_objects(self):
-        c = mk(); o = c.issue_order(rec(), lk(), 10); br = dict(CANDIDATE_IDENTITY="cand-1", EXPECTED_DELIVERY_CONTRACT="edc1", OUTCOME_INFORMATION_ACCESS="FORBIDDEN")
-        self.assertEqual(accept_build_start(c, o["order_id"], br)["issuer"], "TRACKER")                                                                                 # positive
-        self.assertEqual(code(accept_build_start, c, rec(), br), "COMPOSER_BUILD_NEEDS_TRACKER_ORDER_ID")                                                               # the request itself is not an order
-        self.assertEqual(code(accept_build_start, c, c.order(o["order_id"]), br), "COMPOSER_BUILD_NEEDS_TRACKER_ORDER_ID")                                              # a copy of the order object is not an order id
-        self.assertEqual(code(accept_build_start, c, "forged-id", br), "COMPOSER_BUILD_WITHOUT_TRACKER_ORDER")
-        self.assertEqual(code(accept_build_start, mk(), o["order_id"], br), "COMPOSER_BUILD_WITHOUT_TRACKER_ORDER")                                                     # another journal never issued it
-        for k, v in (("CANDIDATE_IDENTITY", "x"), ("EXPECTED_DELIVERY_CONTRACT", "y"), ("OUTCOME_INFORMATION_ACCESS", "PERMITTED_UNDER_DECLARED_FITTING_CONTRACT")):
-            self.assertEqual(code(accept_build_start, c, o["order_id"], dict(br, **{k: v})), "COMPOSER_BUILD_DIFFERS_FROM_ORDER")
+    def test_only_proceed_issues_through_ClaimService_and_is_idempotent_across_restart(self):
+        rig = Rig(); c = rig.claims; r = issue(c); self.assertEqual(r["status"], "ISSUED"); oid = r["order_id"]
+        o = c.order(oid); self.assertEqual((o["issued_by"], o["constraints"]["CANDIDATE_IDENTITY"], o["constraints"]["REQUEST_SCHEMA_VERSION"], o["constraints"]["FORBIDDEN_INPUTS"]), ("MANAGER", "cand-1", "1", "x"))
+        self.assertEqual(c.lineage(oid), ["ORDER_ISSUED"])                                                                                  # the SAME journal the pipeline reads
+        self.assertEqual(issue(c)["status"], "ATTACHED_EXISTING_IDEMPOTENT")
+        from tracker_component.claims import ClaimService; c2 = ClaimService(rig.claims_journal, ANCHOR); self.assertEqual(c2.order(oid)["constraints"]["REQUESTER_ID"], "mgr-1")
+        bad = issue(c, l=lk(REGISTRY_LOOKUP=1)); self.assertEqual((bad["status"], bad["order_id"]), (IN.FAIL_CLOSED, None))
+        self.assertEqual(issue(c, rec(CANDIDATE_IDENTITY="other"), {})["order_id"], None)
+        self.assertEqual(code(OA.issue_order, c, rec(), lk(), subject_key="", source_binding_hash=SRC, issued_by="M"), "ORDER_AUTHORITY_INPUT_MISSING")
+        self.assertFalse(hasattr(__import__("stage_a.core.tracker_core", fromlist=["TrackerCore"]).TrackerCore, "issue_order"))      # no second authority in Core
+    def test_same_candidate_other_consumer_attaches_provenance_but_changed_constraints_are_not_coalesced(self):
+        c = Rig().claims; a = issue(c); ml = rec(TARGET_CONSUMER="MACHINE_LEARNING", REQUESTER_TYPE="AI", REQUESTER_ID="ai-1")
+        b = issue(c, ml); self.assertEqual((b["status"], b["order_id"]), ("ATTACHED_AS_PROVENANCE", a["order_id"])); self.assertEqual(len(c.order_provenance(a["order_id"])), 1)
+        self.assertEqual(issue(c, ml)["status"], "ATTACHED_EXISTING_IDEMPOTENT")
+        d = issue(c, rec(CANDIDATE_IDENTITY="cand-2"), subject_key="SUBJ-2"); self.assertEqual(d["status"], "ISSUED"); self.assertNotEqual(d["order_id"], a["order_id"])      # unrelated candidate: its own order
+        for k, v in (("FORBIDDEN_INPUTS", "changed"), ("EXPECTED_DELIVERY_CONTRACT", "edc2"), ("OUTCOME_INFORMATION_ACCESS", "PERMITTED_UNDER_DECLARED_FITTING_CONTRACT"), ("SCOPE", "other"), ("ALLOWED_INPUTS", "y")):
+            x = issue(c, rec(**{k: v, "RESEARCH_FAMILY_REFERENCE": "fam"}, REQUESTER_ID="mgr-9")); self.assertEqual(x["status"], "REVIEW_REQUIRED", k); self.assertTrue(x["reasons"][0].startswith("ORDER_CONSTRAINTS_CONFLICT") and k in x["reasons"][0], k)
+        self.assertEqual(len(c.order_provenance(a["order_id"])), 1)                                                                          # nothing appended by the refused changes
+        self.assertEqual(issue(c, subject_key="SUBJ-OTHER", r=rec(REQUESTER_ID="mgr-8"))["status"], "REVIEW_REQUIRED")                      # different subject binding is not coalesced either
+    def test_build_gate_verifies_the_claim_order_and_requires_every_constraint(self):
+        c = Rig().claims; o = issue(c)
+        self.assertEqual(abs_(c, o["order_id"], br()).issued_by, "MANAGER")                                                              # positive
+        self.assertEqual(code(abs_, c, rec(), br()), "COMPOSER_BUILD_NEEDS_TRACKER_ORDER_ID"); self.assertEqual(code(abs_, c, c.order(o["order_id"]), br()), "COMPOSER_BUILD_NEEDS_TRACKER_ORDER_ID")
+        self.assertEqual(code(abs_, c, "forged-id", br()), "COMPOSER_BUILD_WITHOUT_TRACKER_ORDER"); self.assertEqual(code(abs_, Rig().claims, o["order_id"], br()), "COMPOSER_BUILD_WITHOUT_TRACKER_ORDER")
+        self.assertEqual(code(abs_, object(), o["order_id"], br()), "COMPOSER_BUILD_NEEDS_CLAIM_AUTHORITY")
+        for k, v in (("CANDIDATE_IDENTITY", "x"), ("EXPECTED_DELIVERY_CONTRACT", "y"), ("OUTCOME_INFORMATION_ACCESS", "PERMITTED_UNDER_DECLARED_FITTING_CONTRACT"), ("FORBIDDEN_INPUTS", "changed"), ("ALLOWED_INPUTS", "z"), ("SCOPE", "w"), ("VINTAGE_MODE", "v")):
+            self.assertEqual(code(abs_, c, o["order_id"], br(**{k: v})), "COMPOSER_BUILD_DIFFERS_FROM_ORDER", k)                            # contradiction (FORBIDDEN_INPUTS bound 'x', build says 'changed')
+        for k in IN.CONSUMER_LOCAL_ORDER_FIELDS + ("EXPECTED_DELIVERY_CONTRACT",): b = br(); del b[k]; self.assertEqual(code(abs_, c, o["order_id"], b), "COMPOSER_BUILD_OMITS_ORDER_CONSTRAINT", k)
+    def test_unadmitted_anchor_revocation_and_expiry_refuse_the_gate(self):
+        c = Rig().claims
+        self.assertEqual(code(abs_, c, issue(c, r=rec(CANDIDATE_IDENTITY="c-a"), issued_by="ROGUE")["order_id"], br(CANDIDATE_IDENTITY="c-a")), "COMPOSER_BUILD_ORDER_NOT_VERIFIED:ISSUER_NOT_ANCHORED")
+        self.assertEqual(code(abs_, c, issue(c, r=rec(CANDIDATE_IDENTITY="c-b"), source_binding_hash="OTHER")["order_id"], br(CANDIDATE_IDENTITY="c-b")), "COMPOSER_BUILD_ORDER_NOT_VERIFIED:SOURCE_BINDING_MISMATCH")
+        e = issue(c, r=rec(CANDIDATE_IDENTITY="c-c"), valid_until_seq=0)["order_id"]; self.assertEqual(code(abs_, c, e, br(CANDIDATE_IDENTITY="c-c")), "COMPOSER_BUILD_ORDER_NOT_VERIFIED:ORDER_EXPIRED")
+        g = issue(c, r=rec(CANDIDATE_IDENTITY="c-d"))["order_id"]; abs_(c, g, br(CANDIDATE_IDENTITY="c-d")); c.revoke_order(g, "x"); self.assertEqual(code(abs_, c, g, br(CANDIDATE_IDENTITY="c-d")), "COMPOSER_BUILD_ORDER_NOT_VERIFIED:ORDER_REVOKED")
+    def test_order_gate_to_actual_pipeline_in_simulation_and_qualified_stays_held(self):
+        rig = Rig(); oid = OA.order_id_for("cand-1"); p = package(order_id=oid); sk = admit(p, accepted_fit_generations=rig.fits, conformance=SIM_CONF).subject_key
+        o = issue(rig.claims, subject_key=sk); self.assertEqual(o["order_id"], oid)
+        abs_(rig.claims, oid, br())                                                                                                          # gate verifies the SAME ClaimService order the pipeline reserves
+        out = rig.pipe.run(p); self.assertEqual(rig.claims.claim("CLAIM:" + p.request_id)["state"], "CONSUMED"); self.assertEqual(rig.claims.lineage(oid, p.request_id), ["ORDER_ISSUED", "REQUEST_CLAIM_EXISTS"])
+        p2 = package(request_id="REQ-2", attempt_id="ATT-2", order_id=OA.order_id_for("never-issued")); r2 = rig.pipe.run(p2); self.assertIsNone(rig.claims.claim("CLAIM:REQ-2"))      # no order => no claim: the pipeline needs the journaled order
+        q = Rig(simulation=False); self.assertEqual(code(abs_, q.claims, issue(q.claims, issued_by="UNADMITTED")["order_id"], br()), "COMPOSER_BUILD_ORDER_NOT_VERIFIED:ISSUER_NOT_ANCHORED")      # unadmitted principal: qualified use held
 
 class HealthBlastRadius(unittest.TestCase):
     def test_dependents_blocked_and_unrelated_baseline_positive_and_required_unknown_fails_closed(self):
@@ -75,3 +102,27 @@ class HealthBlastRadius(unittest.TestCase):
         self.assertFalse(c.gateway_health("TOP", "1", 13, None, 11).acceptable); self.assertFalse(c.gateway_health("MID", "1", 13, None, 11).acceptable)
         self.assertTrue(c.gateway_health("BASE", "1", 13, None, 11).acceptable)                                                                 # unrelated baseline unaffected
         self.assertFalse(c.gateway_health("NEVER_VERIFIED", "1", 13, None, 11).acceptable)                                                      # required, unknown => held, not healthy
+
+class HealthRequiredAncestry(unittest.TestCase):
+    def test_undeclared_ancestry_fails_closed_proven_empty_and_unrelated_pass_and_completeness_is_unadmitted(self):
+        from .test_r24_core import ver
+        c = mk(); c.declare_dependency("MID", "UP"); c.declare_dependency("TOP", "MID")
+        for s in ("UP", "MID", "TOP", "BASE", "LEAF"): ver(c, s, version="1", at=11, age=50)
+        ok = lambda s, **k: c.gateway_health(s, "1", 12, None, 11, **k).acceptable
+        self.assertTrue(ok("TOP") and ok("TOP", require_ancestry=True) is False)                                                         # not required: unchanged; required but undeclared => UNKNOWN, fails closed
+        c.declare_ancestry_complete("TOP", "src-1"); c.declare_ancestry_complete("MID", "src-1")
+        self.assertFalse(ok("TOP", require_ancestry=True))                                                                              # UP (an ancestor) still undeclared: the unknown propagates to dependents
+        c.declare_ancestry_complete("UP", "src-1"); self.assertTrue(ok("TOP", require_ancestry=True))                                  # complete chain, healthy: positive
+        c.declare_ancestry_complete("BASE", "src-2"); self.assertTrue(ok("BASE", require_ancestry=True))                               # PROVEN-EMPTY (declared, no edges) is not UNKNOWN
+        self.assertFalse(ok("LEAF", require_ancestry=True)); self.assertTrue(ok("BASE", require_ancestry=True))                         # an unrelated undeclared subject does not affect BASE, and BASE's declaration does not rescue LEAF
+        self.assertEqual(c._replay()["anc"]["BASE"]["admission"], "CALLER_ASSERTED_UNADMITTED")                                         # completeness is supplied, not verified
+        self.assertEqual(code(c.declare_dependency, "TOP", "BASE"), "ANCESTRY_ALREADY_DECLARED_COMPLETE")                               # late edge contradicts the assertion
+        c.quarantine("UP", "DEFECT"); self.assertFalse(ok("TOP", require_ancestry=True)); self.assertTrue(ok("BASE", require_ancestry=True))
+        self.assertEqual(code(c.declare_ancestry_complete, "", "s"), "ANCESTRY_DECLARATION_INVALID")
+    def test_snapshot_binds_the_ancestry_requirement(self):
+        from .test_r24_core import ver
+        from stage_a.core.tracker_core import CoreHealthSnapshot
+        c = mk(); ver(c, "S", version="1", at=11, age=50); c.declare_ancestry_complete("S", "src")
+        a = c.gateway_health("S", "1", 12, None, 11, require_ancestry=False); b = c.gateway_health("S", "1", 12, None, 11, require_ancestry=True)
+        self.assertEqual((a.require_ancestry, b.require_ancestry), (False, True))
+        self.assertNotEqual(c._snapshot_id("S", "1", None, None, 11, True, "SIMULATION", 12, "", False, False, False), c._snapshot_id("S", "1", None, None, 11, True, "SIMULATION", 12, "", False, False, True))

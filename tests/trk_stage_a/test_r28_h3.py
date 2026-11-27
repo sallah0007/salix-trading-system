@@ -58,3 +58,19 @@ def test_fw_receipt_is_structural_only_and_raises_on_withheld_or_undetermined():
     for p, c in ((pkg(dependency_interval_end=40), ctx()), (pkg(), ctx(authorized_segments=((0, 14), (15, 25)))), (pkg(), H.DeliveryContext())):
         with pytest.raises(Refusal) as e: FW.receive_outcome_series(p, c)
         assert e.value.code == "H3_DELIVERY_WITHHELD_OR_UNDETERMINED"
+
+def test_r30_coverage_ignores_unrelated_earlier_segments_and_proves_only_the_requested_interval():
+    p = pkg(dependency_interval_start=12, dependency_interval_end=20)
+    assert st(p, ctx(authorized_segments=((10, 25),))) == H.PASS_STRUCTURAL
+    for segs in (((0, 5), (10, 25)), ((10, 25), (0, 5)), ((0, 5), (6, 8), (10, 25)), ((0, 11), (10, 25))):                    # earlier unrelated/overlapping segments, any order
+        assert st(p, ctx(authorized_segments=segs)) == H.PASS_STRUCTURAL, segs
+        for conv in H.CONVENTIONS: assert st(p, ctx(authorized_segments=segs, boundary_convention=conv)) == H.PASS_STRUCTURAL
+    assert st(p, ctx(authorized_segments=((0, 5), (13, 25)))) == H.WITHHELD                                                      # real gap inside the interval, every convention
+    assert st(p, ctx(authorized_segments=((0, 5), (10, 19)))) == H.WITHHELD                                                      # stops short of the end
+    assert st(p, ctx(authorized_segments=((0, 5),))) == H.WITHHELD and st(p, ctx(authorized_segments=((21, 30),))) == H.WITHHELD
+    assert st(p, ctx(authorized_segments=((10, 15), (15, 25)))) == H.PASS_STRUCTURAL                                              # shared boundary point: contiguous under every convention
+def test_r30_applicability_values_must_be_real_booleans():
+    for flag, _ in H.CONDITIONAL:
+        for bad in (0, 1, "False", ""):
+            with pytest.raises(Refusal) as e: H.evaluate(pkg(), ctx(**{flag: bad}))
+            assert e.value.code == "H3_APPLICABILITY_NOT_BOOLEAN"
