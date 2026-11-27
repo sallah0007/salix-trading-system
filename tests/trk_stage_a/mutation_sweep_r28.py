@@ -2,7 +2,7 @@
 R29: the former 'equivalent' mutant (verify via the producer composition) IS killable by the producer fault-injection test and is included; Named behavioural equivalents (NOT run): (a) dropping the redundant `manifest_hash == ledger hash` check in `eligible` (the ledger copies the immutable manifest hash at append); (b) dropping `or not self.eligible(...)` in `compare_and_publish` (a non-eligible latest state always implies a changed epoch since the snapshot, which itself required eligibility). Both are defensive duplicates, kept on purpose."""
 import subprocess, sys, pathlib, os
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-TC = "stage_a/core/tracker_core.py"; VR = "stage_a/tracker/verification/verification_result.py"; GC = "stage_a/gateway/contracts.py"; GB = "stage_a/gateway/binding.py"; MLR = "stage_a/ml/receiver.py"; FWR = "stage_a/fw/receiver.py"; V38 = "stage_a/gateway/v038.py"; CLS = "stage_a/ml/closure.py"; GL = "stage_a/ml/generation_lifecycle.py"; IN = "stage_a/composer/intake.py"; BG = "stage_a/composer/build_gate.py"; H3 = "stage_a/gateway/outcome_series.py"
+TC = "stage_a/core/tracker_core.py"; VR = "stage_a/tracker/verification/verification_result.py"; GC = "stage_a/gateway/contracts.py"; GB = "stage_a/gateway/binding.py"; MLR = "stage_a/ml/receiver.py"; FWR = "stage_a/fw/receiver.py"; V38 = "stage_a/gateway/v038.py"; CLS = "stage_a/ml/closure.py"; GL = "stage_a/ml/generation_lifecycle.py"; IN = "stage_a/composer/intake.py"; BG = "stage_a/composer/build_gate.py"; H3 = "stage_a/gateway/outcome_series.py"; OA = "stage_a/composer/order_authority.py"
 M = [
  (TC, 'return json.dumps(list(parts), separators=(",", ":"), ensure_ascii=True)', 'return "|".join(",".join(x) if isinstance(x, list) else x for x in parts)'),
  (TC, 'if not self.confirm_snapshot(snap) or not _int(use_at) or use_at < snap.evaluated_at: return False', 'if False: return False'),
@@ -71,7 +71,7 @@ M = [
  (GL, 'st = REJECTED_QUARANTINED if (cur is not None and cur.state == "REVOKED") else REJECTED_DISCARDED', 'st = REJECTED_DISCARDED'),
  (GL, 'if key in self._events and self._events[key] != PUBLISHED: return', 'if False: return'),
  (GL, 'if st in (REJECTED_DISCARDED, REJECTED_QUARANTINED): return PublishOutcome(st, "NO_RETROACTIVE_REGENERATION")', 'pass'),
- (GL, 'ok = sorted(m for m in self._manifests if self.eligible(m, t))', 'ok = sorted(m for m in self._manifests if self.eligible(m))'),
+ (GL, 'ok = sorted(m for m in self._manifests if self.eligible(m, t) and event', 'ok = sorted(m for m in self._manifests if self.eligible(m) and event'),
  (GL, 'return Reconstruction(MISSED if not ok else NOT_PROVABLY_RECONSTRUCTABLE', 'return Reconstruction(MISSED'),
  (GL, 'if not self.eligible(manifest_id): raise Refusal(manifest_id, code="ML_GENERATION_NOT_SERVING_ELIGIBLE")', 'pass'),
  (GL, 'with self._lock:\n            if not isinstance(snap, SnapshotForRequest): raise', 'if True:\n            if not isinstance(snap, SnapshotForRequest): raise'),
@@ -82,16 +82,26 @@ M = [
  (IN, 'if base == "REVIEW_REQUIRED": review = True', 'if base == "REVIEW_REQUIRED": pass'),
  (IN, 'review = True; reasons.append("CONSUMER_LOCAL_REQUIRED_MISSING:%s:%s" % (side, f))', 'pass'),
  (IN, 'disp = FAIL_CLOSED if fail else REVIEW_REQUIRED if review else PROCEED', 'disp = FAIL_CLOSED if fail else PROCEED'),
- (TC, 'if d.disposition != PROCEED: return {"status": d.disposition', 'if False: return {"status": d.disposition'),
- (TC, 'return {"status": "ATTACHED_AS_PROVENANCE", "order_id": oid, "reasons": list(d.reasons)}, ("ORDER_PROVENANCE"', 'return {"status": "ATTACHED_AS_PROVENANCE", "order_id": oid, "reasons": list(d.reasons)}, None) if False else ({"status": "ATTACHED_AS_PROVENANCE", "order_id": oid, "reasons": list(d.reasons)}, ("ORDER_PROVENANCE"'),
  (BG, 'if not isinstance(order_id, str) or not order_id: raise', 'if False: raise'),
- (BG, 'if o is None or o.get("issuer") != "TRACKER": raise', 'if False: raise'),
- (BG, 'if build_request.get(k) != o["bindings"][k]: raise', 'if False: raise'),
  (TC, 'elif not (isinstance(mv, str) and mv): raise Refusal("model_version", code="REVIEW_MODEL_VERSION_REQUIRED")', 'elif False: pass'),
  (TC, 'if mv is not None: raise Refusal("human with model", code="REVIEW_MODEL_VERSION_NOT_APPLICABLE_TO_HUMAN")', 'pass'),
  (TC, 'if not set(c["evidence_refs"]) <= set(t["permitted_evidence_refs"]): raise', 'if False: raise'),
  (TC, 'or not self._strs(task["permitted_evidence_refs"]) or not task["permitted_evidence_refs"]:', ':'),
  (TC, 'if cur in ups and d not in dependents: dependents.add(d); stack.append(d)', 'if cur in ups and d not in dependents: dependents.add(d)'),
+ (OA, 'if d.disposition != PROCEED: return {"status": d.disposition', 'if False: return {"status": d.disposition'),
+ (OA, 'if diff or ex["subject_key"] != subject_key', 'if False'),
+ (OA, 'if k not in NON_MATERIAL and k in ec', 'if False and k in ec'),
+ (OA, 'claims.attach_provenance(oid, ctx)', 'pass'),
+ (BG, 'if build_request[k] != cons[k]', 'if False'),
+ (BG, 'if k not in build_request: raise', 'if False: raise'),
+ (BG, 'try: o = claims.verified_order(order_id)', 'try: o = claims.order(order_id) and __import__("tracker_component.order", fromlist=["x"]).ConstructionOrder.from_body(claims.order(order_id))'),
+ (H3, 'if a > s: break', 'if False: break'),
+ (H3, 'elif v is not True and v is not False: raise', 'elif False: raise'),
+ (GL, 'if prev is not None and prev.state in ("REVOKED", "SUPERSEDED") and state != prev.state:', 'if False:'),
+ (GL, 'if self._issued.get(snap.request_id) != snap: raise', 'if False: raise'),
+ (GL, 'if event.instrument_id not in m.fit_instrument_set: raise', 'if False: raise'),
+ (GL, 'if not (current_read_freshness == "PASS" and historical_slice_completeness == "PASS"):', 'if False:'),
+ (GL, 'if old is not None and old != snap: raise', 'if False: raise'),
 ]
 T = ["tests/trk_stage_a/test_r25_defects.py", "tests/trk_stage_a/test_r26_evidence_truth.py", "tests/trk_stage_a/test_r27_binding.py", "tests/trk_stage_a/test_boundaries.py", "tests/trk_stage_a/test_r24_core.py", "tests/trk_stage_a/test_r25_scheduler.py", "tests/trk_stage_a/test_r28_closure.py", "tests/trk_stage_a/test_r28_h3.py", "tests/trk_stage_a/test_r29_generation_lifecycle.py", "tests/trk_stage_a/test_r29_intake_order.py", "tests/trk_stage_a/test_r11_both.py", "tests/trk_stage_a/test_v038_conformance.py"]
 def run():

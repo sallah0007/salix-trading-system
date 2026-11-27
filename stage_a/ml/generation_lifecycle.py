@@ -97,8 +97,6 @@ class GenerationRegistry:
         with self._lock:
             if not isinstance(snap, SnapshotForRequest): raise Refusal("snapshot", code="ML_PUBLISH_NEEDS_REQUEST_SNAPSHOT")
             if self._issued.get(snap.request_id) != snap: raise Refusal(snap.request_id, code="ML_SNAPSHOT_NOT_ISSUED_BY_THIS_REGISTRY")     # exact issued snapshot: any altered hash/epoch/manifest/event/identity/request id fails
-            m = self._manifests.get(snap.manifest_id)
-            if m is None or (m.manifest_hash, m.generation_id) != (snap.manifest_hash, snap.generation_id): raise Refusal(snap.manifest_id, code="ML_SNAPSHOT_MANIFEST_BINDING_MISMATCH")
             if self._commit_hook: self._commit_hook()
             key = snap.event
             if key in self._published: return PublishOutcome(PUBLISHED, "ALREADY_PUBLISHED_IDEMPOTENT")
