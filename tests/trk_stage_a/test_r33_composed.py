@@ -44,7 +44,13 @@ class ComposedOrderToConsumer(unittest.TestCase):
         self.assertIsInstance(gw.resolve("b1", _entry(fid=F2, ver="1"), I, I, 3, 20, hs("BASE", b2)), G.Binding)                                                                 # unrelated baseline delivered
         self.assertEqual(c.recording_health(key, "1", 12).local_state, "HEALTHY")                                    # Build Plan 14A: the carried-upstream denial never overwrites the subject's LOCAL_STATE
         c.declare_ancestry_complete("UP", "src"); c.declare_ancestry_complete(key, "src")
-        self.assertIsInstance(gw.resolve("d2", _entry(ver="1"), I, I, 3, 20, hs(key, b1)), G.Binding)             # declared complete + healthy => delivered
+        e2 = _entry(ver="1"); d2 = gw.resolve("d2", e2, I, I, 3, 20, hs(key, b1)); self.assertIsInstance(d2, G.Binding)             # declared complete + healthy => delivered
+        from stage_a.fw import receiver as FWR
+        from stage_a.ml import receiver as MLR
+        from .test_r24_core import T, NONE_
+        self.assertIs(FWR.receive_verified(d2, e2, I, I, T, gw), d2)                                               # FW exact read-only receive of the SAME stored Gateway outcome
+        self.assertTrue(MLR.build_row("r-composed", R("gen"), [e2], [d2], gw, "ORIGINAL_AS_OBSERVED", NONE_, lambda o: NONE_, tables=gw.t).included)
+        self.assertEqual(code(FWR.receive_verified, dep, e2, I, I, T, gw), "NON_DELIVERY")                         # the earlier fail-closed outcome stays a non-delivery to the consumer
     def test_qualified_rig_holds_an_unadmitted_issuer_before_any_pipeline_work(self):
         q = Rig(simulation=False)
         with self.assertRaises(Exception) as cm: abs_(q.claims, issue(q.claims, issued_by="UNADMITTED")["order_id"], br())
