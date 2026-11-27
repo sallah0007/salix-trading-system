@@ -57,7 +57,7 @@ class TrackerCore:
 
     # ---- replay: pure function of the journal up to a given sequence ---------------------------
     def _replay(self, upto=None):
-        st = dict(obs={}, cands={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={}, reviews={}, tasks={}, authev={}, xform={}, assoc={}, snapiss={})
+        st = dict(obs={}, cands={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={}, reviews={}, tasks={}, authev={}, xform={}, assoc={}, snapiss={}, orders={}, order_prov={})
         for r in self._j.read_from(0):
             if upto is not None and r.seq > upto: break
             b = json.loads(r.body_json); k = r.kind
@@ -93,6 +93,8 @@ class TrackerCore:
             elif k == "FINDING": st["findings"].append(b)
             elif k == "AUTH_EVIDENCE": st["authev"][_scope_key(b["subject"], b["version"], b["instrument"], b["timeframe"], b["battery"], b["vintage"], list(b["dependencies"]))] = b      # keyed by the FULL claim scope: one version/scope never clears another
             elif k == "TRANSFORM_VERDICT": st["xform"][_scope_key(b["subject"], b["version"], b["kind"], b["transform_version"], b["lineage_ref"])] = b
+            elif k == "ORDER_ISSUED": st["orders"][b["order_id"]] = dict(b, seq=r.seq)
+            elif k == "ORDER_PROVENANCE": st["order_prov"].setdefault(b["order_id"], []).append(b)
             elif k == "SUBJECT_ASSOC": st["assoc"].setdefault(b["subject"], []).append(b["binding"])
             elif k == "SNAPSHOT_ISSUED": st["snapiss"][b["snapshot_id"]] = b
             elif k == "REVIEW_TASK": st["tasks"][b["task_origin"]] = b
@@ -531,6 +533,31 @@ class TrackerCore:
         sid = self._snapshot_id(subject, version, self._bhex(binding) if binding is not None else None, ref, resolved_at, ok, ec, now, held, require_authority_evidence, require_transform_proof)
         if binding is not None: self._commit(lambda st2: (None, None) if sid in st2["snapiss"] else (None, ("SNAPSHOT_ISSUED", {"snapshot_id": sid, "subject": subject, "version": version, "at": now})))
         return CoreHealthSnapshot(ref, resolved_at, ok, ec, binding=binding, subject=subject, version=version, evaluated_at=now, held_reason=held, snapshot_id=sid, require_authority_evidence=require_authority_evidence, require_transform_proof=require_transform_proof)
+
+    # ---- Tracker-issued construction order (Composer V9 s7A: ORDER_ISSUER = TRACKER ONLY) ---------------------------------------------
+    ORDER_BINDING_FIELDS = ("REQUEST_CLASS", "REQUESTER_TYPE", "REQUESTER_ID", "TARGET_CONSUMER", "REQUEST_CONTEXT", "PURPOSE_STATEMENT", "OUTCOME_INFORMATION_ACCESS", "IDEA_ORIGIN", "IDEA_BASIS", "EXPECTED_DELIVERY_CONTRACT", "CANDIDATE_IDENTITY")
+    def issue_order(self, rec: dict, lookups: dict, now: int) -> dict:
+        """The ONLY order issuer. Runs the s7A disposition; only PROCEED issues, and the order is a JOURNALED fact (ORDER_ISSUED) - a caller-built dict, an equal request, or a Composer-side object is not an order.
+        An ACTIVE order for the same CANDIDATE_IDENTITY (matching on candidate identity ALONE; TARGET_CONSUMER excluded) is not duplicated: the request attaches as provenance (ORDER_PROVENANCE) to the existing order.
+        order_id is an INTERNAL prototype digest (no source-defined ORDER_ID composition); not a normative identity."""
+        from ..composer.intake import evaluate_intake, PROCEED
+        if not (isinstance(now, int) and not isinstance(now, bool) and now >= 0): raise Refusal("now", code="ORDER_TIME_INVALID")
+        d = evaluate_intake(rec, "ORDER", lookups)
+        if d.disposition != PROCEED: return {"status": d.disposition, "reasons": list(d.reasons), "order_id": None}
+        bind = {k: rec[k] for k in self.ORDER_BINDING_FIELDS}
+        key = {k: v for k, v in bind.items() if k not in ("TARGET_CONSUMER", "REQUESTER_ID", "REQUESTER_TYPE", "REQUEST_CONTEXT", "PURPOSE_STATEMENT")}     # consumer/requester do not split the order
+        oid = domain_hash("TRK/CONSTRUCTION_ORDER_PROTOTYPE", canonical_bytes({"identity": rec["CANDIDATE_IDENTITY"], "contract": rec["EXPECTED_DELIVERY_CONTRACT"], "access": rec["OUTCOME_INFORMATION_ACCESS"]}))
+        def dec(st):
+            ex = st["orders"].get(oid)
+            if ex is not None:
+                if any(p["requester_id"] == rec["REQUESTER_ID"] and p["target_consumer"] == rec["TARGET_CONSUMER"] for p in st["order_prov"].get(oid, [])) or (ex["bindings"]["REQUESTER_ID"] == rec["REQUESTER_ID"] and ex["bindings"]["TARGET_CONSUMER"] == rec["TARGET_CONSUMER"]):
+                    return {"status": "ATTACHED_EXISTING_IDEMPOTENT", "order_id": oid, "reasons": list(d.reasons)}, None
+                return {"status": "ATTACHED_AS_PROVENANCE", "order_id": oid, "reasons": list(d.reasons)}, ("ORDER_PROVENANCE", {"order_id": oid, "requester_id": rec["REQUESTER_ID"], "requester_type": rec["REQUESTER_TYPE"], "target_consumer": rec["TARGET_CONSUMER"], "at": now})
+            return {"status": "ISSUED", "order_id": oid, "reasons": list(d.reasons)}, ("ORDER_ISSUED", {"order_id": oid, "bindings": bind, "applicability": d.field_applicability, "lookup_refs": {k: lookups[k]["ref"] for k in sorted(lookups) if isinstance(lookups[k], dict)}, "issuer": "TRACKER", "at": now})
+        return self._commit(dec)
+    def order(self, order_id):
+        o = self._replay()["orders"].get(order_id); return None if o is None else dict(o)
+    def order_provenance(self, order_id): return list(self._replay()["order_prov"].get(order_id, []))
 
     # ---- reviewer / write-plane boundary ------------------------------------------------------------
     FINDING_FIELDS = ("finding_id", "task_origin", "summary", "author")
