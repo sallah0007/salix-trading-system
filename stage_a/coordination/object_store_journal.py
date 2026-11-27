@@ -24,6 +24,11 @@ class ObjectStoreJournal:
         self._s, self._ns, self._w = store, namespace, writer_id
         self._epoch = None
 
+    @property
+    def authority_class(self) -> str:
+        from ..storage.authority_class import authority_class_of
+        return authority_class_of(self._s)
+
     # -- HEAD doc -------------------------------------------------------------
     def _read_head_doc(self):
         got = self._s.get(head_key(self._ns))

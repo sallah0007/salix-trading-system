@@ -27,4 +27,20 @@ class Closeout(unittest.TestCase):
         for p in set(re.findall(r"`((?:stage_a|tests|tracker_component)/[A-Za-z0-9_/]+\.py)`", DOC)): self.assertTrue((ROOT / p).exists(), p)
     def test_no_completion_or_signoff_claim(self):
         self.assertIn("NOT a completion claim", DOC); self.assertIn("NOT pre-approved sign-off", DOC)
+class R20Appendix(unittest.TestCase):
+    APP = (ROOT / "docs/proposals/TRK_ENGINEERING_APPENDIX_PROPOSED.md").read_text()
+    def test_appendix_covers_every_b_family_with_the_required_fields_and_is_linked(self):
+        self.assertIn("TRK_ENGINEERING_APPENDIX_PROPOSED.md", DOC)
+        for i in range(1, 25):
+            blk = self.APP.split("### B%02d - " % i)[1].split("\n### ")[0]
+            for f in ("SOURCE:", "REUSE:", "PORT:", "OWNERS:", "STATE:", "REFUSALS:", "CALLPATH:", "TEST:", "EVIDENCE:", "INPUT:"): self.assertIn("- " + f, blk, "B%02d %s" % (i, f))
+        for i in range(1, 16): self.assertIn("| TR-%02d |" % i, self.APP)
+        for i in range(1, 19): self.assertIn("| D%d |" % i, self.APP)
+        self.assertIn("PROPOSED INTERNAL ENGINEERING DESIGN", self.APP); self.assertIn("NOT an adopted governing schema", self.APP)
+    def test_current_view_has_no_stale_blueprint_or_optional_baseline_wording(self):
+        body = DOC.split("## 1. Integration ledger")[1]
+        self.assertNotIn("Recommend: Manager decides whether baseline may be None", body)
+        self.assertNotIn("whether E03 stands in for the blueprint", body)
+        self.assertNotIn("whether Core observation storage is in this component's scope", body)
+        self.assertIn("NOT_LOCATED_IN_NAMED_SOURCES", body); self.assertIn("SOURCE_INPUT_UNBOUND", DOC)
 if __name__ == "__main__": unittest.main()

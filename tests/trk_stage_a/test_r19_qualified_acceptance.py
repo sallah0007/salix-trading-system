@@ -45,3 +45,28 @@ class NoQuantFlag(unittest.TestCase):
         rig.issue(p); self.assertEqual(rig.claims.lineage(p.order_id), ["ORDER_ISSUED"])
         rig.claims.revoke_order(p.order_id, "x"); self.assertEqual(rig.claims.lineage(p.order_id), ["ORDER_REVOKED"])
 if __name__ == "__main__": unittest.main()
+
+class QualifiedNoQuantHeld(unittest.TestCase):
+    """R20: in the qualified route an unknown/unbound source identity is HELD, never read as NO_QUANT_FEATURE."""
+    def qualified(self):
+        from stage_a.tracker.pipeline import TrackerPipeline
+        from stage_a.tracker.registry import FeatureJournalSet
+        from stage_a.storage.object_store import InMemoryObjectStore
+        from stage_a.coordination.object_store_journal import ObjectStoreJournal
+        from tracker_component.claims import ClaimService
+        from stage_a.clocks import FixedClock
+        from .fixtures import ANCHOR
+        s = InMemoryObjectStore(); cj = ObjectStoreJournal(s, "claims", "w"); cj.acquire_epoch()
+        return TrackerPipeline(store=s, claims=ClaimService(cj, ANCHOR), journals=FeatureJournalSet(s, "w"), clock=FixedClock(), events=__import__("stage_a.observability", fromlist=["EventSink"]).EventSink(), simulation=False)
+    def test_codex_repro_unbound_ids_after_revoked_order_is_held_not_no_quant(self):
+        from dataclasses import replace
+        from .fixtures import package
+        p = package(None, quant=False, request_record=None)
+        p = replace(p, order_id="UNBOUND-ORDER", request_id="UNBOUND-REQUEST")
+        o = self.qualified().run(p)
+        self.assertEqual(o.classification, "CLASSIFICATION_UNRESOLVED_HELD"); self.assertNotEqual(o.classification, NO_QUANT_FEATURE)
+        self.assertFalse(o.accepted_ok); self.assertIsNone(o.report); self.assertIn("NO_QUANT_NOT_VERIFIED", o.failures[0][1])
+    def test_genuine_no_quant_positive_control_exists_only_in_explicit_simulation(self):
+        from .fixtures import Rig, package
+        o = Rig(simulation=True).pipe.run(package(None, quant=False, request_record=None))
+        self.assertEqual(o.classification, NO_QUANT_FEATURE); self.assertTrue(o.simulation); self.assertIn("NO_QUANT_CLASSIFICATION", dict(o.limits))

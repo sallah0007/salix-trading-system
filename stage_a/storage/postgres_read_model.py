@@ -4,6 +4,7 @@ the journal head is refused (stale sidecar)."""
 import sqlite3
 from ..errors import Refusal, IntegrityFailure
 from ..replay import replay
+from .authority_class import require_qualified
 
 class ReadModel:
     def __init__(self):
@@ -13,6 +14,7 @@ class ReadModel:
         self._c.execute("CREATE TABLE meta(namespace TEXT PRIMARY KEY, seq INT, hash TEXT)")
 
     def rebuild(self, namespace: str, journal):
+        require_qualified(journal, "read-model rebuild")
         recs = journal.read_from(1)
         states = replay(namespace, recs)
         head = journal.head()
@@ -30,12 +32,14 @@ class ReadModel:
             raise Refusal("read model at %s, journal at %s" % (row, (h.seq, h.hash)), code="STALE_READ_MODEL")
 
     def status(self, namespace: str, version: str, journal):
+        require_qualified(journal, "read-model status")
         self._require_fresh(namespace, journal)
         row = self._c.execute("SELECT status FROM status WHERE namespace=? AND version=?",
                               (namespace, version)).fetchone()
         return None if row is None else row[0]
 
     def verify_against(self, namespace: str, journal):
+        require_qualified(journal, "read-model verify")
         self._require_fresh(namespace, journal)
         want = {(s.version, s.status) for s in replay(namespace, journal.read_from(1)).values()}
         have = set(self._c.execute("SELECT version,status FROM status WHERE namespace=?", (namespace,)))

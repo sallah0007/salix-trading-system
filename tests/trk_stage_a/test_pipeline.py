@@ -16,7 +16,7 @@ from stage_a.tracker.pipeline import BaselineBinding
 from stage_a.tracker.quant_intake_adapter import admit, NO_QUANT_FEATURE, FAILED_REQUESTED_BUILD, QUANT_FEATURE
 from stage_a.tracker.authority_bridge import make_construction_authority_resolver
 from stage_a.tracker.verification.verification_result import make_result, FAIL, SCOPE_MATERIALIZATION
-from .fixtures import SIM_CONF, Rig, package, momentum_manifest, ANCHOR, IDENTITY_FIELDS
+from .fixtures import qualified_journal_from_simulated, SIM_CONF, Rig, package, momentum_manifest, ANCHOR, IDENTITY_FIELDS
 
 def feature_records(rig, ns="XAUUSD/H4/mom3"):
     return rig.journals.journal(ns).read_from(1)
@@ -52,7 +52,7 @@ class HappyPath(unittest.TestCase):
         self.assertEqual(len(feature_records(self.rig)), before)
         self.assertEqual(len([r for r in self.rig.claims_journal.read_from(1) if r.kind == "CLAIM_CONSUMED"]), 1)
     def test_publish_then_currentness_and_not_delivery(self):
-        j = self.rig.journals.journal("XAUUSD/H4/mom3"); fk = self.out.admission.feature_key
+        j = qualified_journal_from_simulated(self.rig); fk = self.out.admission.feature_key
         pr = publication.publish(j, fk, self.out.verification)
         self.assertFalse(pr.delivered)
         recs = j.read_from(1)
@@ -64,7 +64,7 @@ class HappyPath(unittest.TestCase):
         self.assertIsNone(resolve_asof("XAUUSD/H4/mom3", j.read_from(1), mode=EVENTUAL).available_version)
         self.assertEqual(resolve_asof("XAUUSD/H4/mom3", j.read_from(1), mode=AS_KNOWN, asof_seq=2).available_version, "1")
     def test_publish_refuses_failed_or_foreign_verification(self):
-        j = self.rig.journals.journal("XAUUSD/H4/mom3"); fk = self.out.admission.feature_key
+        j = qualified_journal_from_simulated(self.rig); fk = self.out.admission.feature_key
         failed = make_result(FAIL, SCOPE_MATERIALIZATION, {}, [("x", False)], ["x"])
         with self.assertRaises(Refusal) as c: publication.publish(j, fk, failed)
         self.assertEqual(c.exception.code, "VERIFICATION_NOT_PASS")
@@ -75,7 +75,7 @@ class HappyPath(unittest.TestCase):
         with self.assertRaises(Refusal) as c: publication.publish(j, fk, wrong_scope)
         self.assertEqual(c.exception.code, "VERIFICATION_SCOPE_MISMATCH")
     def test_publish_unaccepted_version_refused(self):
-        j = self.rig.journals.journal("XAUUSD/H4/mom3")
+        j = qualified_journal_from_simulated(self.rig)
         from stage_a.identifiers import FeatureKey, Scope
         with self.assertRaises(Refusal) as c: publication.publish(j, FeatureKey(Scope("XAUUSD", "H4"), "mom3", "2"), self.out.verification)
         self.assertEqual(c.exception.code, "NOT_ACCEPTED")
@@ -209,7 +209,7 @@ class Crash(unittest.TestCase):
         j.append = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("crash"))
         with self.assertRaises(RuntimeError): rig.pipe.run(p)
         self.assertEqual(rig.claims.claim("CLAIM:REQ-1")["state"], "CONSUMED"); self.assertEqual(feature_records(rig), [])
-        rig2 = Rig(store=rig.store)          # restart: fresh epochs, fresh projections, same durable store
+        rig2 = Rig(store=rig.raw_store)          # restart: fresh epochs, fresh projections, same durable store
         o = rig2.pipe.run(p); self.assertTrue(o.accepted_ok)
         self.assertEqual(len([r for r in rig2.claims_journal.read_from(1) if r.kind == "CLAIM_CONSUMED"]), 1)
         self.assertEqual(len(feature_records(rig2)), 1)
