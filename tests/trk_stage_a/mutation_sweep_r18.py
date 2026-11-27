@@ -1,7 +1,7 @@
 """R18 mutants (Health consumer-specific incompleteness, graph-key binding). Run: python3 -B tests/trk_stage_a/mutation_sweep_r18.py (60 s per mutant)"""
 import subprocess, sys, pathlib, os
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-BR = "stage_a/health/blast_radius.py"; LN = "stage_a/fw/lanes.py"; QI = "stage_a/tracker/quant_intake_adapter.py"; PL = "stage_a/tracker/pipeline.py"; ML = "stage_a/ml/receiver.py"
+BR = "stage_a/health/blast_radius.py"; LN = "stage_a/fw/lanes.py"; QI = "stage_a/tracker/quant_intake_adapter.py"; PL = "stage_a/tracker/pipeline.py"; ML = "stage_a/ml/receiver.py"; VR = "stage_a/tracker/version_relationship.py"
 M = [(BR, "            incomplete = features_incomplete\n            if closure_features is not None:", "            incomplete = features_incomplete\n            if False:"),                 # global incomplete flag always used: the reproduced over-blocking
      (BR, "incomplete = upstream_incomplete(closure_features(m, consumers), failed, feature_deps, unread_features)", "incomplete = features_incomplete"),
      (BR, "        if n in unread or n not in feature_deps:", "        if n in unread:"),
@@ -28,8 +28,20 @@ M = [(BR, "            incomplete = features_incomplete\n            if closure_
      (QI, '        a.unverified.append(("OUTCOME_ACCESS_DECLARATION_GOVERNED_BEFORE_BUILD", "NOT_VERIFIED_SUPPLIED_RECORD_STRUCTURAL_EQUALITY"))', "        pass"),
      (QI, '"CAPABILITY_CLASS_STRUCTURE", "OUTCOME_ACCESS_DECLARATION_GOVERNED_BEFORE_BUILD")\n\n@dataclass(frozen=True)\nclass DutyEvidence', '"CAPABILITY_CLASS_STRUCTURE",)\n\n@dataclass(frozen=True)\nclass DutyEvidence'),
      (ML, '"research_exposure_ref", "support_ref"):\n            v = getattr', '"research_exposure_ref"):\n            v = getattr'),
+     (VR, '    if not admitted:\n', '    if False:\n'),
+     (VR, "        if f in OUTSIDE_VERSION_CONTENT_DIFF:", "        if False:"),
+     (VR, "        if d not in DIMENSIONS:", "        if False:"),
+     (VR, "        if f in seen:", "        if False:"),
+     (VR, "    if set(seen) - aset:", "    if False:"),
+     (VR, "    if aset - set(seen):", "    if False:"),
+     (VR, "        if f in seen and seen[f] != d:", "        if False:"),
+     (VR, '"data_vintage": "PROVENANCE_SOURCE"', '"data_vintage": "CAUSAL_TIME"'),
+     (VR, '"blocks_supersession_claim": True, "blocks_gateway_delivery_of_existing_eligible_version": False', '"blocks_supersession_claim": False, "blocks_gateway_delivery_of_existing_eligible_version": False'),
+     (VR, '"blocks_supersession_claim": True, "blocks_gateway_delivery_of_existing_eligible_version": False', '"blocks_supersession_claim": True, "blocks_gateway_delivery_of_existing_eligible_version": True'),
+     (VR, '"may_yield_correction": False, "routes_to"', '"may_yield_correction": True, "routes_to"'),
+     (VR, '"routes_to": "MATERIAL_ALTERNATIVE"', '"routes_to": "CORRECTION"'),
      (LN, "        if cur.manifest_id in seen:\n            raise Refusal(cur.manifest_id, code=\"DERIVATION_CYCLE\")\n        seen.add(cur.manifest_id)\n        out.update", "        seen.add(cur.manifest_id)\n        out.update")]
-T = ["tests/trk_stage_a/test_r12_blast_radius.py", "tests/trk_stage_a/test_r16_ml_ancestry.py", "tests/trk_stage_a/test_r18_mandatory_hold.py", "tests/trk_stage_a/test_r16_conformance_wiring.py", "tests/trk_stage_a/test_r12_ml_augmented.py"]
+T = ["tests/trk_stage_a/test_r12_blast_radius.py", "tests/trk_stage_a/test_r16_ml_ancestry.py", "tests/trk_stage_a/test_r18_mandatory_hold.py", "tests/trk_stage_a/test_r16_conformance_wiring.py", "tests/trk_stage_a/test_r12_ml_augmented.py", "tests/trk_stage_a/test_r18_version_relationship.py"]
 def run():
     try: return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", *[str(ROOT / t) for t in T]], cwd=ROOT, capture_output=True, text=True, timeout=60, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1")).returncode
     except subprocess.TimeoutExpired: return 99
