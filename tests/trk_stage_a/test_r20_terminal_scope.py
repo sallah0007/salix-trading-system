@@ -117,5 +117,9 @@ class R23SubjectValidity(unittest.TestCase):
     def test_ungoverned_or_malformed_normalizer_is_unresolved(self):
         self.assertEqual(self.res(n=T.normalizer(classes=("SOMETHING_ELSE",))).status, TI.UNRESOLVED)
         self.assertEqual(self.res(n=object()).reason, "NORMALIZER_INVALID")
+    def test_a_forged_normalizer_hash_is_not_governed(self):
+        from tracker_identity.models import NormalizerSpec
+        forged = NormalizerSpec(normalizer_id="tracker.identity.normalizer", version="1", normalizer_hash="deadbeef", equivalence_classes=("EXACT_STRUCTURAL_IDENTITY",))
+        r = self.res(n=forged); self.assertEqual((r.status, r.reason), (TI.UNRESOLVED, "NORMALIZER_NOT_GOVERNED"))
     def test_empty_resolved_is_distinct_from_unresolved(self):
         r = self.res(rows=[]); self.assertEqual((r.status, r.identities), (TI.RESOLVED, ()))

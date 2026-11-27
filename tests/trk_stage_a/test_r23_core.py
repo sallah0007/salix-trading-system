@@ -270,6 +270,10 @@ class ConflictResolutionRestoresChosenBytes(unittest.TestCase):
         self.assertEqual(code(c.resolve_ambiguity, k, bad["cid"], "m", "c"), "CANDIDATE_INTEGRITY_FAILED")
         c3 = mk(ns="c3"); head = c3._j.head(); c3._j.append(head, "OBS_ADMITTED", dict(good, payload_hex=b"tampered".hex()))
         self.assertFalse(c3.observation_usable(k)); self.assertEqual(code(c3.seal, "XAUUSD", 10, 10, [k]), "MEMBER_NOT_USABLE_OBSERVATION")
+    def test_metadata_corruption_with_an_unchanged_candidate_id_is_detected(self):
+        c = mk(ns="m"); adm(c); k = c.obs_key(facts()); good = dict(c._replay()["obs"][k]); c2 = mk(ns="m2")
+        c2._j.append(c2._j.head(), "OBS_ADMITTED", dict(good, available_asof=999))                                    # payload intact, availability altered, cid stale
+        self.assertFalse(c2.observation_usable(k)); self.assertEqual(code(c2.seal, "XAUUSD", 1000, 1000, [k]), "MEMBER_NOT_USABLE_OBSERVATION")
     def test_unchanged_identical_replay_and_other_instrument_control(self):
         c = mk(); self.assertEqual(adm(c), NEW); self.assertEqual(adm(c), REPEAT); self.assertEqual(adm(c, instrument="EURUSD"), NEW)
 class EpochSupersession(unittest.TestCase):
@@ -293,8 +297,9 @@ class ReconstructabilityAndHealthTyping(unittest.TestCase):
         c.quarantine("S", "R"); c.clear_reason("S", "R", "cert", "maker"); self.assertEqual(code(c.reactivate, "S"), "NOT_RECONSTRUCTABLE"); self.assertFalse(c.retry_allowed("S"))
     def test_genuine_reconstruction_positive_blocked_and_incomplete_closure(self):
         c = mk(); adm(c, bar_identity="raw"); raw = c.obs_key(facts(bar_identity="raw")); c.declare_dependency("D1", raw); c.declare_dependency("S", "D1")
+        ver(c, "S"); self.assertEqual(rh(c, "S", "1", 11), "HEALTHY")
         c.quarantine("S", "R"); c.clear_reason("S", "R", "cert", "maker"); c.reactivate("S"); self.assertTrue(c.retry_allowed("S"))                         # raw -> derived -> S
-        self.assertEqual(rh(c, "S", "1", 11), "UNKNOWN")                                                                                                     # reactivation does not restore eligibility evidence
+        self.assertEqual(rh(c, "S", "1", 11), "UNKNOWN")                                                                                                     # earlier evidence does not survive reactivation                                                                                                     # reactivation does not restore eligibility evidence
         d = mk(); adm(d, bar_identity="raw"); raw = d.obs_key(facts(bar_identity="raw")); d.declare_dependency("D1", raw); d.declare_dependency("D1", "missing"); d.declare_dependency("S", "D1")
         d.quarantine("S", "R"); d.clear_reason("S", "R", "c", "m"); self.assertEqual(code(d.reactivate, "S"), "NOT_RECONSTRUCTABLE")                          # incomplete transitive closure
         e = mk(); adm(e, bar_identity="raw"); raw = e.obs_key(facts(bar_identity="raw")); e.declare_dependency("S", raw); e.quarantine(raw, "R2"); e.quarantine("S", "R"); e.clear_reason("S", "R", "c", "m")
@@ -303,4 +308,21 @@ class ReconstructabilityAndHealthTyping(unittest.TestCase):
         q = mk(False); ver(q, "K"); r = q.recording_health("K", "1", 11)
         self.assertEqual((r.state, r.evidence_class, r.local_state, r.qualified), ("HELD", "QUALIFIED_HELD", "HEALTHY", False))
         s = mk(); ver(s, "K"); r = s.recording_health("K", "1", 11); self.assertEqual((r.state, r.evidence_class, r.qualified), ("HEALTHY", "SIMULATION_CALLER_ASSERTED", False))
+
+class PlaneAndSafetyActions(unittest.TestCase):
+    def test_plane_identity_is_stamped_and_a_foreign_plane_journal_is_refused_on_restore(self):
+        st = InMemoryObjectStore(); j = ObjectStoreJournal(SimulationStore(st), "p", "w"); j.acquire_epoch(); c = TrackerCore(j, simulation=True, plane="core_market"); adm(c)
+        self.assertTrue(all(json.loads(r.body_json)["plane"] == "core_market" for r in j.read_from(0)))
+        j2 = ObjectStoreJournal(SimulationStore(st), "p", "w2"); j2.acquire_epoch()
+        from stage_a.errors import IntegrityFailure
+        with self.assertRaises(IntegrityFailure): TrackerCore(j2, simulation=True, plane="research")._replay()                    # restore does not change plane identity
+        self.assertEqual(TrackerCore(j2, simulation=True, plane="core_market").observation_usable(c.obs_key(facts())), True)       # same plane: positive control
+        self.assertEqual(code(TrackerCore, j2, simulation=True, plane="bogus"), "UNKNOWN_PLANE")
+    def test_qualified_hold_never_suppresses_fail_closed_safety_actions(self):
+        q = mk(False); q.declare_dependency("D", "U"); q.advance_epoch("U", 2); self.assertNotEqual(q.blocked("D"), [])                       # invalidation works when qualified
+        q.fail_closed_missing_context_metadata("SUBJ"); self.assertFalse(q.retry_allowed("SUBJ")); self.assertEqual(q.blocked("SUBJ"), ["QUARANTINED"])
+        self.assertEqual(code(q.clear_reason, "SUBJ", "CONTEXT_DOMAIN_METADATA_MISSING", "c", "m"), "SOURCE_APPROVAL_BINDING_UNBOUND_HELD")       # restoration stays blocked
+        self.assertEqual(code(q.reactivate, "SUBJ"), "RECONSTRUCTION_PROOF_BINDING_UNBOUND_HELD")
+        adm(q, bar_identity="x"); kx = q.obs_key(facts(bar_identity="x")); q.quarantine(kx, "R"); self.assertEqual(code(q.seal, "XAUUSD", 10, 10, [kx]), "MEMBER_BLOCKED")
+import json
 if __name__ == "__main__": unittest.main()

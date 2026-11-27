@@ -10,7 +10,7 @@ Unassigned slots (never defaulted): observation byte encoding (fact NAMES are so
 calendar/DST, per-provider contract instances, L2 appointment/profile/interval, governed mixed-declared policy, definition-proof for NOT_APPLICABLE, reconstruction-proof, D25 clear/retry policy."""
 import json
 from dataclasses import dataclass
-from ..errors import Refusal, UnknownCommit
+from ..errors import Refusal, UnknownCommit, IntegrityFailure
 from ..storage.byte_primitives import canonical_bytes, domain_hash
 from ..storage.authority_class import authority_class_of, QUALIFIED
 from tracker_component.journal_port import HeadMismatch, record_hash
@@ -29,8 +29,11 @@ def _s(x): return json.loads(canonical_bytes(x).decode("ascii"))
 def _int(x): return isinstance(x, int) and not isinstance(x, bool)
 
 class TrackerCore:
-    def __init__(self, journal, *, simulation: bool, chain_status=None):
-        self._j = journal; self.simulation = bool(simulation); self._chain = chain_status
+    PLANES = ("core_market", "event_context", "market_features", "research")       # source-named planes (DOCX s4/s21; registry s18); the write-role/restore ADMISSION is unbound (D2)
+
+    def __init__(self, journal, *, simulation: bool, chain_status=None, plane: str = None):
+        if plane is not None and plane not in self.PLANES: raise Refusal(str(plane), code="UNKNOWN_PLANE")
+        self._j = journal; self.simulation = bool(simulation); self._chain = chain_status; self.plane = plane
         cls = authority_class_of(journal)
         if (cls == QUALIFIED) == self.simulation:
             raise Refusal("journal class %s vs simulation=%s" % (cls, simulation), code="AUTHORITY_CLASS_MISMATCH")
@@ -41,6 +44,7 @@ class TrackerCore:
         for r in self._j.read_from(0):
             if upto is not None and r.seq > upto: break
             b = json.loads(r.body_json); k = r.kind
+            if self.plane is not None and b.get("plane") != self.plane: raise IntegrityFailure("record %s belongs to plane %r, not %r (restored/foreign journal)" % (r.seq, b.get("plane"), self.plane))
             if k == "OBS_ADMITTED": st["obs"][b["key"]] = b; st["cands"].setdefault(b["key"], {})[b["cid"]] = b
             elif k == "OBS_AMBIGUOUS":
                 st["cands"].setdefault(b["key"], {})[b["candidate"]["cid"]] = b["candidate"]
@@ -79,7 +83,7 @@ class TrackerCore:
             head = self._j.head(); st = self._replay(head.seq)
             out, rec = decide(st)
             if rec is None: return out
-            body = _s(rec[1]); want = record_hash(head.seq + 1, head.hash, rec[0], canonical_json(body))
+            body = _s(dict(rec[1], plane=self.plane) if self.plane is not None else rec[1]); want = record_hash(head.seq + 1, head.hash, rec[0], canonical_json(body))
             try:
                 self._j.append(head, rec[0], body); return out
             except HeadMismatch:
@@ -271,6 +275,12 @@ class TrackerCore:
             if reason not in st["q"].get(subject, {"reasons": set()})["reasons"]: raise Refusal(reason, code="REASON_NOT_OPEN")
             return None, ("Q_CLEAR", {"subject": subject, "reason": reason})
         self._commit(decide)
+    REASON_CONTEXT_DOMAIN_METADATA_MISSING = "CONTEXT_DOMAIN_METADATA_MISSING"
+    def fail_closed_missing_context_metadata(self, subject: str):
+        """Existing-authority SAFETY action (DecisionContext exception): an already defective subject whose Context-domain metadata is missing must not stay CURRENT. Available in BOTH modes (a generic
+        qualification hold never suppresses fail-closed actions); RESTORATION stays blocked: clearing needs source approval (held when qualified) and reactivation needs reconstruction proof."""
+        self.quarantine(subject, self.REASON_CONTEXT_DOMAIN_METADATA_MISSING)
+
     def retry_allowed(self, subject: str) -> bool:
         q = self._replay()["q"].get(subject); return q is None or (not q["reasons"] and q["status"] == "ACTIVE")
     def reopen(self, subject: str):

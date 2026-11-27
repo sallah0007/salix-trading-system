@@ -36,7 +36,7 @@ M = [(TC, '        return {"state": HELD, "eligible": False', '        return {"
      (TI, 'if searched_scopes is not None:', 'if False:'),
      (CB, 'if self.status() == HELD_ADMISSION: return False', 'pass'),
      (CB, '    installed = False', '    installed = True')]
-T = ["tests/trk_stage_a/test_r22_core.py", "tests/trk_stage_a/test_r22_boundaries.py", "tests/trk_stage_a/test_r22_construction_binding.py", "tests/trk_stage_a/test_r20_terminal_scope.py", "tests/trk_stage_a/test_r20_simulation_boundary.py"]
+T = ["tests/trk_stage_a/test_r23_core.py", "tests/trk_stage_a/test_r22_boundaries.py", "tests/trk_stage_a/test_r22_construction_binding.py", "tests/trk_stage_a/test_r20_terminal_scope.py", "tests/trk_stage_a/test_r20_simulation_boundary.py"]
 def run():
     try: return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", *[str(ROOT / t) for t in T]], cwd=ROOT, capture_output=True, text=True, timeout=90, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1")).returncode
     except subprocess.TimeoutExpired: return 99
