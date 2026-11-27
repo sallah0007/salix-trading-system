@@ -1,7 +1,7 @@
 """Typed Annex V1.2 (13PE_pli3ZlFjjPdhHtWtLyyH2XdAv8XGA4FN0KGcIlA) XV END-TO-END ACCEPTANCE and XVI CROSS-CONSUMER CONSISTENCY against the repository SimulatedGateway + FW/ML receivers (candidate, simulation, NOT an external Gateway).
 R36 CORRECTION OF THE R35 COVERAGE CLAIM: this file does NOT exercise every XV negative through both consumers. Exact coverage: (a) 13-field equality + XVI: FW receive_verified and ML build_row of the same outcome (test_fw_and_ml_receive... / test_xvi...);
 (b) wrong version / wrong scope / hash mismatch / CATCHING_UP: FW receive_verified ONLY; missing required dependency: FW receive_verified, plus ML build_row only as the explicit excluded row; (c) the ML-only items covered are required-absence-as-explicit-excluded-row and EVENTUAL-not-substituted-for-ORIGINAL_AS_OBSERVED;
-forward-fill / mixed feed era / silent drop beyond the explicit excluded row are NOT exercised here (feed era is covered by test_r34_consumption_claim only for the claim path, not through build_row). The settlement test records LATE_VISIBILITY non-delivery and retry immutability; the SETTLEMENT_BREACH emitter is `SettlementBreachEvidence` below."""
+default/forward fill (non-outcome object refused), EVENTUAL-vs-ORIGINAL mixed-vintage refusal and the explicit-not-silent excluded row are covered by existing tests/trk_stage_a/test_boundaries.py lines 267-271 (ML.build_row), not here; feed-era equality is covered by test_r34_consumption_claim (claim path), not through build_row. The settlement test records LATE_VISIBILITY non-delivery and retry immutability; the SETTLEMENT_BREACH emitter is `SettlementBreachEvidence` below."""
 import unittest
 from stage_a.errors import Refusal
 from stage_a.gateway import contracts as G
