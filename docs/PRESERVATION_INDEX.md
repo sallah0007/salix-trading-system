@@ -37,8 +37,12 @@ python3 -B tests/trk_stage_a/mutation_sweep.py
 python3 -B tests/trk_stage_a/mutation_sweep_boundaries.py
 python3 -B tests/trk_stage_a/mutation_sweep_r05_r06.py   # R05/R06 manual mutants, now scripted
 python3 -B tests/trk_stage_a/mutation_sweep_r08.py       # R08 mutants (14)
+python3 -B tests/trk_stage_a/mutation_sweep_r09.py       # R09 mutants (17)
 ```
 Each sweep restores the mutated file in a `finally` block; run on a clean tree.
 
 ## 6. Intentional exclusions (never committed)
 Private governing-source exports and Drive text copies (Governance, Connected Contract, Composer, Matrix, Build Plan, MLCore etc.; session scratch under `/home/claude/*`), Governance/Drive-reconstruction scripts (`v09x`–`v103` build/reconstruct scripts: Manager-document work, not repo code), `tracker_component_DRAFT_R01.zip` (earlier draft archive; its files are superseded by branches above, not diffed), `.pytest_cache/`, `__pycache__/`. No credentials were found or staged. Cite sources by ID and range only.
+
+## 7. R09 additions
+Code: `stage_a/binding/`, `stage_a/coordination/provider_contract.py`; edits to `stage_a/fw/descriptor_crosswalk.py`, `stage_a/health/envelope.py`, `stage_a/security/principals.py`. Proposals (not authority): `docs/proposals/*.md`. Return: `coder_returns/TRK-STAGE-A-TRACKER-R09.md`.
