@@ -56,7 +56,7 @@ class Resolver(unittest.TestCase):
     def test_actual_and_revision_withheld_before_their_availability(self):
         e = ev(ACTUAL_VALUE="1", ACTUAL_PUBLICLY_AVAILABLE_AT=3, ACTUAL_SALIX_RECEIVED_AT=30, ACTUAL_AVAILABLE_ASOF=30)
         r = N.resolve_context("REQUIRED", daily(), [e], 20); self.assertEqual((r["events"], r["withheld"]), ([], [("E1", "ACTUAL_NOT_YET_AVAILABLE")]))
-        self.assertEqual(len(N.resolve_context("REQUIRED", daily(), [e], 30)["events"]), 1)
+        self.assertEqual(len(N.resolve_context("REQUIRED", daily(), [e], 31)["events"]), 1); self.assertEqual(N.resolve_context("REQUIRED", daily(), [e], 30)["events"], [])      # equality excluded
         self.assertEqual(N.resolve_context("REQUIRED", daily(), [ev(rev_at=99)], 20)["withheld"], [("E1", "REVISION_NOT_YET_AVAILABLE")])
     def test_highest_available_revision_wins_only_under_an_explicit_rule(self):
         r1, r2 = ev(seq=1, rev_at=10, h="a"), ev(seq=2, rev_at=40, h="b"); R = "HIGHEST_REVISION_SEQ"

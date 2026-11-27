@@ -8,14 +8,14 @@ from stage_a.gateway import v038 as V
 def _ident(n="w1"):
     return V.FinalResolutionIdentity("C", "M", "S", n)
 
-def test_d14_news_hub_le_vs_gateway_lt_boundary_is_recorded_not_resolved():
-    # An ACTUAL with ACTUAL_AVAILABLE_ASOF == cutoff is consumable under the News Hub text (<=) ...
-    assert N.actual_available_asof(True, 7, 10, 10) == 10
-    # ... but the Gateway's eligibility is AVAILABLE_ASOF < SNAPSHOT_FENCE_TS: equality is late. The two agree below the boundary
-    # and differ only where decision cutoff == fence (relationship undefined in the sources: D14 residual).
+def test_d14_news_hub_now_follows_the_frozen_half_open_fence_and_agrees_with_the_gateway():
+    # R21: frozen Stage A Blueprint s28 (NEWS-02/03, para 393): equality at the fence is EXCLUDED; the retained News Hub `<=` wording is subordinate. News Hub and Gateway now agree at the boundary.
+    assert N.actual_available_asof(True, 7, 9, 10) == 9
+    with pytest.raises(Refusal): N.actual_available_asof(True, 7, 10, 10)
     wm = V.VisibilityWatermark(5, 20)
     assert V.classify_late(10, 10, 1, wm) == V.GENUINE_LATE
     assert V.classify_late(9, 10, 1, wm) != V.GENUINE_LATE
+    # STILL OPEN (not invented): the field relationship between a consumer's decision cutoff and the Tracker snapshot fence where they could differ.
 
 def test_d15_unknown_reasons_fail_closed_and_known_stay_not_ready():
     assert V.status_for_reason("REQUIRED_DEPENDENCY_ABSENT") == V.NOT_READY

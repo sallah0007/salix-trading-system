@@ -28,8 +28,10 @@ class EachStampGates(unittest.TestCase):
         self.assertEqual(self.w(REVISION_AVAILABLE_AT=200), [("E1", "REVISION_NOT_YET_AVAILABLE")])
     def test_asof_before_public_or_receipt_is_withheld_fail_closed(self):
         self.assertEqual(self.w(PUBLICLY_AVAILABLE_AT=60, SALIX_RECEIVED_AT=70, AVAILABLE_ASOF=10), [("E1", "AVAILABLE_ASOF_BEFORE_PUBLIC_OR_RECEIPT")])
-    def test_boundary_equal_to_cutoff_is_consumable_under_news_hub_wording(self):
+    def test_boundary_equal_to_fence_is_excluded_and_one_tick_earlier_is_consumable(self):
         r = N.resolve_context("REQUIRED", daily(), [ev(PUBLICLY_AVAILABLE_AT=100, SALIX_RECEIVED_AT=100, AVAILABLE_ASOF=100, REVISION_AVAILABLE_AT=100)], 100)
+        self.assertEqual(r["events"], [])                                                   # half-open: equality excluded (frozen Blueprint s28 NEWS-02)
+        r = N.resolve_context("REQUIRED", daily(), [ev(PUBLICLY_AVAILABLE_AT=99, SALIX_RECEIVED_AT=99, AVAILABLE_ASOF=99, REVISION_AVAILABLE_AT=99)], 100)
         self.assertEqual(len(r["events"]), 1)
         r = N.resolve_context("REQUIRED", daily(), [ev(PUBLICLY_AVAILABLE_AT=100, SALIX_RECEIVED_AT=101, AVAILABLE_ASOF=101)], 100)
         self.assertEqual(r["events"], [])
