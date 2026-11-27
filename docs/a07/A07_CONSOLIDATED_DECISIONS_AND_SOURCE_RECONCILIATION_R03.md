@@ -3,6 +3,8 @@
 CODER FINDING != SALIX DECISION. Nothing here clears, closes or advances A07, A02, QC34, P12/N2, any hold or any stage. Drive was read only.
 Merge/PR status is a code event. Keep Trading separate from SALIX AI.
 
+> **R04 note (27 Nov 2026):** the lexical-overlap columns are retrieval hints only, never a disposition; fit production is Composer-owned, confluence has no merge object, and D17/D18 were added. See coder_returns/TRK-STAGE-A-TRACKER-R04.md, which controls where it differs.
+
 ## 0. What was read this pass, and how (evidence floor)
 | Source | Drive ID | How read | Class |
 |---|---|---|---|
