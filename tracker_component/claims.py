@@ -137,6 +137,17 @@ class ClaimService:
         c = self._p.claims.get(claim_id)
         return None if c is None else dict(c)
 
+    def lineage(self, order_id: str, request_id: str = ""):
+        """Read-only governed lineage for an order id / request id on the freshly synced journal: [] if none, else reasons (ORDER_ISSUED, ORDER_REVOKED, REQUEST_CLAIM_EXISTS).
+        Used to refuse a caller-supplied 'no quant requested' flag that contradicts failed/revoked requested-build lineage (TR-06 / D8). Never authority."""
+        self._p.sync(self._j)
+        out = []
+        if order_id in self._p.orders:
+            out.append("ORDER_REVOKED" if order_id in self._p.revoked else "ORDER_ISSUED")
+        if request_id and request_id in self._p.request_claim:
+            out.append("REQUEST_CLAIM_EXISTS")
+        return out
+
     def consumed_record(self, claim_id: str):
         """The journal record that consumed this claim (the exercised-authority witness), or None."""
         self._p.sync(self._j)

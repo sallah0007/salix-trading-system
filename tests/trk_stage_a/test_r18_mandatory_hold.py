@@ -35,11 +35,11 @@ class MandatoryDutiesHeldAtCertificationPath(unittest.TestCase):
         self.assertEqual(sorted(c for c, _ in o.admission.failed), sorted(MANDATORY_UNVERIFIED_DUTIES))
         self.assertIsNone(rig.claims.claim("CLAIM:REQ-1"))                                       # no claim was even reserved
     def test_held_outcome_limits_still_list_the_unverified_duties(self):
-        rig, o = run(package(), None); self.assertEqual({d for d, _ in o.limits}, {CAP, GOV, "S28_FULL_CONFORMANCE"})
+        rig, o = run(package(), None); self.assertEqual({d for d, _ in o.limits}, set(MANDATORY_UNVERIFIED_DUTIES))
     def test_partial_evidence_holds_the_other_duty(self):
         for have, missing in ((CAP, GOV), (GOV, CAP)):
             rig, o = run(package(), lambda p, a, h=have: DutyEvidence(frozenset({h}), "SIMULATED:partial"))
-            self.assertEqual((o.stage, [c for c, _ in o.admission.failed]), ("MANDATORY_VERIFICATION_HELD", [missing])); self.assertTrue(untouched(rig, o))
+            self.assertEqual((o.stage, sorted(c for c, _ in o.admission.failed)), ("MANDATORY_VERIFICATION_HELD", sorted(set(MANDATORY_UNVERIFIED_DUTIES) - {have}))); self.assertTrue(untouched(rig, o))
     def test_unrelated_or_malformed_evidence_verifies_nothing(self):
         for ev in (DutyEvidence(frozenset({"SOMETHING_ELSE"}), "SIMULATED:x"), "VERIFIED", {"duties": [CAP, GOV]}, True, object()):
             rig, o = run(package(), lambda p, a, e=ev: e)
@@ -53,7 +53,7 @@ class MandatoryDutiesHeldAtCertificationPath(unittest.TestCase):
             self.assertEqual(c.exception.code, "DUTY_EVIDENCE_WITHOUT_REF")
     def test_positive_control_accepts_only_with_both_duties_evidenced_and_limits_shrink(self):
         rig, o = run(package(), lambda p, a: SIM_DUTIES)
-        self.assertTrue(o.accepted_ok); self.assertEqual(dict(o.limits), {"S28_FULL_CONFORMANCE": "NOT_ASSESSED_BOUNDARY"}); self.assertIn("SIMULATED", o.duty_evidence.evidence_ref)
+        self.assertTrue(o.accepted_ok); self.assertEqual(list(dict(o.limits)), ["SIMULATION_NOT_QUALIFIED"]); self.assertIn("SIMULATED", o.duty_evidence.evidence_ref); self.assertTrue(o.simulation)
     def test_no_quant_classification_is_not_affected(self):
         a = admit(package(None, quant=False, request_record=None), accepted_fit_generations={}); self.assertEqual(unresolved_mandatory(a, None), [])
     def test_refused_admission_is_not_masked_by_the_duty_hold(self):
@@ -71,5 +71,5 @@ class Direct(unittest.TestCase):
     def test_only_mandatory_duties_are_held_and_malformed_evidence_is_named(self):
         self.assertEqual(unresolved_mandatory(self.Adm([("OTHER_LABEL", "x")]), None), [])
         self.assertEqual(unresolved_mandatory(self.Adm([]), "VERIFIED"), [("DUTY_EVIDENCE", "DUTY_EVIDENCE_MALFORMED")])
-        self.assertEqual(unresolved_mandatory(self.Adm([]), SIM_DUTIES), [])
+        self.assertEqual(unresolved_mandatory(self.Adm([]), SIM_DUTIES, simulation=True), [])
 if __name__ == "__main__": unittest.main()

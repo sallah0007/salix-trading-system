@@ -79,7 +79,7 @@ class BuildPackage:
 
 # Duties the Tracker cannot determine from anything it reads. They are MANDATORY: an admission carrying one cannot proceed to certification/acceptance unless a Tracker-originated
 # DutyEvidence names it (pipeline.run). No such evidence provider exists in this repository; only tests construct it (ref labelled SIMULATED). No algorithm is invented.
-MANDATORY_UNVERIFIED_DUTIES = ("CAPABILITY_CLASS_STRUCTURE", "OUTCOME_ACCESS_DECLARATION_GOVERNED_BEFORE_BUILD")
+MANDATORY_UNVERIFIED_DUTIES = ("CAPABILITY_CLASS_STRUCTURE", "OUTCOME_ACCESS_DECLARATION_GOVERNED_BEFORE_BUILD", "S28_INPUTS_RESOLVE", "S28_REPRODUCTION", "S28_FULL_CONFORMANCE")
 
 @dataclass(frozen=True)
 class DutyEvidence:
@@ -92,12 +92,17 @@ class DutyEvidence:
         if not isinstance(self.evidence_ref, str) or not self.evidence_ref.strip():
             raise Refusal("evidence_ref", code="DUTY_EVIDENCE_WITHOUT_REF")
 
-def unresolved_mandatory(adm, evidence):
-    """Mandatory duties still unverified for this admission: [(duty, reason)]. Evidence that is absent or not a DutyEvidence verifies nothing (fail closed)."""
-    verified = evidence.duties if isinstance(evidence, DutyEvidence) else frozenset()
+def unresolved_mandatory(adm, evidence, *, simulation=False, baseline_connected=True):
+    """Mandatory duties still unverified for this admission: [(duty, reason)]. Fail closed. Evidence that is absent or not a DutyEvidence verifies nothing. In QUALIFIED mode
+    (simulation=False, the default) NO evidence discharges anything, because no real Tracker verifier exists for any of these duties (a typed object anyone can construct is not
+    authority); only an explicit SIMULATION run lets DutyEvidence stand in, and such a run is never qualified. A missing baseline connection is held in qualified mode (TR-02: one
+    registry/lifecycle path)."""
+    verified = evidence.duties if (simulation and isinstance(evidence, DutyEvidence)) else frozenset()
     out = [(d, "UNRESOLVED_MANDATORY_VERIFICATION") for d, _ in adm.unverified if d in MANDATORY_UNVERIFIED_DUTIES and d not in verified]
     if evidence is not None and not isinstance(evidence, DutyEvidence):
         out.append(("DUTY_EVIDENCE", "DUTY_EVIDENCE_MALFORMED"))
+    if not simulation and not baseline_connected:
+        out.append(("BASELINE_REGISTRATION", "BASELINE_NOT_CONNECTED"))
     return out
 
 @dataclass
@@ -205,6 +210,10 @@ def admit(pkg: BuildPackage, *, accepted_fit_generations: dict, conformance=None
         # R18: the declaration compared above comes from the request_record SUPPLIED INSIDE the BuildPackage, not from issued-order evidence (ConstructionOrder carries no declaration;
         # ClaimService verifies order_id/subject_key/source_binding_hash/issued_by/validity only). Equality is therefore STRUCTURAL; governed-before-build binding is unverified.
         a.unverified.append(("OUTCOME_ACCESS_DECLARATION_GOVERNED_BEFORE_BUILD", "NOT_VERIFIED_SUPPLIED_RECORD_STRUCTURAL_EQUALITY"))
+        # Composer s28 duties the Tracker cannot determine here (R19): exact input ids are prose-only (no key; check_inputs_resolve is never called), the pipeline's hash recomputation is
+        # domain-limited (not a build-output reproduction claim), and full s28 conformance is a boundary the Tracker did not assess.
+        a.unverified.extend([("S28_INPUTS_RESOLVE", "NOT_VERIFIED_NO_KEY_FOR_EXACT_INPUT_IDS"), ("S28_REPRODUCTION", "NOT_VERIFIED_DOMAIN_LIMITED_HASH_RECOMPUTE_ONLY"),
+                             ("S28_FULL_CONFORMANCE", "NOT_ASSESSED_BOUNDARY")])
     except Refusal as e:
         fail("BUILD_CONFORMANCE", e.code)
     try:

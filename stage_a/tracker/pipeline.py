@@ -18,6 +18,7 @@ from ..coordination import transition_record as T
 from ..coordination.recovery import resolve_unknown_commit, COMMITTED
 from ..replay import replay
 from ..authority import AuthorityRef
+from .terminal_identity import terminal_notes
 from .quant_intake_adapter import (admit, reserve_authority, build_safe_intake_report, build_candidate,
                                    QUANT_FEATURE, NO_QUANT_FEATURE, FAILED_REQUESTED_BUILD, BuildPackage, DutyEvidence, unresolved_mandatory)
 from ..composer.expression.canonical_encoding import encode_manifest
@@ -46,24 +47,29 @@ class Outcome:
     authority_ref: Optional[str] = None
     failures: list = field(default_factory=list)
     duty_evidence: Optional[object] = None
+    simulation: bool = False
 
     @property
     def limits(self):
         """Duties the Tracker could not determine for this outcome (class-to-structure capability compatibility; full s28 conformance). Acceptance does not certify them."""
-        done = self.duty_evidence.duties if isinstance(self.duty_evidence, DutyEvidence) else frozenset()
-        return tuple(u for u in getattr(self.admission, "unverified", ()) if u[0] not in done) + (("S28_FULL_CONFORMANCE", "NOT_ASSESSED_BOUNDARY"),)
+        done = self.duty_evidence.duties if (self.simulation and isinstance(self.duty_evidence, DutyEvidence)) else frozenset()
+        extra = (("SIMULATION_NOT_QUALIFIED", "DUTY_EVIDENCE_IS_SIMULATED:" + self.duty_evidence.evidence_ref),) if (self.simulation and self.accepted is not None) else ()
+        if self.classification == NO_QUANT_FEATURE:
+            extra += (("NO_QUANT_CLASSIFICATION", "CALLER_FLAG_NOT_SOURCE_VERIFIED_NO_SOURCE_OWNED_MAPPING"),)
+        return tuple(u for u in getattr(self.admission, "unverified", ()) if u[0] not in done) + extra
 
     @property
     def accepted_ok(self):
         return self.accepted is not None
 
 class TrackerPipeline:
-    def __init__(self, *, store, claims, journals, clock, events, accepted_fit_generations=None, baseline=None, conformance_source=None, duty_source=None):
+    def __init__(self, *, store, claims, journals, clock, events, accepted_fit_generations=None, baseline=None, conformance_source=None, duty_source=None, simulation=False):
         self._store, self._claims, self._journals = store, claims, journals
         self._clock, self._events = clock, events
         self._fits = dict(accepted_fit_generations or {})
         self._baseline = baseline
         self._conformance_source = conformance_source
+        self._simulation = bool(simulation)                  # explicit SIMULATION only: DutyEvidence may stand in and the baseline may be absent; such outcomes are never qualified
         self._duty_source = duty_source                      # Tracker-originated DutyEvidence provider; None (the only real state today) holds every mandatory duty
         self._mat = StatefulMaterializer(store)
 
@@ -99,12 +105,16 @@ class TrackerPipeline:
         self._events.emit("INTAKE_STARTED", attempt=pkg.attempt_id, request=pkg.request_id)
         adm = admit(pkg, accepted_fit_generations=self._fits, conformance=None if self._conformance_source is None else self._conformance_source(pkg))
         if adm.classification == NO_QUANT_FEATURE:
+            lineage = self._claims.lineage(pkg.order_id, pkg.request_id)
+            if lineage:                                       # a caller flag cannot erase governed requested-build lineage (TR-06 / D8): fail closed
+                adm.classification = FAILED_REQUESTED_BUILD
+                return self._reject(pkg, adm, "CLASSIFICATION", None, [("CLASSIFICATION", "NO_QUANT_FLAG_CONTRADICTS_GOVERNED_LINEAGE:" + ",".join(lineage))])
             self._events.emit("NO_QUANT_FEATURE", attempt=pkg.attempt_id)
             return Outcome("CLASSIFICATION", NO_QUANT_FEATURE, admission=adm)
         if not adm.admissible:
             return self._reject(pkg, adm, "ADMISSIBILITY")
         duty_ev = None if self._duty_source is None else self._duty_source(pkg, adm)
-        held = unresolved_mandatory(adm, duty_ev)
+        held = unresolved_mandatory(adm, duty_ev, simulation=self._simulation, baseline_connected=self._baseline is not None)
         if held:                                              # Parent capability-class/structure firewall + governed-before-build binding: held BEFORE claim, certify, materialize, accept
             o = self._reject(pkg, adm, "MANDATORY_VERIFICATION_HELD", None, held)
             o.duty_evidence = duty_ev if isinstance(duty_ev, DutyEvidence) else None
@@ -163,7 +173,7 @@ class TrackerPipeline:
         ref = AuthorityRef(fk.namespace(), accepted.seq, accepted.record_hash).to_str()
         self._events.emit("CANONICAL_ACCEPTED", attempt=pkg.attempt_id, authority=ref)
         return Outcome("CANONICAL_ACCEPTANCE", QUANT_FEATURE, report=report, admission=adm, certification=cert,
-                       materialization=rec, verification=ver, accepted=accepted, authority_ref=ref, duty_evidence=duty_ev)
+                       materialization=rec, verification=ver, accepted=accepted, authority_ref=ref, duty_evidence=duty_ev, simulation=self._simulation)
 
     # ------------------------------------------------------------ baseline step
     def _register_baseline(self, pkg, adm, ver):
@@ -175,7 +185,8 @@ class TrackerPipeline:
                      "lookup_era_scope": "ERA_1_ONLY", "candidate_content": adm.definition.declared_content()},
             request_id=pkg.request_id, search_policy=b.search_policy, normalizer=b.normalizer)
         if lk.absent_claim_token is None:
-            return list(lk.errors) or ["BASELINE_LOOKUP_NO_CLAIM"]
+            # fail closed exactly as before; the terminal identity AND state of any noncurrent match are REPORTED (never authority: no claim, no resurrection, no substitution)
+            return (list(lk.errors) or ["BASELINE_LOOKUP_NO_CLAIM"]) + terminal_notes(lk, b.store.all())
         cand = build_candidate(pkg, adm.definition, claim_request_id=pkg.request_id,
                                creation_evidence_ref="verification:" + ver.result_hash)
         res = safe_intake_built_identity(target_store=b.store, candidate=cand, era_boundary=b.era_boundary,

@@ -33,7 +33,7 @@ class T(unittest.TestCase):
         self.assertFalse(any("state" in f for f in B.CarriedUpstreamImpact.__dataclass_fields__))
     def test_failed_subject_must_be_an_identity(self):
         for bad in ("quant", b"", None):
-            with self.assertRaises(Refusal): B.blast_radius(bad, {}, {}, CT)
+            with self.assertRaises(Refusal): B.blast_radius(bad, {}, {}, CT, CF)
     def test_feature_dependency_cycle_terminates(self):
         r = run([M("m", "FW", (X,))], {Q: (X,), X: (Q,)}); self.assertEqual(r["m"].verdict, B.AFFECTED)
 class Use(unittest.TestCase):
@@ -52,7 +52,7 @@ class ConsumerSpecific(unittest.TestCase):
     BASE = M("independent-baseline", "ML", ())
     def test_empty_resolved_closure_is_not_contaminated_by_unrelated_unread_lineage(self):
         for deps, kw in (({b"unrelated": (b"unread-parent",)}, {}), ({b"unrelated": ()}, {"unread_features": (b"other-unread",)})):
-            r = B.blast_radius(b"failed", {self.BASE.manifest_id: self.BASE}, deps, CT, closure_features=CF, **kw)[self.BASE.manifest_id]
+            r = B.blast_radius(b"failed", {self.BASE.manifest_id: self.BASE}, deps, CT, CF, **kw)[self.BASE.manifest_id]
             self.assertEqual(r.verdict, B.UNAFFECTED, deps); self.assertEqual(B.consumer_use(r, True), "ALLOW_PROVEN_INDEPENDENT")
     def test_a_required_consumer_whose_own_ancestry_features_are_unread_is_still_refused(self):
         m = M("c", "FW", (A,))
@@ -68,9 +68,23 @@ class ConsumerSpecific(unittest.TestCase):
     def test_proven_and_cross_instrument_propagation_preserved(self):
         r = run([M("viaY", "ML", (Y,)), M("free", "ML", ())], {Q: (), X: (Q,), Y: (X,)}, unread_features=[b"elsewhere"])
         self.assertEqual((r["viaY"].verdict, r["free"].verdict), (B.AFFECTED, B.UNAFFECTED))
-    def test_no_consumer_specific_probe_falls_back_to_the_conservative_global_rule(self):
-        r = B.blast_radius(b"failed", {"independent-baseline": self.BASE}, {b"unrelated": (b"unread-parent",)}, CT)
-        self.assertEqual(r["independent-baseline"].verdict, B.UNDETERMINED)                  # safe, over-blocking, named: the caller did not supply the closure probe
+    def test_omitted_or_non_callable_closure_proof_is_refused_not_silently_global(self):         # R19: the R18 opt-in default retained the original over-blocking
+        for kw in ({}, {"closure_features": None}, {"closure_features": "x"}):
+            with self.assertRaises(Refusal) as c: B.blast_radius(b"failed", {"independent-baseline": self.BASE}, {b"unrelated": (b"unread-parent",)}, CT, **kw)
+            self.assertEqual(c.exception.code, "CLOSURE_PROOF_ADAPTER_REQUIRED")
+        with self.assertRaises(Refusal): B.blast_radius(b"failed", {}, {}, None, CF)
+    def test_cyclic_feature_lineage_is_never_proven_independence(self):                           # R19 (Codex reproduction): m('cyclic','ML',(a,)), a<->b
+        m = M("cyclic", "ML", (b"a",))
+        r = B.blast_radius(b"failed", {"cyclic": m}, {b"a": (b"b",), b"b": (b"a",)}, CT, CF)["cyclic"]
+        self.assertEqual((r.verdict, r.reason, B.consumer_use(r, True)), (B.UNDETERMINED, "FEATURE_LINEAGE_CYCLIC", "REFUSE_UNPROVEN_INDEPENDENCE"))
+        for deps in ({b"a": (b"a",)}, {b"a": (b"b",), b"b": (b"c",), b"c": (b"a",)}):
+            self.assertEqual(B.blast_radius(b"failed", {"cyclic": m}, deps, CT, CF)["cyclic"].reason, "FEATURE_LINEAGE_CYCLIC", deps)
+    def test_a_cycle_elsewhere_does_not_contaminate_a_resolved_consumer(self):
+        r = B.blast_radius(b"failed", {"ok": M("ok", "ML", (A,)), "bad": M("bad", "ML", (b"a",))}, {A: (), b"a": (b"b",), b"b": (b"a",)}, CT, CF)
+        self.assertEqual((r["ok"].verdict, r["bad"].verdict), (B.UNAFFECTED, B.UNDETERMINED))
+    def test_diamond_lineage_is_not_a_cycle(self):
+        r = B.blast_radius(b"failed", {"d": M("d", "ML", (b"t",))}, {b"t": (b"l", b"r"), b"l": (b"base",), b"r": (b"base",), b"base": ()}, CT, CF)
+        self.assertEqual(r["d"].verdict, B.UNAFFECTED)
 class GraphKeyBinding(unittest.TestCase):
     """The Health closure seam must not treat a misbound ancestry as proven independence, nor assume a validating caller."""
     def test_misbound_derivation_key_is_undetermined_in_both_probes(self):
@@ -88,9 +102,10 @@ class GraphKeyBinding(unittest.TestCase):
         r = run([M("parent", "FW", (A,)), M("child", "FW", (), derived_from="parent")]); self.assertEqual(r["child"].verdict, B.UNAFFECTED)
 class ProbeEdges(unittest.TestCase):
     def test_upstream_incomplete_directly(self):
-        self.assertFalse(B.upstream_incomplete([X], Q, {X: (Q,)}, ()))              # reaching the failed subject is proof, not 'unread lineage'
-        self.assertTrue(B.upstream_incomplete([X], Q, {X: (A,)}, ()))              # A's own lineage never supplied
-        self.assertFalse(B.upstream_incomplete([], Q, {}, [b"z"]))
+        D = B.upstream_lineage_defect
+        self.assertIsNone(D([X], Q, {X: (Q,)}, ()))                                  # reaching the failed subject is proof, not 'unread lineage'
+        self.assertEqual(D([X], Q, {X: (A,)}, ()), "FEATURE_LINEAGE_INCOMPLETE")      # A's own lineage never supplied
+        self.assertIsNone(D([], Q, {}, [b"z"]))
     def test_artifact_closure_features_count_toward_the_closure(self):
         self.assertEqual(CF(M("a", "ML", (A,), artifact_closure_features=(X,)), {}), {A, X})
         self.assertEqual(run([M("a", "ML", (), artifact_closure_features=(b"unread-art",))], {})["a"].verdict, B.UNDETERMINED)

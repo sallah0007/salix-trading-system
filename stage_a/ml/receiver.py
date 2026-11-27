@@ -83,6 +83,55 @@ def check_generation(m: ConsumerManifest, target: bytes, graph, kind: str):
             raise Refusal(str(anc.kind), code="UNKNOWN_ANCESTOR_KIND")
     return lane
 
+# MLCore (Matrix-selected 1cf1uR0w..., paras 99-118): ML_STANDALONE needs COMPLETE UNION closure over all required content-carrying ancestry edges (feature->feature, learned-feature->
+# model/generation, generation->training/predictor, materialized-output lineage, other declared content-carrying ancestry). Declared content-carrying => traverse; administrative/presentation-
+# only => no taint by that link; unknown/unclassified => FAIL CLOSED; incomplete required ancestry => FAIL CLOSED. The three edge CLASSES are source-given; the edge KIND vocabulary and the
+# machine-readable edge schema are NOT (blueprint-owned), so none is invented: callers supply (child, parent, class) triples. check_generation above walks ONLY the linear
+# DERIVED_FROM_MANIFEST_REF chain and is therefore NOT the union proof.
+CONTENT_CARRYING, ADMINISTRATIVE_ONLY = "CONTENT_CARRYING", "ADMINISTRATIVE_ONLY"
+UNION_CLOSURE_UNPROVEN = "UNION_CLOSURE_NOT_PROVEN_NO_EDGES_SUPPLIED"
+UNION_CLOSURE_TRAVERSED = "TRAVERSED_EDGE_SET_COMPLETENESS_UNPROVEN"
+
+@dataclass(frozen=True)
+class StandaloneCheck:
+    lane: str
+    union_closure: str            # never 'PROVEN': completeness of the supplied edge set has no witness in any source read
+    reached: tuple = ()
+
+def union_closure(root: str, edges, taint_sources) -> tuple:
+    """Traverse supplied (child, parent, class) edges from `root` over CONTENT_CARRYING edges only. Refuses: UNCLASSIFIED_EDGE (any class other than the two source-given ones, on an edge
+    reachable from the root), HIDDEN_FW_ANCESTRY (a taint source is reached through content-carrying edges). Returns the sorted reached ancestor ids. Administrative-only edges do not taint."""
+    edges = list(edges); taint = set(taint_sources); by_child = {}
+    for e in edges:
+        if not (isinstance(e, tuple) and len(e) == 3):
+            raise Refusal(repr(e), code="EDGE_MALFORMED")
+        by_child.setdefault(e[0], []).append(e)
+    seen, stack = {root}, [root]
+    while stack:
+        cur = stack.pop()
+        for child, parent, cls in by_child.get(cur, ()):
+            if cls == ADMINISTRATIVE_ONLY:
+                continue
+            if cls != CONTENT_CARRYING:
+                raise Refusal("%s->%s:%r" % (child, parent, cls), code="UNCLASSIFIED_EDGE")     # unknown edge type fails closed
+            if parent in taint:
+                raise Refusal(parent, code="HIDDEN_FW_ANCESTRY")
+            if parent not in seen:
+                seen.add(parent); stack.append(parent)
+    return tuple(sorted(seen - {root}))
+
+def check_standalone(m: ConsumerManifest, target: bytes, graph, kind: str, edges=None, taint_sources=()) -> StandaloneCheck:
+    """The ML_STANDALONE boundary: the linear check (check_generation) plus, if edges are supplied, the union traversal. The result is NEVER qualified: see require_standalone_qualified."""
+    lane = check_generation(m, target, graph, kind)
+    if edges is None:
+        return StandaloneCheck(lane, UNION_CLOSURE_UNPROVEN)
+    return StandaloneCheck(lane, UNION_CLOSURE_TRAVERSED, union_closure(m.manifest_id, edges, taint_sources))
+
+def require_standalone_qualified(chk) -> str:
+    """Holds the claimed ML_STANDALONE qualification: complete union closure cannot be PROVEN (no source defines the required edge set's completeness witness or the edge schema),
+    so this always refuses. Callers needing only the structural lane use check_generation and must not call the result qualified."""
+    raise Refusal(getattr(chk, "union_closure", type(chk).__name__), code="UNION_CLOSURE_COMPLETENESS_UNPROVEN")
+
 @dataclass(frozen=True)
 class AugmentedCheck:
     """Result of check_fw_augmented. rebind_verified is True ONLY when the supplied Binding is the exact outcome the Gateway issued for its request id. Without a Gateway
