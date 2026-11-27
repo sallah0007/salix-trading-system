@@ -4,6 +4,8 @@ Section 27 lists its fields 'where applicable' and names many of them in PROSE o
 exact input ids, dependency closures, ...). Only token-named fields and the explicitly conditional/mandatory rules are enforced here; no field name is invented for
 a prose-only item and none is defaulted. The package is immutable EVIDENCE: it is never a Gateway package, an active FW/ML input or a registry entry.
 Conformance outcomes are computed from supplied verification evidence, never authored."""
+from dataclasses import dataclass
+from typing import Optional
 from ..errors import Refusal
 
 KNOWN_TOKEN_FIELDS = frozenset({
@@ -62,3 +64,26 @@ def check_reproduction(declared_hash, recomputed_hash, not_possible_governed_rea
         return
     if declared_hash != recomputed_hash:
         raise Refusal("%s!=%s" % (declared_hash, recomputed_hash), code="DETERMINISTIC_RECOMPUTATION_MISMATCH")
+
+@dataclass(frozen=True)
+class ConformanceEvidence:
+    """Tracker-ORIGINATED verification evidence about a build (Composer V9 s28: outcomes are computed from supplied verification evidence, never authored by the package).
+    NOT a field of the package and NOT an approved schema: it is the seam a real Tracker verification path must fill. outcome_access_consulted is True / False, or None when
+    the verification could not determine it. evidence_ref names where the determination came from (an empty ref is refused). Nothing in this repository produces a real one:
+    only tests construct it, and they label the ref SIMULATED."""
+    outcome_access_consulted: Optional[bool]
+    evidence_ref: str
+    def __post_init__(self):
+        if self.outcome_access_consulted is not None and not isinstance(self.outcome_access_consulted, bool):
+            raise Refusal(repr(self.outcome_access_consulted), code="CONFORMANCE_EVIDENCE_MALFORMED")
+        if not _present(self.evidence_ref):
+            raise Refusal("evidence_ref", code="CONFORMANCE_EVIDENCE_WITHOUT_REF")
+
+def check_conformance(bo, evidence) -> None:
+    """Connects check_outcome_access to the intake. FORBIDDEN with no Tracker verification evidence (or an undetermined one) is HELD (refused) - the package cannot vouch for itself.
+    A package that declares nothing about outcome access is not newly refused here (s27 lists the field 'where applicable'): that residual is named in the closeout."""
+    if not isinstance(bo, dict):
+        return                                                      # already refused by check_build_output
+    if evidence is not None and not isinstance(evidence, ConformanceEvidence):
+        raise Refusal(type(evidence).__name__, code="CONFORMANCE_EVIDENCE_MALFORMED")
+    check_outcome_access(bo.get("OUTCOME_INFORMATION_ACCESS"), None if evidence is None else evidence.outcome_access_consulted)

@@ -73,7 +73,7 @@ REQUEST_RECORD = {"REQUEST_SCHEMA_VERSION": "1", "REQUESTER_ID": "fixture-reques
                   "REQUEST_CONTEXT": "FW_MANIFEST_NEED", "PURPOSE_STATEMENT": "fixture purpose"}
 
 class Rig:
-    def __init__(self, store=None, fits=None, baseline=None):
+    def __init__(self, store=None, fits=None, baseline=None, conformance_source=None):
         self.store = store or InMemoryObjectStore()
         self.claims_journal = ObjectStoreJournal(self.store, "claims", "claims-writer")
         self.claims_journal.acquire_epoch()
@@ -82,7 +82,7 @@ class Rig:
         self.events = EventSink()
         self.fits = fits or {}
         self.pipe = TrackerPipeline(store=self.store, claims=self.claims, journals=self.journals, clock=FixedClock(),
-                                    events=self.events, accepted_fit_generations=self.fits, baseline=baseline)
+                                    events=self.events, accepted_fit_generations=self.fits, baseline=baseline, conformance_source=conformance_source)
 
     def issue(self, pkg, issuer="MANAGER", binding="SRC-BINDING-1"):
         adm = admit(pkg, accepted_fit_generations=self.fits)

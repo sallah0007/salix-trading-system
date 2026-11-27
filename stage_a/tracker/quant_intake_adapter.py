@@ -17,14 +17,14 @@ from ..composer.expression.hashing import manifest_hash, graph_hash, program_has
 from ..composer.expression.capability import check_declared
 from ..composer.expression.fit_generation import check_fit_refs
 from ..composer.request_record import check_request_record
-from .build_output_check import check_build_output
+from .build_output_check import check_build_output, check_conformance
 from ..composer.expression.ceilings import check_ceilings, check_capability_declaration
 
 VERIFIER_ID = "SALIX_STAGE_A_TRACKER_INTAKE_V1"
 POLICY = {"ID": "SALIX_STAGE_A_INTAKE_POLICY", "VERSION": "1"}
 POLICY["HASH"] = domain_hash("SALIX_STAGE_A_INTAKE_POLICY_V1", canonical_bytes(
     {"dimensions": ["SCHEMA", "HASH_BINDING", "CAPABILITY", "FIT_ANCESTRY", "SCOPE_BINDING", "IDENTITY_CONTENT_KEY",
-                    "LOOKUP_COMPLETENESS", "DUPLICATE", "CONSTRUCTION_AUTHORITY", "REQUEST_RECORD", "RESOURCE_CEILING", "CAPABILITY_DECLARATION", "BUILD_OUTPUT_CONTRACT"]}))
+                    "LOOKUP_COMPLETENESS", "DUPLICATE", "CONSTRUCTION_AUTHORITY", "REQUEST_RECORD", "RESOURCE_CEILING", "CAPABILITY_DECLARATION", "BUILD_OUTPUT_CONTRACT", "BUILD_CONFORMANCE"]}))
 
 REQUIRED_IDENTITY_FIELDS = ("scope", "lifecycle_state", "is_current", "declared_normalization", "causal_time_semantics",
                             "completion_semantics", "availability_class", "price_basis", "data_vintage_mode",
@@ -127,7 +127,7 @@ def build_candidate(pkg: BuildPackage, definition: FeatureDefinitionRecord, *, c
         parameters=idf["parameters"], fitted_state=idf["fitted_state"], proxy_status=idf["proxy_status"],
         claim_request_id=claim_request_id, instrument_applicability=idf["instrument_applicability"])
 
-def admit(pkg: BuildPackage, *, accepted_fit_generations: dict) -> Admission:
+def admit(pkg: BuildPackage, *, accepted_fit_generations: dict, conformance=None) -> Admission:
     """Pure admissibility + identification (no journal effects)."""
     if not pkg.quant_feature_requested:
         # Explicit NO_QUANT_FEATURE only when no quant build was requested AND none was supplied.
@@ -176,6 +176,10 @@ def admit(pkg: BuildPackage, *, accepted_fit_generations: dict) -> Admission:
                            learned_derived=bool(m.data["fit_refs"]))
     except Refusal as e:
         fail("BUILD_OUTPUT_CONTRACT", e.code)
+    try:
+        check_conformance(pkg.build_output, conformance)            # Tracker-originated verification evidence; none supplied => FORBIDDEN is held
+    except Refusal as e:
+        fail("BUILD_CONFORMANCE", e.code)
     try:
         check_capability_declaration(pkg.capability_declaration, m, pkg.resource_ceiling_ref)
     except Refusal as e:

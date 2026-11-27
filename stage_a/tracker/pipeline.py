@@ -51,11 +51,12 @@ class Outcome:
         return self.accepted is not None
 
 class TrackerPipeline:
-    def __init__(self, *, store, claims, journals, clock, events, accepted_fit_generations=None, baseline=None):
+    def __init__(self, *, store, claims, journals, clock, events, accepted_fit_generations=None, baseline=None, conformance_source=None):
         self._store, self._claims, self._journals = store, claims, journals
         self._clock, self._events = clock, events
         self._fits = dict(accepted_fit_generations or {})
         self._baseline = baseline
+        self._conformance_source = conformance_source
         self._mat = StatefulMaterializer(store)
 
     # ------------------------------------------------------------------ helpers
@@ -88,7 +89,7 @@ class TrackerPipeline:
     # -------------------------------------------------------------------- run
     def run(self, pkg: BuildPackage) -> Outcome:
         self._events.emit("INTAKE_STARTED", attempt=pkg.attempt_id, request=pkg.request_id)
-        adm = admit(pkg, accepted_fit_generations=self._fits)
+        adm = admit(pkg, accepted_fit_generations=self._fits, conformance=None if self._conformance_source is None else self._conformance_source(pkg))
         if adm.classification == NO_QUANT_FEATURE:
             self._events.emit("NO_QUANT_FEATURE", attempt=pkg.attempt_id)
             return Outcome("CLASSIFICATION", NO_QUANT_FEATURE, admission=adm)

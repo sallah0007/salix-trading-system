@@ -51,32 +51,71 @@ def build_row(row_id, generation_binding_ref, entries, outcomes, gateway, reques
             raise Refusal(type(o).__name__, code="UNKNOWN_OUTCOME_TYPE")           # raw values/fills are not representable
     return MLRow(row_id, generation_binding_ref, eligibility_reason, None, tuple(bindings), tuple(absences))
 
+def ancestry(m: ConsumerManifest, graph) -> list:
+    """Every ancestor reached through DERIVED_FROM_MANIFEST_REF, nearest first. Fail closed: an unresolved parent (DERIVED_FROM_UNRESOLVED), a cycle (DERIVATION_CYCLE) or a graph
+    entry stored under a different manifest id (GRAPH_KEY_MISMATCH) refuses; unknown ancestry is never read as 'no ancestry' (Build Plan 13.1)."""
+    seen, out, cur = {m.manifest_id}, [], m
+    while cur.derived_from is not None:
+        nxt = graph.get(cur.derived_from)
+        if nxt is None:
+            raise Refusal(cur.derived_from, code="DERIVED_FROM_UNRESOLVED")
+        if nxt.manifest_id != cur.derived_from:
+            raise Refusal(cur.derived_from, code="GRAPH_KEY_MISMATCH")
+        if nxt.manifest_id in seen:
+            raise Refusal(nxt.manifest_id, code="DERIVATION_CYCLE")
+        seen.add(nxt.manifest_id); out.append(nxt); cur = nxt
+    return out
+
 def check_generation(m: ConsumerManifest, target: bytes, graph, kind: str):
-    """M1/M2/F5: ML_STANDALONE must be baseline-lane with free closure; hidden FW ancestry is rejected. Returns lane."""
+    """M1/M2/F5 + Build Plan 13.1: ML_STANDALONE must be baseline-lane with free closure and NO direct or TRANSITIVE FW ancestry. The whole derivation chain is walked (not
+    only the immediate parent); a non-ML or unknown-kind ancestor, an unresolved parent or a cycle refuses. Returns lane."""
+    if kind != "ML_STANDALONE":
+        raise Refusal(str(kind), code="UNKNOWN_GENERATION_KIND")
+    if m.kind != "ML":
+        raise Refusal(m.kind, code="STANDALONE_REQUIRES_ML_MANIFEST")
     lane = classify(m, target, graph)
-    if kind == "ML_STANDALONE" and lane != BASELINE:
+    if lane != BASELINE:
         raise Refusal(lane, code="STANDALONE_NOT_BASELINE")
-    if kind == "ML_STANDALONE" and m.derived_from is not None and graph.get(m.derived_from) is not None \
-            and graph[m.derived_from].kind == "FW":
-        raise Refusal(m.derived_from, code="HIDDEN_FW_ANCESTRY")
+    for anc in ancestry(m, graph):
+        if anc.kind == "FW":
+            raise Refusal(anc.manifest_id, code="HIDDEN_FW_ANCESTRY")
+        if anc.kind != "ML":
+            raise Refusal(str(anc.kind), code="UNKNOWN_ANCESTOR_KIND")
     return lane
 
-def check_fw_augmented(m: ConsumerManifest, aug: "AugmentedInput", target: bytes, graph):
-    """ML_FW_AUGMENTED (Build Plan 13.2): an explicit separate generation class. FW ancestry must be DECLARED (derived_from resolves to an FW manifest), never
-    hidden; a Gateway re-bind is required (carried by AugmentedInput); a standalone-style manifest with no FW parent cannot be augmented. Structural only:
-    FW return/lineage PAYLOAD fields are not defined by any source read, so only the refs supplied in AugmentedInput are checked for presence."""
+@dataclass(frozen=True)
+class AugmentedCheck:
+    """Result of check_fw_augmented. rebind_verified is True ONLY when the supplied Binding is the exact outcome the Gateway issued for its request id. Without a Gateway
+    the result is UNVERIFIED_SHAPE_ONLY: structure was checked, provenance was not, and a consumer must not rely on it (use require_verified)."""
+    lane: str
+    rebind_verified: bool
+    status: str
+
+def require_verified(chk: AugmentedCheck) -> str:
+    if not isinstance(chk, AugmentedCheck) or not chk.rebind_verified:
+        raise Refusal(getattr(chk, "status", type(chk).__name__), code="AUGMENTED_REBIND_UNVERIFIED")
+    return chk.lane
+
+def check_fw_augmented(m: ConsumerManifest, aug: "AugmentedInput", target: bytes, graph, gateway=None) -> AugmentedCheck:
+    """ML_FW_AUGMENTED (Build Plan 13.2): an explicit separate generation class. FW ancestry must be DECLARED (derived_from resolves to an FW manifest), never hidden; a
+    Gateway re-bind is required. The AugmentedInput is structurally validated (typed Ref fields, a Binding). Provenance: only a Gateway that issued exactly that Binding
+    verifies it; with no Gateway the result is UNVERIFIED_SHAPE_ONLY. FW return/lineage PAYLOAD fields are not defined by any source read, so refs are checked for type, not content."""
     if m.kind != "ML":
         raise Refusal(m.kind, code="AUGMENTED_REQUIRES_ML_MANIFEST")
     if m.derived_from is None:
         raise Refusal(m.manifest_id, code="AUGMENTED_WITHOUT_FW_ANCESTRY")
+    ancestry(m, graph)                                             # unresolved / cyclic / mismatched ancestry refuses before any parent is trusted
     parent = graph.get(m.derived_from)
-    if parent is None:
-        raise Refusal(m.derived_from, code="DERIVED_FROM_UNRESOLVED")
     if parent.kind != "FW":
         raise Refusal(parent.kind, code="AUGMENTED_PARENT_NOT_FW")
-    if not isinstance(aug, AugmentedInput) or not getattr(aug.gateway_rebind, "request_id", None):
+    if not isinstance(aug, AugmentedInput):
         raise Refusal("rebind", code="NO_GATEWAY_REBIND")
-    return classify(m, target, graph)
+    lane = classify(m, target, graph)
+    if gateway is None:
+        return AugmentedCheck(lane, False, "UNVERIFIED_SHAPE_ONLY")
+    if gateway.outcome(aug.gateway_rebind.request_id) is not aug.gateway_rebind:
+        raise Refusal(aug.gateway_rebind.request_id, code="BINDING_NOT_FROM_GATEWAY")      # well-typed but never issued (or a different object): refused
+    return AugmentedCheck(lane, True, "VERIFIED_ISSUED_BINDING")
 
 @dataclass(frozen=True)
 class AugmentedInput:
@@ -89,8 +128,13 @@ class AugmentedInput:
     fw_generation_identity_ref: Optional[Ref] = None      # Build Plan 13.2: must preserve FW generation identity
     research_exposure_ref: Optional[Ref] = None           # ... and research exposure
     def __post_init__(self):
-        for n in ("uncertainty_ref", "ood_ref", "dependency_interval_ref", "fw_generation_identity_ref", "research_exposure_ref"):
-            if getattr(self, n) is None:
+        for n in ("fw_lineage_ref", "uncertainty_ref", "ood_ref", "dependency_interval_ref", "fw_generation_identity_ref", "research_exposure_ref"):
+            v = getattr(self, n)
+            if v is None:
                 raise Refusal(n, code="AUGMENTED_FIELD_MISSING")
+            if not isinstance(v, Ref):
+                raise Refusal(n, code="AUGMENTED_FIELD_MALFORMED")                # an arbitrary object is not a governed reference
         if self.gateway_rebind is None:
             raise Refusal("FW-derived ML input needs a Gateway rebind", code="NO_GATEWAY_REBIND")
+        if not isinstance(self.gateway_rebind, Binding) or not getattr(self.gateway_rebind, "request_id", None):
+            raise Refusal(type(self.gateway_rebind).__name__, code="NO_GATEWAY_REBIND")
