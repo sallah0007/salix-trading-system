@@ -2,11 +2,11 @@
 `TABLES` is the logical table list of Build Plan E-05 (PK + index columns). `ddl()` renders PostgreSQL DDL TEXT only - nothing here connects to or deploys a database. An in-memory backend is provided for rebuild/refusal tests."""
 from ..errors import Refusal
 TABLES = {
- "stagea_manifest_index": (("manifest_hash",), ("feature_id", "feature_version", "status_projection")),
- "stagea_fit_generation_index": (("fit_generation_ref",), ("feature_id", "feature_version", "available_asof")),
- "stagea_pending_row_index": (("row_content_hash",), ("feature_id", "materialization_version", "event_time", "state")),
+ "stagea_manifest_index": (("manifest_hash",), ("feature_id", "feature_version", "status_projection", "data_vintage_mode", "supersession_ref")),
+ "stagea_fit_generation_index": (("fit_generation_ref",), ("feature_id", "feature_version", "instrument_id", "timeframe", "available_asof")),
+ "stagea_pending_row_index": (("row_content_hash",), ("feature_id", "materialization_version", "instrument_id", "timeframe", "event_time", "state", "data_vintage_mode", "supersession_ref")),
  "stagea_transition_index": (("transition_hash",), ("namespace_id", "epoch", "sequence", "subject_id", "accepted_at")),
- "stagea_current_status": (("subject_id", "materialization_version"), ()),
+ "stagea_current_status": (("subject_id", "materialization_version", "instrument_id", "timeframe"), ("data_vintage_mode", "supersession_ref", "head_hash")),
  "stagea_consumer_binding_index": (("consumer_binding_id",), ("consumer_id", "purpose", "decision_window", "final_package_hash")),
  "stagea_non_delivery_index": (("non_delivery_resolution_id",), ("resolution_identity", "reason_code", "expected_dependency_key")),
  "stagea_health_index": (("health_evidence_id",), ("subject_id", "observed_at", "local_state", "carried_upstream_state")),
@@ -14,6 +14,7 @@ TABLES = {
  "stagea_scheduler_queue": (("job_id",), ("priority_class", "next_eligible_at", "family_id")),
  "stagea_replay_queue": (("replay_job_id",), ("status", "namespace_id", "requested_at")),
 }
+# Build Plan overlays applied: R3 E05-L1 (DATA_VINTAGE_MODE + supersession lineage on row/status projections), R3 E09-H1 (INSTRUMENT_ID/TIMEFRAME on feature-scoped projections; part of the current-status PK), R3 E01-H1 (a projection is usable only when proven caught up to the accepted HEAD).
 PROVENANCE = ("canonical_ref", "canonical_hash")
 def ddl() -> str:
     out = []
@@ -26,7 +27,11 @@ class ProjectedRow(dict):
     """A read-model row: DATA ONLY. `authoritative` is always False; code that needs authority must go back to the canonical object named by canonical_ref/canonical_hash."""
     authoritative = False
 class ReadModel:
-    def __init__(self): self._t = {t: {} for t in TABLES}
+    def __init__(self): self._t = {t: {} for t in TABLES}; self._built_from_head = None
+    def built_from_head(self): return self._built_from_head
+    def require_caught_up(self, accepted_head_hash: str):
+        """E01-H1: publication/Gateway eligibility derives from the accepted journal, or from a projection PROVEN caught up to that exact accepted HEAD; missing/stale/inconsistent -> fail closed (repair idempotently from the journal, then retry)."""
+        if not isinstance(accepted_head_hash, str) or not accepted_head_hash or self._built_from_head != accepted_head_hash: raise Refusal("projection", code="READ_MODEL_NOT_CAUGHT_UP")
     def upsert(self, table: str, row: dict):
         if table not in TABLES: raise Refusal(table, code="READ_MODEL_TABLE_UNKNOWN")
         pk, ix = TABLES[table]; need = set(pk) | set(ix) | set(PROVENANCE)
@@ -37,11 +42,12 @@ class ReadModel:
     def get(self, table: str, *key):
         r = self._t[table].get(tuple(key)); return None if r is None else ProjectedRow(r)
     def snapshot(self): return {t: dict(sorted(rows.items())) for t, rows in self._t.items()}
-    def rebuild(self, canonical_rows):
+    def rebuild(self, canonical_rows, built_from_head=None):
         """canonical_rows: iterable of (table, row) DERIVED FROM canonical artifacts/journal by the caller. Drops every projection first; a failure part-way leaves the model EMPTY (fail closed), never half-old."""
-        self._t = {t: {} for t in TABLES}
+        self._t = {t: {} for t in TABLES}; self._built_from_head = None
         try:
             for table, row in canonical_rows: self.upsert(table, row)
         except BaseException:
-            self._t = {t: {} for t in TABLES}; raise
+            self._t = {t: {} for t in TABLES}; self._built_from_head = None; raise
+        self._built_from_head = built_from_head
         return sum(len(v) for v in self._t.values())

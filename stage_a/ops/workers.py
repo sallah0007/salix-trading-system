@@ -4,7 +4,7 @@ The queue is non-canonical: losing it loses nothing, because `recover_pending` r
 from dataclasses import dataclass
 from ..errors import Refusal
 WORKERS = ("composer-build-worker", "composer-refit-worker", "tracker-materializer-worker", "tracker-verifier-worker", "tracker-acceptance-worker", "context-worker", "gateway-resolution-worker", "health-evidence-worker", "scheduler-worker", "replay-worker")
-PRINCIPALS = {"composer-builder": "CANDIDATE_ARTIFACT_WRITE", "composer-refitter": "CANDIDATE_ARTIFACT_WRITE", "tracker-materializer": "PENDING_CANDIDATE_WRITE", "tracker-verifier": "VERIFICATION_EVIDENCE_WRITE", "tracker-acceptor": "CANONICAL_TRANSITION_AND_STATUS_WRITE",
+PRINCIPALS = {"composer-builder": "CANDIDATE_ARTIFACT_WRITE", "composer-refitter": "CANDIDATE_ARTIFACT_WRITE", "tracker-materializer": "PENDING_CANDIDATE_WRITE", "tracker-verifier": "VERIFICATION_EVIDENCE_WRITE", "tracker-acceptor": "CANONICAL_TRANSITION_AND_HEAD_WRITE",
               "context-writer": "CONTEXT_WRITE", "gateway-writer": "BINDING_NON_DELIVERY_WRITE", "health-writer": "HEALTH_EVIDENCE_WRITE", "scheduler": "QUEUE_METADATA_ONLY", "replay-reader": "READ_CANONICAL_AND_WRITE_REPLAY_READ_MODEL"}
 WORKER_PRINCIPAL = dict(zip(WORKERS, ("composer-builder", "composer-refitter", "tracker-materializer", "tracker-verifier", "tracker-acceptor", "context-writer", "gateway-writer", "health-writer", "scheduler", "replay-reader")))
 PRINCIPAL_MAP = "DOCUMENTARY_NOT_AUTHENTICATION"
@@ -52,3 +52,21 @@ def recover_pending(journals: dict, kind_of_next) -> tuple:
         last = recs[-1]; k = kind_of_next(last.kind)
         if k is not None: out.append(Job("recovered:%s:%d" % (ns, last.seq), k, "%s|%d|%s" % (ns, last.seq, last.record_hash), ((ns, last.record_hash),)))
     return tuple(out)
+
+CAPABILITIES = ("materialize", "verify", "accept", "gateway_write", "health_write", "publish_feature")
+PROHIBITED_COMBOS = (frozenset({"materialize", "verify"}), frozenset({"materialize", "accept"}), frozenset({"verify", "accept"}), frozenset({"gateway_write", "materialize"}), frozenset({"health_write", "publish_feature"}), frozenset({"health_write", "accept"}), frozenset({"publish_feature", "gateway_write"}))
+def check_identity_capabilities(permanent: dict, break_glass=(), now: int = 0) -> None:
+    """R3 E06-L1 (live para 1090-1093): no human administrator, CI, deployment or bootstrap identity may PERMANENTLY hold a prohibited combination of runtime capabilities. `permanent`: identity -> set(capabilities).
+    Break-glass grants are (identity, capability, expires_at, authorization_ref, log_ref): time-bounded (`now` < expires_at), explicitly authorized and logged; a break-glass grant may never confer `accept` or `publish_feature` (it cannot create acceptance/currentness/publication authority outside the normal path) and, combined with the permanent set, may not form a prohibited combination.
+    The identities and capabilities are SUPPLIED; nothing here appoints anyone."""
+    for ident, caps in permanent.items():
+        caps = set(caps)
+        if not caps <= set(CAPABILITIES): raise Refusal(ident, code="CAPABILITY_UNKNOWN")
+        if any(c <= caps for c in PROHIBITED_COMBOS): raise Refusal(ident, code="PERMANENT_PROHIBITED_CAPABILITY_COMBINATION")
+    for g in break_glass:
+        if not (isinstance(g, tuple) and len(g) == 5): raise Refusal("grant", code="BREAK_GLASS_MALFORMED")
+        ident, cap, exp, auth, log = g
+        if cap not in CAPABILITIES or not isinstance(exp, int) or not all(isinstance(x, str) and x for x in (ident, auth, log)): raise Refusal("grant", code="BREAK_GLASS_MALFORMED")
+        if exp <= now: raise Refusal(ident, code="BREAK_GLASS_EXPIRED")
+        if cap in ("accept", "publish_feature"): raise Refusal(ident, code="BREAK_GLASS_CANNOT_CONFER_ACCEPTANCE_OR_PUBLICATION")
+        if any(c <= (set(permanent.get(ident, ())) | {cap}) for c in PROHIBITED_COMBOS): raise Refusal(ident, code="BREAK_GLASS_FORMS_PROHIBITED_COMBINATION")
