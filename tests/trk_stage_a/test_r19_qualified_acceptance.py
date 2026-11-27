@@ -20,7 +20,7 @@ class Qualified(unittest.TestCase):
         for d in ("S28_INPUTS_RESOLVE", "S28_REPRODUCTION", "S28_FULL_CONFORMANCE"): self.assertIn(d, MANDATORY_UNVERIFIED_DUTIES)
     def test_simulation_is_explicit_and_never_qualified(self):
         rig = Rig(); o = go(rig, package())                                    # Rig default = explicit simulation
-        self.assertTrue(o.accepted_ok and o.simulation); self.assertEqual(list(dict(o.limits)), ["SIMULATION_NOT_QUALIFIED"])
+        self.assertTrue(o.accepted_ok and o.simulation); self.assertEqual(list(dict(o.limits)), ["COMPOSER_PRODUCER_BINDING_ADMISSION", "SIMULATION_NOT_QUALIFIED"])
     def test_pipeline_default_is_qualified_not_simulation(self):
         import inspect; from stage_a.tracker.pipeline import TrackerPipeline
         self.assertIs(inspect.signature(TrackerPipeline.__init__).parameters["simulation"].default, False)

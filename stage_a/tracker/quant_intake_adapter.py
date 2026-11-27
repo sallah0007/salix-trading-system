@@ -63,6 +63,7 @@ class BuildPackage:
     capability_declaration: Optional[dict] = None     # PROGRAM_CAPABILITY_DECLARATIONS entry for this program
     build_output: Optional[dict] = None               # Composer V9 s27 BUILD_OUTPUT_PACKAGE evidence (supplied, immutable)
     request_record: Optional[dict] = None          # Composer s7A APPEND request record; REQUIRED for a requested quant build
+    producer_binding: Optional[dict] = None        # C25 seven-field producer binding record for the Composer BUILD_OUTPUT_PACKAGE interface (shape + admission against a SUPPLIED authority; D6 minimum admission)
 
     def content_hash(self) -> str:
         d = {"package_id": self.package_id, "attempt_id": self.attempt_id, "request_id": self.request_id,
@@ -72,6 +73,7 @@ class BuildPackage:
              "scope": [self.expected_instrument, self.expected_timeframe],
              "quant": self.quant_feature_requested}
         if self.request_record is not None: d["request_record"] = self.request_record
+        if self.producer_binding is not None: d["producer_binding"] = self.producer_binding
         if self.build_output is not None: d["build_output"] = self.build_output
         if self.resource_ceiling_ref is not None: d["resource_ceiling_ref"] = self.resource_ceiling_ref
         if self.resource_ceilings is not None: d["resource_ceilings"] = self.resource_ceilings
@@ -157,7 +159,21 @@ def build_candidate(pkg: BuildPackage, definition: FeatureDefinitionRecord, *, c
         parameters=idf["parameters"], fitted_state=idf["fitted_state"], proxy_status=idf["proxy_status"],
         claim_request_id=claim_request_id, instrument_applicability=idf["instrument_applicability"])
 
-def admit(pkg: BuildPackage, *, accepted_fit_generations: dict, conformance=None) -> Admission:
+def _check_producer_binding(pkg, producer_authority, a):
+    """Composer 27/28 BUILD_OUTPUT_PACKAGE interface producer binding (C25 'Missing is UNSATISFIED'; D6 minimum admission). `producer_authority` = {"lookup": callable(scope, interface_id, version) -> record|None, "source_ref": str, "interface_id": str}: a SOURCE-OWNED input (the governed record is Manager-only), so
+    with none supplied the duty is labelled unverified (never certified, never invented) and the build is not failed for a source this repository cannot read; WITH one supplied a missing, malformed, foreign-interface or unadmitted binding FAILS the build. Admission is exact seven-field equality with the authority's record."""
+    if producer_authority is None:
+        a.unverified.append(("COMPOSER_PRODUCER_BINDING_ADMISSION", "NOT_VERIFIED_NO_AUTHORITY_SUPPLIED")); return
+    from ..binding import producer_admission as PA
+    try: lookup, ref, iface = producer_authority["lookup"], producer_authority["source_ref"], producer_authority["interface_id"]
+    except (KeyError, TypeError): a.failed.append(("PRODUCER_BINDING", "PRODUCER_AUTHORITY_MALFORMED")); return
+    if pkg.producer_binding is None: a.failed.append(("PRODUCER_BINDING", "PRODUCER_BINDING_MISSING_UNSATISFIED")); return
+    if not isinstance(pkg.producer_binding, dict) or pkg.producer_binding.get("interface_id") != iface: a.failed.append(("PRODUCER_BINDING", "PRODUCER_BINDING_FOREIGN_INTERFACE")); return
+    try: d = PA.admit(pkg.producer_binding, lookup, ref)
+    except Refusal as e: a.failed.append(("PRODUCER_BINDING", e.code)); return
+    if d.status != PA.ADMITTED_AGAINST_SUPPLIED_AUTHORITY: a.failed.append(("PRODUCER_BINDING", d.reason))
+
+def admit(pkg: BuildPackage, *, accepted_fit_generations: dict, conformance=None, producer_authority=None) -> Admission:
     """Pure admissibility + identification (no journal effects)."""
     if not pkg.quant_feature_requested:
         # Explicit NO_QUANT_FEATURE only when no quant build was requested AND none was supplied.
@@ -192,6 +208,7 @@ def admit(pkg: BuildPackage, *, accepted_fit_generations: dict, conformance=None
                 fail("REQUEST_RECORD", "REQUEST_REVIEW_REQUIRED_TARGET_CONSUMER_UNKNOWN")
         except Refusal as e:
             fail("REQUEST_RECORD", e.code)
+    _check_producer_binding(pkg, producer_authority, a)
     a.hashes = (manifest_hash(m), graph_hash(m), program_hash(m))
     if (pkg.declared_manifest_hash, pkg.declared_graph_hash, pkg.declared_program_hash) != a.hashes:
         fail("HASH_BINDING", "DECLARED_HASH_NOT_RECOMPUTED_HASH")
