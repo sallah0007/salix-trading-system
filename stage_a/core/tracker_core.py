@@ -367,8 +367,16 @@ class TrackerCore:
     def blocked(self, key: str) -> list: return self._blocked(self._replay(), key)
 
     # ---- B14 verification / Recording Health (caller-asserted evidence until a verifier is bound) ------
-    def record_verification(self, subject: str, version: str, l2_requirement: str, l2_status: str, l1: str, at: int, max_age: int, verifier_id: str, result_digest: str, definition_ref: str = None, evidence_class: str = "CALLER_ASSERTED"):
+    def record_verification(self, subject: str, version: str, l2_requirement: str, l2_status: str, l1: str, at: int, max_age: int, verifier_id: str, result_digest: str, definition_ref: str = None, evidence_class: str = "CALLER_ASSERTED", result=None):
         if evidence_class not in EVIDENCE_CLASSES: raise Refusal(str(evidence_class), code="HEALTH_EVIDENCE_CLASS_UNKNOWN")
+        if evidence_class == COMPOSED_RECOMPUTATION:       # the composed label is earned by a typed verifier result bound to THIS subject/digest/levels, never asserted by label alone
+            from ..tracker.verification.verification_result import SCOPE_MATERIALIZATION, COMPOSED_VERIFIER_ID, split_levels, result_is_self_consistent
+            if result is None: raise Refusal("composed evidence needs the verifier result", code="HEALTH_COMPOSED_RESULT_MISSING")
+            if not result_is_self_consistent(result): raise Refusal("result not self-consistent", code="HEALTH_COMPOSED_RESULT_FORGED")
+            if (result.scope != SCOPE_MATERIALIZATION or verifier_id != COMPOSED_VERIFIER_ID or result_digest != result.result_hash
+                    or dict(result.subject).get("expect_scope_key") != subject or l2_requirement != "REQUIRED" or (l1, l2_status) != split_levels(result)):
+                raise Refusal("composed evidence not bound to result", code="HEALTH_COMPOSED_RESULT_UNBOUND")
+        elif result is not None: raise Refusal("result only for composed evidence", code="HEALTH_RESULT_WITHOUT_COMPOSED_CLASS")
         if l2_requirement not in REQ or l2_status not in L2_ST or l1 not in L1_ST: raise Refusal("vocabulary", code="HEALTH_VOCABULARY_UNKNOWN")
         if not _int(at) or at < 0 or not _int(max_age) or max_age <= 0: raise Refusal("interval", code="HEALTH_INTERVAL_INVALID")
         if not all(isinstance(x, str) and x for x in (subject, version, verifier_id, result_digest)): raise Refusal("binding", code="HEALTH_BINDING_INCOMPLETE")

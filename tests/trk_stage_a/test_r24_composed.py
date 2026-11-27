@@ -17,6 +17,7 @@ from .test_r24_core import code
 def core(sim=True):
     st = InMemoryObjectStore(); st = SimulationStore(st) if sim else st
     j = ObjectStoreJournal(st, "rv", "w"); j.acquire_epoch(); return TrackerCore(j, simulation=sim)
+SIMS = lambda: SimulationStore(InMemoryObjectStore())        # R25: a simulation Core's carrier must itself be simulation-class
 def declared(m):
     from stage_a.composer.expression.artifacts import build_artifact
     a = build_artifact(m); return {"manifest_hash": a.manifest_hash, "graph_hash": a.graph_hash, "program_hash": a.program_hash}
@@ -25,7 +26,7 @@ class ComposedReverification(unittest.TestCase):
     def setUp(self):
         self.m = Manifest.from_dict(momentum_manifest()); self.key = "XAUUSD/H4/mom3/1"
     def test_real_materializer_and_verifier_produce_positive_core_health_evidence(self):
-        c = core(); store = InMemoryObjectStore(); res = RV.reverify_manifest(c, manifest=self.m, declared=declared(self.m), store=store, now=10, max_age=5)
+        c = core(); store = SIMS(); res = RV.reverify_manifest(c, manifest=self.m, declared=declared(self.m), store=store, now=10, max_age=5)
         self.assertEqual(res.status, "PASS"); r = c.recording_health(self.key, "1", 11)
         self.assertEqual((r.state, r.evidence_class, r.qualified), ("HEALTHY", "SIMULATION_COMPOSED_RECOMPUTATION", False))
         h = c._replay()["health"][self.key]; self.assertEqual(h["result_digest"], res.result_hash); self.assertEqual(h["verifier_id"], RV.VERIFIER_ID); self.assertEqual(h["evidence_class"], COMPOSED_RECOMPUTATION)
@@ -33,17 +34,18 @@ class ComposedReverification(unittest.TestCase):
         c = core(False); RV.reverify_manifest(c, manifest=self.m, declared=declared(self.m), store=InMemoryObjectStore(), now=10, max_age=5)
         r = c.recording_health(self.key, "1", 11); self.assertEqual((r.state, r.local_state, r.qualified), ("HELD", "HEALTHY", False))
     def test_declared_hashes_must_be_supplied_and_a_wrong_declaration_fails_the_verifier_not_the_artifact(self):
-        c = core(); self.assertEqual(code(RV.reverify_manifest, c, manifest=self.m, declared=None, store=InMemoryObjectStore(), now=10, max_age=5), "DECLARED_HASHES_REQUIRED")
-        bad = dict(declared(self.m), program_hash="0" * 64); res = RV.reverify_manifest(c, manifest=self.m, declared=bad, store=InMemoryObjectStore(), now=10, max_age=5)
+        c = core(); self.assertEqual(code(RV.reverify_manifest, c, manifest=self.m, declared=None, store=SIMS(), now=10, max_age=5), "DECLARED_HASHES_REQUIRED")
+        bad = dict(declared(self.m), program_hash="0" * 64); res = RV.reverify_manifest(c, manifest=self.m, declared=bad, store=SIMS(), now=10, max_age=5)
         self.assertEqual(res.status, "FAIL"); self.assertEqual(c.recording_health(self.key, "1", 11).state, "NOT_HEALTHY")          # a failing verification is NOT_HEALTHY evidence, never skipped
     def test_tampered_stored_bytes_fail_closed_and_never_clear_an_invalidation(self):
         class Tamper(InMemoryObjectStore):
             def get(self, k):
                 g = super().get(k); return None if g is None else (g[0][:-1] + bytes([g[0][-1] ^ 1]),) + tuple(g[1:])
+        from stage_a.storage.authority_class import approve_test_adapter; approve_test_adapter(Tamper)      # exact-type approved fault-injection adapter, wrapped in the simulation carrier
         c = core(); c.declare_dependency(self.key, "UP"); c.advance_epoch("UP", 1)
-        RV.reverify_manifest(c, manifest=self.m, declared=declared(self.m), store=Tamper(), now=10, max_age=5)
+        RV.reverify_manifest(c, manifest=self.m, declared=declared(self.m), store=SimulationStore(Tamper()), now=10, max_age=5)
         self.assertEqual(code(c.reresolve, self.key, "1", 11), "WITNESS_NOT_POSITIVE"); self.assertIn("EPOCH_INVALIDATED", c.blocked(self.key))
-        RV.reverify_manifest(c, manifest=self.m, declared=declared(self.m), store=InMemoryObjectStore(), now=12, max_age=5); c.reresolve(self.key, "1", 13); self.assertEqual(c.blocked(self.key), [])   # positive control
+        RV.reverify_manifest(c, manifest=self.m, declared=declared(self.m), store=SIMS(), now=12, max_age=5); c.reresolve(self.key, "1", 13); self.assertEqual(c.blocked(self.key), [])   # positive control
     def test_level_split_never_falls_back_from_l2_to_l1(self):
         mk = lambda st, ch: make_result(st, SCOPE_MATERIALIZATION, {}, ch, [])
         self.assertEqual(RV.split_levels(mk(INSUFFICIENT_EVIDENCE, [("artifact_present", False)])), ("FAIL", "UNAVAILABLE"))
@@ -79,6 +81,6 @@ class TimeFamily(unittest.TestCase):
     def test_no_back_projection_half_open_and_incomplete_parents_never_exposed(self):
         self.assertFalse(TF.parent_visible_asof(10, 10)); self.assertTrue(TF.parent_visible_asof(9, 10)); self.assertFalse(TF.parent_visible_asof(11, 10))
         ps = [("A", 5, True), ("B", 8, True), ("C", 9, False), ("D", 10, True)]
-        self.assertEqual(TF.latest_visible_parent(ps, 10)[0], "B"); self.assertEqual(TF.latest_visible_parent(ps, 11)[0], "D"); self.assertIsNone(TF.latest_visible_parent(ps, 5))
+        self.assertEqual(TF.latest_visible_parent(ps, 10).parent_id, "B"); self.assertEqual(TF.latest_visible_parent(ps, 11).parent_id, "D"); self.assertEqual(TF.latest_visible_parent(ps, 5).state, TF.NONE_VISIBLE)
         for bad in ((True, 5), (5, -1), ("5", 5), (5.0, 5)): self.assertEqual(code(TF.parent_visible_asof, *bad), "ASOF_MALFORMED")
 if __name__ == "__main__": unittest.main()

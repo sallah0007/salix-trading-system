@@ -200,6 +200,7 @@ class TestsCanFail(unittest.TestCase):
             mut = load_mutant(old, new)
             scenario = {"equivalence_probe_batch": sc_equivalence_batch}.get(check) or SCENARIOS[check]
             s, rec, d, key = scenario()
+            rec = dict(rec); rec["materialization_hash"] = ih.materialization_digest(rec, enc_bytes)   # isolate the neutered check: the record hash is self-consistent
             self.assertEqual(run(real, s, rec, d, key).status, FAIL, "real verifier must fail " + check)
             self.assertEqual(run(mut, s, rec, d, key).status, PASS, "mutant verifier should be blind to " + check)
     def test_unmutated_copy_behaves_identically(self):
@@ -217,10 +218,11 @@ class OpcodeDeclarationCheck(unittest.TestCase):
         p = parse(raw)
         rec = {"feature_key": KEY, "feature_version": "1", "instrument": "XAUUSD", "timeframe": "H4",
                "object_key": "artifact/" + h, "manifest_hash": h, "graph_hash": ih.graph_digest(p, enc_bytes),
-               "program_hash": ih.program_digest(p, enc_bytes), "byte_length": len(raw), "materialization_hash": "x"}
+               "program_hash": ih.program_digest(p, enc_bytes), "byte_length": len(raw)}
         from stage_a.tracker.verification.independent_traversal import reference_evaluate, bits, make_probe
         ref = [bits(x) for x in reference_evaluate(p, make_probe(p["inputs"]))]
         rec.update(probe_batch=ref, probe_incremental=ref)
+        rec["materialization_hash"] = ih.materialization_digest(rec, enc_bytes)
         d = {"manifest_hash": h, "graph_hash": rec["graph_hash"], "program_hash": rec["program_hash"]}
         r = run(real, store, rec, d)
         self.assertEqual(r.status, FAIL); self.assertEqual(failing_checks(r), {"opcode_declaration_equals_extracted"})

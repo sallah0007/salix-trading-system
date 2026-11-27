@@ -3,6 +3,7 @@ Source: Drive 1paXK6vPORaZ4QtQo3Vv3f49h7w2oHVt1-McSC2g6Bkk (read read-only; conn
 classes live in a governed registry this repository does not have; thresholds, flap limits and critical-set membership are DEFERRED by the
 source, so none is invented. News/Context Health has no governed profile home yet (source G): that blocks first FW/ML execution and is not
 solved here. Health evidence never becomes control (H: BLOCK != CONTROL)."""
+import json
 from ..errors import Refusal
 
 REQUIRED = ("SOURCE_AUTHORITY_REF", "SUBJECT_IDENTITY", "PRODUCER_ID", "PRODUCER_VERSION", "HEALTH_PROFILE_ID", "HEALTH_PROFILE_VERSION",
@@ -49,7 +50,9 @@ class AntiReplay:
         if not integrity_ok:
             raise Refusal("integrity binding failed", code="HEALTH_INTEGRITY_BINDING_FAILED")   # validated before authority-bearing use
         si = e["SUBJECT_IDENTITY"]
-        key = (e["PRODUCER_ID"], si["AUTHORITY_STATE"], si["INSTRUMENT_ID"], e.get("SUBJECT_VERSION_OR_HASH"))
+        try: subject = json.dumps(si, sort_keys=True, allow_nan=False)           # the FULL validated subject scope (no canonical ID field/layout is invented): distinct subjects never share a sequence
+        except (TypeError, ValueError): raise Refusal("SUBJECT_IDENTITY", code="SUBJECT_IDENTITY_NOT_SERIALIZABLE")
+        key = (e["PRODUCER_ID"], subject, e.get("SUBJECT_VERSION_OR_HASH"))
         last = self._last.get(key)
         if last is not None and e["PRODUCER_SEQUENCE"] <= last:
             raise Refusal(e["PRODUCER_SEQUENCE"], code="HEALTH_REPLAY_OR_STALE")
