@@ -3,19 +3,29 @@ import itertools, unittest
 from dataclasses import replace
 from tracker_identity.models import LookupOutcome
 from stage_a.tracker import terminal_identity as TI
+from tests import test_identity_surface as T
 from .test_r19_terminal_identity import rec, A, lookup
 X = lambda r, **k: replace(r, **k)
+def results(rows, subject=None):
+    lk, store = lookup(rows); return TI.subject_terminal_identities(subject or T.subject(), store.all(), T.normalizer())
 class Faithful(unittest.TestCase):
     def test_comma_and_colon_ids_are_not_lost(self):                                  # Codex repro: rows=[A('b,comma'), rec('b,comma', REJECTED)]
         for fid in ("b,comma", "b:colon", "b,c:d"):
-            rows = [A(fid), rec(fid, state="REJECTED_INVALID")]; lk, store = lookup(rows)
-            self.assertTrue(any(e.startswith("UNRESOLVED_CANONICAL_SURVIVOR:") for e in lk.errors))
-            notes = TI.terminal_notes(lk, rows)
-            self.assertEqual(len(notes), 1, fid); self.assertIn(repr(fid), notes[0]); self.assertIn("REJECTED_INVALID", notes[0])
-            t = TI.resolve_terminal_identity(rows[0], rows); self.assertEqual((t.terminal_id, t.terminal_state), (fid, "REJECTED_INVALID"))
-    def test_notes_are_hints_gated_by_the_lookup_and_never_resolve_identity_from_text(self):
-        rows = [A("b"), rec("b", state="REJECTED_INVALID")]
-        self.assertEqual(TI.terminal_notes(type("L", (), {"errors": ()})(), rows), [])        # no unresolved-survivor error -> no report
+            rows = [A(fid), rec(fid, state="REJECTED_INVALID")]
+            t, = results(rows); self.assertEqual((t.start_id, t.terminal_id, t.terminal_state), ("returns.1bar", fid, "REJECTED_INVALID"), fid)
+    def test_unrelated_same_scope_rows_are_never_starts(self):                        # Codex repro: unrelated>z was reported
+        rows = [A("b"), rec("b", state="REJECTED_INVALID"), rec("unrelated", survivor="z", defn="other-def"), rec("z", state="RETIRED", defn="other-def")]
+        t, = results(rows); self.assertEqual((t.start_id, t.terminal_id), ("returns.1bar", "b"))
+        self.assertEqual(results([rec("unrelated", survivor="z"), rec("z", state="RETIRED")]), ())          # no matching row at all -> nothing asserted
+    def test_matching_noncurrent_without_successor_reports_its_own_state(self):
+        t, = results([A(None, state="RETIRED")]); self.assertEqual((t.status, t.terminal_id, t.terminal_state), (TI.TERMINAL_NONCURRENT, "returns.1bar", "RETIRED"))
+    def test_ambiguous_starts_are_each_reported_in_a_row_order_independent_way(self):
+        a1 = A("b"); a2 = A("c"); rows = [a1, a2, rec("b", state="REJECTED_INVALID"), rec("c", state="DISCARDED")]
+        base = results(rows); self.assertEqual(len(base), 2)
+        for perm in itertools.permutations(rows): self.assertEqual(results(list(perm)), base)
+    def test_cycles_and_orphans_from_a_real_subject(self):
+        t, = results([A("b"), rec("b", survivor="returns.1bar")]); self.assertEqual(t.status, TI.CYCLE)
+        t, = results([A("ghost")]); self.assertEqual((t.status, t.terminal_id), (TI.ORPHAN, ""))
     def test_terminal_carries_full_facts_not_only_an_id(self):
         rows = [A("b"), rec("b", survivor="c", version="7", defn="d7"), rec("c", current=True, state="CURRENT", version="9", defn="d9")]
         t = TI.resolve_terminal_identity(rows[0], rows)
@@ -52,17 +62,6 @@ class Scope(unittest.TestCase):
         a = A("b"); b = rec("b", state="RETIRED"); t = TI.resolve_terminal_identity(a, [a, b])
         self.assertEqual((t.status, t.terminal_state, t.terminal_is_current), (TI.TERMINAL_NONCURRENT, "RETIRED", False))
         c = rec("c", current=True, state="CURRENT"); t = TI.resolve_terminal_identity(c, [a, b, c]); self.assertEqual((t.status, t.chain), (TI.CURRENT_SURVIVOR, ("c",)))
-    def test_notes_scope_filter_and_deterministic_order(self):
-        a, rows = self.rows(); lk, _ = lookup([A("q"), rec("q", state="REJECTED_INVALID")])         # any lookup with the unresolved-survivor error
-        n1 = TI.terminal_notes(lk, rows, scope=("ERA_1", "EURUSD", "H1")); n2 = TI.terminal_notes(lk, list(reversed(rows)), scope=("ERA_1", "EURUSD", "H1"))
-        self.assertEqual(n1, n2); self.assertTrue(all("'d'" not in n for n in n1))                 # the XAUUSD chain is not reported under the EURUSD scope
-    def test_multiple_starts_are_reported_in_input_order_independent_order(self):
-        lk, _ = lookup([A("q"), rec("q", state="REJECTED_INVALID")])
-        rows = [rec("s1", survivor="z1"), rec("z1", state="RETIRED"), rec("s2", survivor="z2"), rec("z2", state="DISCARDED")]
-        base = TI.terminal_notes(lk, rows); self.assertEqual(len(base), 2)                       # only noncurrent rows that carry a survivor pointer are starts
-        for perm in itertools.permutations(rows): self.assertEqual(TI.terminal_notes(lk, list(perm)), base)
-if __name__ == "__main__": unittest.main()
-
 class CycleChain(unittest.TestCase):
     def test_cycle_reports_the_repeated_node_not_just_a_status(self):
         a = rec("a", survivor="b"); b = rec("b", survivor="a"); t = TI.resolve_terminal_identity(a, [a, b])

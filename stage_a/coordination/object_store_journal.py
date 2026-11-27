@@ -27,7 +27,7 @@ class ObjectStoreJournal:
     @property
     def authority_class(self) -> str:
         from ..storage.authority_class import authority_class_of
-        return authority_class_of(self._s)
+        return authority_class_of(self)
 
     # -- HEAD doc -------------------------------------------------------------
     def _read_head_doc(self):

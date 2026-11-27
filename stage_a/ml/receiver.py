@@ -4,6 +4,7 @@ record (no silent row drop); no fill of any kind is representable."""
 from dataclasses import dataclass
 from typing import Optional, Tuple
 from ..errors import Refusal
+from ..gateway.outcome_binding import check_dependency_outcome
 from ..gateway.contracts import Binding, NonDeliveryResolution, AbsenceApplied, DependencyEntry, REQUIRED, OPTIONAL
 from ..schema.encoding import Ref
 from ..fw.lanes import ConsumerManifest, classify, BASELINE
@@ -42,8 +43,10 @@ def build_row(row_id, generation_binding_ref, entries, outcomes, gateway, reques
         elif isinstance(o, AbsenceApplied):
             if e.requirement_class != OPTIONAL or o.absence_handling_applied_ref != e.absence_rule_ref:
                 raise Refusal("absence only via the exact governed rule", code="ABSENCE_RULE_MISMATCH")
+            check_dependency_outcome(o, e, gateway)                                  # exact dependency + rule + actually issued immutable Gateway outcome
             absences.append(o)
         elif isinstance(o, NonDeliveryResolution):
+            check_dependency_outcome(o, e, gateway)                                  # a forged/foreign non-delivery cannot exclude a row
             if e.requirement_class == REQUIRED:
                 return MLRow(row_id, generation_binding_ref, eligibility_reason, exclusion_reason_for_missing(o), tuple(bindings), tuple(absences))
             raise Refusal("optional dependency non-delivery must resolve to AbsenceApplied", code="OPTIONAL_NON_DELIVERY")

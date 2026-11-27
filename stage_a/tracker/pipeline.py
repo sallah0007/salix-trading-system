@@ -19,7 +19,7 @@ from ..coordination import transition_record as T
 from ..coordination.recovery import resolve_unknown_commit, COMMITTED
 from ..replay import replay
 from ..authority import AuthorityRef
-from .terminal_identity import terminal_notes
+from .terminal_identity import subject_terminal_identities
 from .quant_intake_adapter import (admit, reserve_authority, build_safe_intake_report, build_candidate,
                                    QUANT_FEATURE, NO_QUANT_FEATURE, CLASSIFICATION_UNRESOLVED, FAILED_REQUESTED_BUILD, BuildPackage, DutyEvidence, unresolved_mandatory)
 from ..composer.expression.canonical_encoding import encode_manifest
@@ -49,12 +49,15 @@ class Outcome:
     failures: list = field(default_factory=list)
     duty_evidence: Optional[object] = None
     simulation: bool = False
+    terminal_identities: tuple = ()      # typed, subject-bound TerminalIdentity results (report-only); NOT in the intake report: CANONICAL_SURVIVOR stays None
 
     @property
     def limits(self):
         """Duties the Tracker could not determine for this outcome (class-to-structure capability compatibility; full s28 conformance). Acceptance does not certify them."""
         done = self.duty_evidence.duties if (self.simulation and isinstance(self.duty_evidence, DutyEvidence)) else frozenset()
         extra = (("SIMULATION_NOT_QUALIFIED", "DUTY_EVIDENCE_IS_SIMULATED:" + self.duty_evidence.evidence_ref),) if (self.simulation and self.accepted is not None) else ()
+        if self.terminal_identities:
+            extra += (("CANONICAL_SURVIVOR_REPORT_SLOT", "UNBOUND_NO_ACCEPTED_REPORT_ENCODING_FOR_TERMINAL_IDENTITY_NOT_CONNECTED_TO_REPORT"),)
         if self.classification == NO_QUANT_FEATURE:
             extra += (("NO_QUANT_CLASSIFICATION", "CALLER_FLAG_NOT_SOURCE_VERIFIED_NO_SOURCE_OWNED_MAPPING"),)
         return tuple(u for u in getattr(self.admission, "unverified", ()) if u[0] not in done) + extra
@@ -164,10 +167,11 @@ class TrackerPipeline:
             return o
 
         if self._baseline is not None:
-            problems = self._register_baseline(pkg, adm, ver)
+            problems, terminals = self._register_baseline(pkg, adm, ver)
             if problems:
                 o = self._reject(pkg, adm, "BASELINE_REGISTRATION", claim_id, [("BASELINE_REGISTRATION", p) for p in problems])
                 o.certification, o.materialization, o.verification = cert, rec, ver
+                o.terminal_identities = terminals
                 return o
 
         report = build_safe_intake_report(pkg, adm, clock=self._clock, verdict="ACCEPT_FOR_REGISTRY",
@@ -193,20 +197,18 @@ class TrackerPipeline:
     # ------------------------------------------------------------ baseline step
     def _register_baseline(self, pkg, adm, ver):
         b = self._baseline
-        lk = identity_lookup(
-            store=b.store,
-            subject={"subject_mode": "PRE_ID", "feature_id": "", "feature_version": "", "definition_hash": "",
+        subject = {"subject_mode": "PRE_ID", "feature_id": "", "feature_version": "", "definition_hash": "",
                      "graph_hash": "", "instrument": adm.definition.instrument, "timeframe": adm.definition.timeframe,
-                     "lookup_era_scope": "ERA_1_ONLY", "candidate_content": adm.definition.declared_content()},
-            request_id=pkg.request_id, search_policy=b.search_policy, normalizer=b.normalizer)
+                     "lookup_era_scope": "ERA_1_ONLY", "candidate_content": adm.definition.declared_content()}
+        lk = identity_lookup(store=b.store, subject=subject, request_id=pkg.request_id, search_policy=b.search_policy, normalizer=b.normalizer)
         if lk.absent_claim_token is None:
             # fail closed exactly as before; the terminal identity AND state of any noncurrent match are REPORTED (never authority: no claim, no resurrection, no substitution)
-            return (list(lk.errors) or ["BASELINE_LOOKUP_NO_CLAIM"]) + terminal_notes(lk, b.store.all(), scope=("ERA_1", adm.definition.instrument, adm.definition.timeframe))
+            return (list(lk.errors) or ["BASELINE_LOOKUP_NO_CLAIM"]), subject_terminal_identities(subject, b.store.all(), b.normalizer)
         cand = build_candidate(pkg, adm.definition, claim_request_id=pkg.request_id,
                                creation_evidence_ref="verification:" + ver.result_hash)
         res = safe_intake_built_identity(target_store=b.store, candidate=cand, era_boundary=b.era_boundary,
                                          search_policy=b.search_policy, normalizer=b.normalizer)
-        return [] if res.accepted else list(res.errors)
+        return ([] if res.accepted else list(res.errors)), ()
 
     # --------------------------------------------------------------- acceptance
     def _accept(self, pkg, adm, cert, rec, ver, report):

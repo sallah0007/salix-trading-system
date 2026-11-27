@@ -50,10 +50,11 @@ class Boundary(unittest.TestCase):
         cj = ObjectStoreJournal(plain, "claims", "w"); cj.acquire_epoch()
         with self.assertRaises(Refusal) as c: TrackerPipeline(store=sim, claims=ClaimService(cj, ANCHOR), journals=FeatureJournalSet(sim, "w"), clock=FixedClock(), events=None, simulation=True)
         self.assertEqual(c.exception.code, "AUTHORITY_CLASS_MISMATCH")
-    def test_unknown_class_fails_closed_and_nesting_refused(self):
-        class S(InMemoryObjectStore): authority_class = "LIVE"
-        self.assertEqual(code(authority_class_of, S()), "UNKNOWN_AUTHORITY_CLASS")
+    def test_unknown_carrier_fails_closed_and_nesting_or_subclass_is_refused(self):
+        self.assertEqual(code(authority_class_of, object()), "UNKNOWN_CARRIER")
         self.assertEqual(code(SimulationStore, SimulationStore(InMemoryObjectStore())), "BAD_SIMULATION_STORE")
+        class Sub(SimulationStore): pass
+        self.assertEqual(code(authority_class_of, Sub(InMemoryObjectStore())), "UNKNOWN_CARRIER")          # a subclass cannot claim the simulation class
     def test_qualified_journal_still_publishes(self):                                  # positive control: the guard is not a blanket refusal
         from .fixtures import qualified_journal_from_simulated
         q = qualified_journal_from_simulated(self.r)
@@ -76,3 +77,43 @@ class Lineage(unittest.TestCase):
         r = Rig(simulation=True); p = package(); r.issue(p); r.pipe.run(p)
         self.assertEqual(r.claims.lineage("NO-SUCH-ORDER", p.request_id), ["REQUEST_CLAIM_EXISTS"])
         self.assertEqual(r.claims.lineage("NO-SUCH-ORDER", "NO-SUCH-REQUEST"), [])
+
+
+class LabelSpoofing(unittest.TestCase):
+    """R21: the class is derived from the carrier's type/keyspace; a public label (assigned, deleted, missing, spoofed) is ignored."""
+    def build(self, store, simulation):
+        from stage_a.coordination.object_store_journal import ObjectStoreJournal
+        from stage_a.observability import EventSink
+        cj = ObjectStoreJournal(store, "claims", "w"); cj.acquire_epoch(); c = ClaimService(cj, ANCHOR)
+        return c, TrackerPipeline(store=store, claims=c, journals=FeatureJournalSet(store, "w"), clock=FixedClock(), events=EventSink(), conformance_source=lambda p: SIM_CONF,
+                                  duty_source=lambda p, a: SIM_DUTIES, simulation=simulation)
+    def test_codex_repro_labelling_an_ordinary_store_simulation_is_refused(self):
+        s = InMemoryObjectStore(); s.authority_class = SIMULATION
+        self.assertEqual(authority_class_of(s), QUALIFIED)
+        self.assertEqual(code(self.build, s, True), "AUTHORITY_CLASS_MISMATCH")
+    def test_deleting_or_assigning_labels_on_the_real_carrier_changes_nothing(self):
+        r = Rig(simulation=True); p = package(); r.issue(p); o = r.pipe.run(p); ns = o.admission.feature_key.namespace()
+        for obj in (r.store, r.journals, r.journals.journal(ns), r.claims):
+            for val in (QUALIFIED, "LIVE", None):
+                try: obj.authority_class = val
+                except AttributeError: pass                                  # read-only property carriers refuse assignment
+            try: del obj.authority_class
+            except AttributeError: pass
+            self.assertEqual(authority_class_of(obj), SIMULATION)
+        self.assertEqual(code(publication.publish, r.journals.journal(ns), o.admission.feature_key, o.verification), "SIMULATION_NOT_ELIGIBLE")
+        self.assertTrue(all(k.startswith("SIMULATION/") for k in r.raw_store.list_prefix("")))
+    def test_wrapper_loss_cannot_surface_the_simulated_record_as_ordinary(self):
+        r = Rig(simulation=True); p = package(); r.issue(p); o = r.pipe.run(p); ns = o.admission.feature_key.namespace()
+        raw = r.store._i                                                     # the wrapper is stripped: a journal over the raw store sees the ORDINARY keyspace only
+        from stage_a.coordination.object_store_journal import ObjectStoreJournal
+        j = ObjectStoreJournal(raw, ns, "after-loss"); j.acquire_epoch()
+        self.assertEqual(authority_class_of(j), QUALIFIED); self.assertEqual(j.read_from(1), [])
+        self.assertEqual(code(publication.publish, j, o.admission.feature_key, o.verification), "NOT_ACCEPTED")     # nothing to publish: no simulated record became ordinary
+    def test_restart_over_the_same_bucket_keeps_the_class(self):
+        r = Rig(simulation=True); p = package(); r.issue(p); r.pipe.run(p)
+        r2 = Rig(store=r.raw_store, simulation=True)
+        self.assertEqual(authority_class_of(r2.journals), SIMULATION); self.assertTrue(r2.pipe.run(p).accepted_ok)       # idempotent replay on the simulation keyspace
+    def test_ordinary_unrelated_positive_control(self):
+        s = InMemoryObjectStore(); self.assertEqual(authority_class_of(s), QUALIFIED)
+        c, pipe = self.build(s, False); self.assertEqual(authority_class_of(pipe._journals), QUALIFIED)
+        self.assertEqual(authority_class_of(c), QUALIFIED)

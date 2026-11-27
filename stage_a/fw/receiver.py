@@ -3,12 +3,22 @@ Gateway Binding objects + lane classification; NOT a connection to the real FW. 
 from ..errors import Refusal
 from ..gateway.contracts import Binding, NonDeliveryResolution, AbsenceApplied, DependencyEntry, REQUIRED
 from ..schema import objects as O
+from ..gateway.outcome_binding import check_dependency_outcome
+
+def receive_verified(binding, expected: DependencyEntry, instrument_id: bytes, timeframe_id: bytes, tables, gateway, require_current=True):
+    """The VERIFIED receiving path: the Gateway that issued the outcome is REQUIRED (no gateway -> refusal), so Binding, AbsenceApplied and NonDeliveryResolution are all checked against the
+    stored immutable Gateway outcome. `receive(..., gateway=None)` is SHAPE-ONLY (no origin proof) and must not be presented as verified delivery."""
+    if gateway is None:
+        raise Refusal("verified receive needs the issuing Gateway", code="GATEWAY_REQUIRED_FOR_VERIFIED_RECEIVE")
+    return receive(binding, expected, instrument_id, timeframe_id, tables, require_current, gateway)
 
 def receive(binding, expected: DependencyEntry, instrument_id: bytes, timeframe_id: bytes, tables, require_current=True,
             gateway=None):
     if isinstance(binding, NonDeliveryResolution):
+        check_dependency_outcome(binding, expected, gateway)                  # a forged/foreign non-delivery is rejected as such before it can mean anything
         raise Refusal(binding.reason, code="NON_DELIVERY")                    # settlement/non-delivery failure
     if isinstance(binding, AbsenceApplied):
+        check_dependency_outcome(binding, expected, gateway) if expected.requirement_class != REQUIRED else None
         if expected.requirement_class == REQUIRED:
             raise Refusal("required dependency absent", code="REQUIRED_DEPENDENCY_ABSENT")
         return binding

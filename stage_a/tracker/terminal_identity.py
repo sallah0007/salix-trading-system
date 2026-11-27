@@ -55,21 +55,36 @@ def resolve_terminal_identity(start, records: Iterable) -> TerminalIdentity:
         node = next(iter(cands.values())); chain.append(sid); facts.append(full_facts(node)); seen.add((sid, sc))
     return bad(CYCLE, ())
 
-def terminal_notes(lookup_result, records: Iterable, scope=None) -> list:
-    """Report strings (RETRIEVAL HINTS ONLY, never an identity-proof encoding: the proof is `resolve_terminal_identity(...).chain_facts/terminal_facts` recomputed from typed rows).
-    Starts are typed: noncurrent rows with a survivor pointer, inside `scope=(era_id, instrument, timeframe)` when given, whose survivor has no CURRENT row in the same identity scope. The baseline
-    lookup's own UNRESOLVED_CANONICAL_SURVIVOR error only GATES the report (it is not split or parsed for identities, so ids containing commas/colons cannot be lost). Informational: the
-    lookup stays fail-closed."""
-    recs = list(records)
-    if not any(str(e).startswith("UNRESOLVED_CANONICAL_SURVIVOR:") for e in (getattr(lookup_result, "errors", ()) or ())):
+def subject_start_rows(subject, records: Iterable, normalizer) -> list:
+    """The NONCURRENT rows that are exact matches of THIS lookup subject, re-derived from typed facts with the same matching rules the baseline lookup applies: the content-identity key
+    RECOMPUTED from the subject's declared content (never supplied) for PRE_ID / content-bearing subjects, and the exact canonical key for CANONICAL_ID subjects. No diagnostic text is read,
+    and an unrelated row in the same scope is never a start. Any recomputation problem returns [] (nothing is asserted about an unproven subject)."""
+    from tracker_identity.content_identity import build_content_identity_key
+    from tracker_identity.normalizer import normalize_subject
+    from tracker_identity.search import _canonical_matches, _subject_key
+    try:
+        normalized, _ = normalize_subject(subject, normalizer)
+    except ValueError:
         return []
-    cur = {(r.feature_id, identity_scope(r)) for r in recs if r.is_current}
+    mode = str(subject.get("subject_mode", "CANONICAL_ID")).strip().upper() or "CANONICAL_ID"
+    key = None
+    if subject.get("candidate_content") is not None:
+        key, errs = build_content_identity_key(subject["candidate_content"])
+        if errs:
+            key = None
     out = []
-    for r in sorted(recs, key=full_facts):                                  # deterministic order
-        if r.is_current or not r.canonical_survivor or (scope is not None and identity_scope(r) != tuple(scope)):
+    for r in records:
+        if r.is_current:
             continue
-        if (r.canonical_survivor, identity_scope(r)) in cur:
-            continue                                                        # the narrow lookup resolves this one-hop current survivor itself
-        t = resolve_terminal_identity(r, recs)
-        out.append("TERMINAL_IDENTITY_HINT:%r>%r:%r:%s" % (t.start_id, t.terminal_id or "-", t.terminal_state or "-", t.status))
+        by_content = key is not None and r.has_content_key and r.content_key_composite == key.composite
+        by_canonical = mode == "CANONICAL_ID" and _canonical_matches(r, _subject_key(normalized))
+        if by_content or by_canonical:
+            out.append(r)
     return out
+
+def subject_terminal_identities(subject, records: Iterable, normalizer) -> Tuple[TerminalIdentity, ...]:
+    """Typed, subject-bound terminal results (identity + governed state + full facts) for the lookup subject: one per matching noncurrent row, in a deterministic order. This is what the
+    pipeline returns on its Outcome. Report-only: authorizes no claim, resurrection, delivery or near-match substitution, and the narrow lookup stays CURRENT-ONLY and fail-closed."""
+    recs = list(records)
+    starts = sorted(subject_start_rows(subject, recs, normalizer), key=full_facts)
+    return tuple(resolve_terminal_identity(r, recs) for r in starts)
