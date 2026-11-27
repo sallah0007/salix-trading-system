@@ -100,6 +100,9 @@ class GenerationRegistry:
             old = self._issued.get(request_id)
             if old is not None and old != snap: raise Refusal(request_id, code="ML_REQUEST_ID_REUSED_WITH_DIFFERENT_BINDING")
             self._issued[request_id] = snap; return snap
+    def issued_snapshot(self, request_id):
+        """The snapshot this registry issued for `request_id` (read-only), else None."""
+        with self._lock: return self._issued.get(request_id)
     def compare_and_publish(self, snap, result) -> PublishOutcome:
         """Fence re-check and commit are ONE critical section. Succeeds only if the manifest is still serving-eligible and ITS lifecycle state is unchanged since the snapshot; otherwise the logical event is DISCARDED or
         QUARANTINED (never regenerated under a newer generation, never served as accepted). Idempotent: the same event identity publishes at most once."""

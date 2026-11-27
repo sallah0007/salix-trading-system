@@ -16,10 +16,11 @@ def _i(x): return type(x) is int and x >= 0
 class JoinReport:
     statuses: tuple            # ((join, status, detail), ...)
     complete: bool             # every join is VERIFIED or PRESENT_UNVERIFIED (none MISSING/MISMATCH); NOT acceptance
+    correlation: tuple = ()    # ((check, status, detail), ...): J4/J5 (and an optional issued request snapshot) must name the SAME generation; field-shape checks alone are not integrated joins
     qualified: bool = False    # never True here: writer principal, instances and acceptance are unbound
     writer_principal: str = "UNBOUND_NOT_IN_SOURCE"
 
-def check_six_joins(joins, registry, *, fence, catalog_snapshot=None) -> JoinReport:
+def check_six_joins(joins, registry, *, fence, catalog_snapshot=None, request_snapshot=None) -> JoinReport:
     if not isinstance(joins, dict): raise Refusal(type(joins).__name__, code="ML_JOINS_NOT_A_RECORD")
     if not _i(fence): raise Refusal("fence", code="ML_JOINS_FENCE_INVALID")
     out = []
@@ -53,4 +54,16 @@ def check_six_joins(joins, registry, *, fence, catalog_snapshot=None) -> JoinRep
     else: add(JOINS[5], PRESENT_UNVERIFIED, "exposure ledger instance unbound")
     extra = sorted(set(joins) - set(JOINS))
     if extra: raise Refusal(",".join(map(str, extra)), code="ML_JOINS_UNKNOWN_JOIN")
-    return JoinReport(tuple(out), not any(s in (MISSING, MISMATCH) for _, s, _ in out))
+    corr = []
+    j4, j5 = joins.get("J4_GENERATION_COMPONENTS"), joins.get("J5_LIFECYCLE_LEDGER")
+    if isinstance(j4, dict) and isinstance(j5, dict):
+        same = (j4.get("manifest_id"), j4.get("manifest_hash")) == (j5.get("manifest_id"), j5.get("manifest_hash"))
+        corr.append(("J4_J5_SAME_GENERATION", VERIFIED_AGAINST_REGISTRY if same else MISMATCH, "" if same else "J4 components and J5 ledger name different manifest id/hash"))
+    else: corr.append(("J4_J5_SAME_GENERATION", MISSING, "J4 or J5 absent"))
+    if request_snapshot is not None:
+        sn = registry.issued_snapshot(getattr(request_snapshot, "request_id", None))
+        ok = sn is not None and sn == request_snapshot and isinstance(j4, dict) and (sn.manifest_id, sn.manifest_hash) == (j4.get("manifest_id"), j4.get("manifest_hash"))
+        corr.append(("REQUEST_SNAPSHOT_SAME_GENERATION", VERIFIED_AGAINST_REGISTRY if ok else MISMATCH, "" if ok else "snapshot not issued by this registry, altered, or for a different manifest than J4"))
+    else: corr.append(("REQUEST_SNAPSHOT_SAME_GENERATION", PRESENT_UNVERIFIED, "no request snapshot supplied"))
+    corr.append(("J1_J2_J3_J6_TO_GENERATION", PRESENT_UNVERIFIED, "no source-defined key links the dataset manifest / feature set / Health / exposure ledger to a generation; not correlated, not invented"))
+    return JoinReport(tuple(out), not any(s in (MISSING, MISMATCH) for _, s, _ in list(out) + corr), tuple(corr))
