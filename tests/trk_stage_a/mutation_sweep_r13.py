@@ -26,7 +26,7 @@ M = [(BO, "    bad = sorted(set(bo) & FORBIDDEN_FIELDS)\n    if bad:", "    bad 
      (BR, "    return \"REFUSE_UNPROVEN_INDEPENDENCE\" if required else", "    return \"ALLOW_PROVEN_INDEPENDENT\" if required else"),
      (BR, "    if impact.verdict == UNAFFECTED:\n        return \"ALLOW", "    if False:\n        return \"ALLOW"),
      (FR, "    if not classes:", "    if False:"), (FR, "    if bad:", "    if False:"), (FR, "if fw_derived_predictive and augmented is None:", "if False:"),
-     (ML, '"fw_generation_identity_ref", "research_exposure_ref"):', '):')]
+     (ML, '"fw_generation_identity_ref", "research_exposure_ref", "support_ref"):', '):')]
 T = ["tests/trk_stage_a/test_r13_build_output.py", "tests/trk_stage_a/test_r13_status_event.py", "tests/trk_stage_a/test_r13_context_resolver.py", "tests/trk_stage_a/test_r14_event_causality.py",
      "tests/trk_stage_a/test_r13_fw_return.py", "tests/trk_stage_a/test_r12_blast_radius.py", "tests/trk_stage_a/test_r12_ml_augmented.py"]
 def run():

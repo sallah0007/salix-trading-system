@@ -8,7 +8,7 @@ REQUEST_CLASSES = ("GOVERNED_INTAKE_REQUEST", "STREAM_B_EXPLORATION_REQUEST")
 TARGET_CONSUMERS = ("FORWARD_WALK", "MACHINE_LEARNING", "BOTH", "UNKNOWN")
 REQUEST_CONTEXTS = ("MANUAL_CHECKUP", "FW_MANIFEST_NEED", "ML_DATASET_OR_MODEL_NEED", "DIAGNOSTIC_GAP", "RESEARCH_HYPOTHESIS", "CORRECTION", "OTHER")
 STAGES = ("PROPOSAL", "ORDER")
-# Composer V9 s7A ORDER_READY: OUTCOME_INFORMATION_ACCESS must be declared on the ORDER before build; absence cannot be inferred from forbidden-input lists.
+# Composer V9 s7A ORDER_READY: OUTCOME_INFORMATION_ACCESS must be declared on the ORDER before build; absence cannot be inferred from forbidden-input lists. This module checks the SUPPLIED record's shape only.
 OUTCOME_ACCESS_VALUES = ("FORBIDDEN", "PERMITTED_UNDER_DECLARED_FITTING_CONTRACT")
 
 def _text(rec, k, code):

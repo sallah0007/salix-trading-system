@@ -19,7 +19,7 @@ from ..coordination.recovery import resolve_unknown_commit, COMMITTED
 from ..replay import replay
 from ..authority import AuthorityRef
 from .quant_intake_adapter import (admit, reserve_authority, build_safe_intake_report, build_candidate,
-                                   QUANT_FEATURE, NO_QUANT_FEATURE, FAILED_REQUESTED_BUILD, BuildPackage)
+                                   QUANT_FEATURE, NO_QUANT_FEATURE, FAILED_REQUESTED_BUILD, BuildPackage, DutyEvidence, unresolved_mandatory)
 from ..composer.expression.canonical_encoding import encode_manifest
 from .quant_certification import certify
 from .materialization.stateful_materializer import StatefulMaterializer
@@ -45,23 +45,26 @@ class Outcome:
     accepted: Any = None           # JournalRecord of CANONICAL_ACCEPTED
     authority_ref: Optional[str] = None
     failures: list = field(default_factory=list)
+    duty_evidence: Optional[object] = None
 
     @property
     def limits(self):
         """Duties the Tracker could not determine for this outcome (class-to-structure capability compatibility; full s28 conformance). Acceptance does not certify them."""
-        return tuple(getattr(self.admission, "unverified", ())) + (("S28_FULL_CONFORMANCE", "NOT_ASSESSED_BOUNDARY"),)
+        done = self.duty_evidence.duties if isinstance(self.duty_evidence, DutyEvidence) else frozenset()
+        return tuple(u for u in getattr(self.admission, "unverified", ()) if u[0] not in done) + (("S28_FULL_CONFORMANCE", "NOT_ASSESSED_BOUNDARY"),)
 
     @property
     def accepted_ok(self):
         return self.accepted is not None
 
 class TrackerPipeline:
-    def __init__(self, *, store, claims, journals, clock, events, accepted_fit_generations=None, baseline=None, conformance_source=None):
+    def __init__(self, *, store, claims, journals, clock, events, accepted_fit_generations=None, baseline=None, conformance_source=None, duty_source=None):
         self._store, self._claims, self._journals = store, claims, journals
         self._clock, self._events = clock, events
         self._fits = dict(accepted_fit_generations or {})
         self._baseline = baseline
         self._conformance_source = conformance_source
+        self._duty_source = duty_source                      # Tracker-originated DutyEvidence provider; None (the only real state today) holds every mandatory duty
         self._mat = StatefulMaterializer(store)
 
     # ------------------------------------------------------------------ helpers
@@ -100,6 +103,12 @@ class TrackerPipeline:
             return Outcome("CLASSIFICATION", NO_QUANT_FEATURE, admission=adm)
         if not adm.admissible:
             return self._reject(pkg, adm, "ADMISSIBILITY")
+        duty_ev = None if self._duty_source is None else self._duty_source(pkg, adm)
+        held = unresolved_mandatory(adm, duty_ev)
+        if held:                                              # Parent capability-class/structure firewall + governed-before-build binding: held BEFORE claim, certify, materialize, accept
+            o = self._reject(pkg, adm, "MANDATORY_VERIFICATION_HELD", None, held)
+            o.duty_evidence = duty_ev if isinstance(duty_ev, DutyEvidence) else None
+            return o
         claim = reserve_authority(self._claims, pkg, adm)
         if claim is None:
             return self._reject(pkg, adm, "ADMISSIBILITY")
@@ -154,7 +163,7 @@ class TrackerPipeline:
         ref = AuthorityRef(fk.namespace(), accepted.seq, accepted.record_hash).to_str()
         self._events.emit("CANONICAL_ACCEPTED", attempt=pkg.attempt_id, authority=ref)
         return Outcome("CANONICAL_ACCEPTANCE", QUANT_FEATURE, report=report, admission=adm, certification=cert,
-                       materialization=rec, verification=ver, accepted=accepted, authority_ref=ref)
+                       materialization=rec, verification=ver, accepted=accepted, authority_ref=ref, duty_evidence=duty_ev)
 
     # ------------------------------------------------------------ baseline step
     def _register_baseline(self, pkg, adm, ver):

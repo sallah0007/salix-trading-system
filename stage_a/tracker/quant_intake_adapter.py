@@ -77,6 +77,29 @@ class BuildPackage:
         if self.capability_declaration is not None: d["capability_declaration"] = self.capability_declaration
         return domain_hash("SALIX_BUILD_PACKAGE_V1", canonical_bytes(d))
 
+# Duties the Tracker cannot determine from anything it reads. They are MANDATORY: an admission carrying one cannot proceed to certification/acceptance unless a Tracker-originated
+# DutyEvidence names it (pipeline.run). No such evidence provider exists in this repository; only tests construct it (ref labelled SIMULATED). No algorithm is invented.
+MANDATORY_UNVERIFIED_DUTIES = ("CAPABILITY_CLASS_STRUCTURE", "OUTCOME_ACCESS_DECLARATION_GOVERNED_BEFORE_BUILD")
+
+@dataclass(frozen=True)
+class DutyEvidence:
+    """Tracker-originated evidence that named mandatory duties were VERIFIED by a real Tracker check. Never a package field; a caller string/dict is not evidence."""
+    duties: frozenset
+    evidence_ref: str
+    def __post_init__(self):
+        if not isinstance(self.duties, frozenset) or not self.duties or not all(isinstance(d, str) for d in self.duties):
+            raise Refusal(repr(self.duties), code="DUTY_EVIDENCE_MALFORMED")
+        if not isinstance(self.evidence_ref, str) or not self.evidence_ref.strip():
+            raise Refusal("evidence_ref", code="DUTY_EVIDENCE_WITHOUT_REF")
+
+def unresolved_mandatory(adm, evidence):
+    """Mandatory duties still unverified for this admission: [(duty, reason)]. Evidence that is absent or not a DutyEvidence verifies nothing (fail closed)."""
+    verified = evidence.duties if isinstance(evidence, DutyEvidence) else frozenset()
+    out = [(d, "UNRESOLVED_MANDATORY_VERIFICATION") for d, _ in adm.unverified if d in MANDATORY_UNVERIFIED_DUTIES and d not in verified]
+    if evidence is not None and not isinstance(evidence, DutyEvidence):
+        out.append(("DUTY_EVIDENCE", "DUTY_EVIDENCE_MALFORMED"))
+    return out
+
 @dataclass
 class Admission:
     classification: str
@@ -179,6 +202,9 @@ def admit(pkg: BuildPackage, *, accepted_fit_generations: dict, conformance=None
         fail("BUILD_OUTPUT_CONTRACT", e.code)
     try:
         check_conformance(pkg.build_output, conformance, (pkg.request_record or {}).get("OUTCOME_INFORMATION_ACCESS"))            # Tracker-originated verification evidence; none supplied => FORBIDDEN is held
+        # R18: the declaration compared above comes from the request_record SUPPLIED INSIDE the BuildPackage, not from issued-order evidence (ConstructionOrder carries no declaration;
+        # ClaimService verifies order_id/subject_key/source_binding_hash/issued_by/validity only). Equality is therefore STRUCTURAL; governed-before-build binding is unverified.
+        a.unverified.append(("OUTCOME_ACCESS_DECLARATION_GOVERNED_BEFORE_BUILD", "NOT_VERIFIED_SUPPLIED_RECORD_STRUCTURAL_EQUALITY"))
     except Refusal as e:
         fail("BUILD_CONFORMANCE", e.code)
     try:
