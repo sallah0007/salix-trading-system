@@ -4,7 +4,7 @@ by returning early. `gateway=None` means the caller asked for a SHAPE-ONLY check
 from ..errors import Refusal
 from .contracts import AbsenceApplied, NonDeliveryResolution, DependencyEntry, OPTIONAL
 
-def check_dependency_outcome(o, e: DependencyEntry, gateway):
+def check_dependency_outcome(o, e: DependencyEntry, gateway, consumer_id=None):
     if not isinstance(o, (AbsenceApplied, NonDeliveryResolution)):
         raise Refusal(type(o).__name__, code="UNKNOWN_OUTCOME_TYPE")
     if o.feature_id != e.feature_id or o.feature_version != e.feature_version:
@@ -12,5 +12,5 @@ def check_dependency_outcome(o, e: DependencyEntry, gateway):
     if isinstance(o, AbsenceApplied):
         if e.requirement_class != OPTIONAL or e.absence_rule_ref is None or o.absence_handling_applied_ref != e.absence_rule_ref:
             raise Refusal("absence only via the exact governed rule", code="ABSENCE_RULE_MISMATCH")
-    if gateway is not None and gateway.outcome(o.request_id) is not o:
+    if gateway is not None and gateway.outcome(o.request_id, consumer_id) is not o:
         raise Refusal(o.request_id, code="OUTCOME_NOT_FROM_GATEWAY")          # forged / foreign / replayed outcome: not the stored immutable one

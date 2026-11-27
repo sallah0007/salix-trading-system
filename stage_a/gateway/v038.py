@@ -108,6 +108,7 @@ class FinalResolutionStore:
         self._by_identity: Dict[FinalResolutionIdentity, object] = {}
         self._req_ids: Dict[tuple, FinalResolutionIdentity] = {}      # key = (consumer_id, request_id): H1 REQUEST_ID is consumer-local
         self._inflight = set()
+        self._facts: Dict[FinalResolutionIdentity, object] = {}
         self._pins: Dict[FinalResolutionIdentity, object] = {}      # R35: evaluation parameters pinned to an identity by the caller (opaque, JSON-friendly); first writer wins
         self.evaluations = 0
     def resolve(self, request_id: str, identity: FinalResolutionIdentity, evaluate):
@@ -142,11 +143,15 @@ class FinalResolutionStore:
         with self._lock: return [(i, copy.deepcopy(o)) for i, o in self._by_identity.items()]
     def pin_of(self, identity: FinalResolutionIdentity):
         with self._lock: return copy.deepcopy(self._pins.get(identity))
-    def set_pin(self, identity: FinalResolutionIdentity, pin):
+    def set_pin(self, identity: FinalResolutionIdentity, pin, facts=None):
+        """`pin` = the GOVERNING parameters (compared on every later call). `facts` = immutable facts about the FIRST evaluation (e.g. observation time, watermark): first writer wins, NEVER compared, so a natural later retry at another clock time is not refused (Contract V0.38 52-56: a new REQUEST_ID for the same window MUST return the stored outcome)."""
         with self._lock:
             old = self._pins.get(identity)
             if old is not None and old != pin: raise Refusal(identity, code="RESOLUTION_IDENTITY_PARAMETERS_DIFFER")
             self._pins[identity] = copy.deepcopy(pin)
+            if identity not in self._facts: self._facts[identity] = copy.deepcopy(facts)
+    def facts_of(self, identity: FinalResolutionIdentity):
+        with self._lock: return copy.deepcopy(self._facts.get(identity))
     def outcome_for(self, identity: FinalResolutionIdentity):
         with self._lock: o = self._by_identity.get(identity); return None if o is None else copy.deepcopy(o)
     def identity_of(self, consumer_id: str, request_id: str):
