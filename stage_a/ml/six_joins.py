@@ -16,17 +16,22 @@ def _i(x): return type(x) is int and x >= 0
 class JoinReport:
     statuses: tuple            # ((join, status, detail), ...)
     complete: bool             # every join is VERIFIED or PRESENT_UNVERIFIED (none MISSING/MISMATCH); NOT acceptance
+    correlation: tuple = ()    # ((check, status, detail), ...): J4/J5 (and an optional issued request snapshot) must name the SAME generation; field-shape checks alone are not integrated joins
     qualified: bool = False    # never True here: writer principal, instances and acceptance are unbound
     writer_principal: str = "UNBOUND_NOT_IN_SOURCE"
 
-def check_six_joins(joins, registry, *, fence, catalog_snapshot=None) -> JoinReport:
+def check_six_joins(joins, registry, *, fence, catalog_snapshot=None, request_snapshot=None, dataset_manifests=None, consumer_binding_id=None, family_map=None, hypothesis_family_id=None) -> JoinReport:
+    """ML Integration Binding Addendum V1 s6: the dataset manifest does NOT carry a forward consumer-binding field (NOT_YET_NATIVE), so J1 is a REVERSE reference: the supplied `consumer_binding_id` (Gateway CONSUMER_BINDING.MANIFEST_OR_DATASET_BINDING_ID) must equal J1.binding_id, and a SUPPLIED `dataset_manifests` index {manifest_id: hash} must contain J1's manifest id with J1's hash. s4: a SUPPLIED `family_map` {hypothesis_family_id: research_family_id} must resolve `hypothesis_family_id` to exactly J6.family_ref. All supplied indexes are unadmitted."""
     if not isinstance(joins, dict): raise Refusal(type(joins).__name__, code="ML_JOINS_NOT_A_RECORD")
     if not _i(fence): raise Refusal("fence", code="ML_JOINS_FENCE_INVALID")
     out = []
     def add(j, st, d=""): out.append((j, st, d))
     j = joins.get("J1_DATASET_MANIFEST")
     if not (isinstance(j, dict) and set(j) == {"binding_id", "dataset_manifest_id", "dataset_manifest_hash"} and all(_s(v) for v in j.values())): add(JOINS[0], MISSING if j is None else MISMATCH, "shape")
-    else: add(JOINS[0], PRESENT_UNVERIFIED, "dataset manifest registry instance unbound")
+    elif consumer_binding_id is not None and consumer_binding_id != j["binding_id"]: add(JOINS[0], MISMATCH, "J1 binding id differs from the consumer binding's MANIFEST_OR_DATASET_BINDING_ID")
+    elif dataset_manifests is not None and dataset_manifests.get(j["dataset_manifest_id"]) != j["dataset_manifest_hash"]: add(JOINS[0], MISMATCH, "dataset manifest unknown in, or hash differs from, the SUPPLIED index")
+    elif consumer_binding_id is not None and dataset_manifests is not None: add(JOINS[0], VERIFIED_AGAINST_REGISTRY, "reverse reference equals the SUPPLIED consumer binding and dataset-manifest index (both unadmitted)")
+    else: add(JOINS[0], PRESENT_UNVERIFIED, "dataset manifest registry instance and/or consumer binding unbound")
     j = joins.get("J2_INCLUDED_FEATURES"); keys = ("feature_id", "feature_version", "definition_hash", "formula_hash", "graph_hash", "closure_ref")
     if not (isinstance(j, list) and j and all(isinstance(f, dict) and set(f) == set(keys) and all(_s(f[k]) for k in keys) for f in j)): add(JOINS[1], MISSING if j is None else MISMATCH, "shape")
     elif catalog_snapshot is None: add(JOINS[1], PRESENT_UNVERIFIED, "catalog snapshot instance unbound")
@@ -50,7 +55,20 @@ def check_six_joins(joins, registry, *, fence, catalog_snapshot=None) -> JoinRep
     j = joins.get("J6_RESEARCH_FAMILY_EXPOSURE"); keys = ("family_ref", "ledger_ref", "ledger_version", "ledger_hash", "consulted_available_asof")
     if not (isinstance(j, dict) and set(j) == set(keys) and all(_s(j[k]) for k in keys[:4]) and _i(j["consulted_available_asof"])): add(JOINS[5], MISSING if j is None else MISMATCH, "shape")
     elif j["consulted_available_asof"] >= fence: add(JOINS[5], MISMATCH, "consulted ledger AVAILABLE_ASOF not strictly before the fence")
+    elif family_map is not None and (hypothesis_family_id is None or family_map.get(hypothesis_family_id) != j["family_ref"]): add(JOINS[5], MISMATCH, "hypothesis family does not resolve to exactly this research family in the SUPPLIED map")
     else: add(JOINS[5], PRESENT_UNVERIFIED, "exposure ledger instance unbound")
     extra = sorted(set(joins) - set(JOINS))
     if extra: raise Refusal(",".join(map(str, extra)), code="ML_JOINS_UNKNOWN_JOIN")
-    return JoinReport(tuple(out), not any(s in (MISSING, MISMATCH) for _, s, _ in out))
+    corr = []
+    j4, j5 = joins.get("J4_GENERATION_COMPONENTS"), joins.get("J5_LIFECYCLE_LEDGER")
+    if isinstance(j4, dict) and isinstance(j5, dict):
+        same = (j4.get("manifest_id"), j4.get("manifest_hash")) == (j5.get("manifest_id"), j5.get("manifest_hash"))
+        corr.append(("J4_J5_SAME_GENERATION", VERIFIED_AGAINST_REGISTRY if same else MISMATCH, "" if same else "J4 components and J5 ledger name different manifest id/hash"))
+    else: corr.append(("J4_J5_SAME_GENERATION", MISSING, "J4 or J5 absent"))
+    if request_snapshot is not None:
+        sn = registry.issued_snapshot(getattr(request_snapshot, "request_id", None))
+        ok = sn is not None and sn == request_snapshot and isinstance(j4, dict) and (sn.manifest_id, sn.manifest_hash) == (j4.get("manifest_id"), j4.get("manifest_hash"))
+        corr.append(("REQUEST_SNAPSHOT_SAME_GENERATION", VERIFIED_AGAINST_REGISTRY if ok else MISMATCH, "" if ok else "snapshot not issued by this registry, altered, or for a different manifest than J4"))
+    else: corr.append(("REQUEST_SNAPSHOT_SAME_GENERATION", PRESENT_UNVERIFIED, "no request snapshot supplied"))
+    corr.append(("J1_J2_J3_J6_TO_GENERATION", PRESENT_UNVERIFIED, "no source-defined key links the dataset manifest / feature set / Health / exposure ledger to a generation; not correlated, not invented"))
+    return JoinReport(tuple(out), not any(s in (MISSING, MISMATCH) for _, s, _ in list(out) + corr), tuple(corr))

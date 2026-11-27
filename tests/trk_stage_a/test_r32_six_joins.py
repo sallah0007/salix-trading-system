@@ -39,3 +39,39 @@ class Joins(unittest.TestCase):
         r = reg("M1"); d = good(r); e0 = r.epoch; r.append_lifecycle("M1", "REVOKED", 50, "x", "A")
         self.assertEqual(self.st(SJ.check_six_joins(d, r, fence=10))["J5_LIFECYCLE_LEDGER"], SJ.VERIFIED_AGAINST_REGISTRY)           # the recorded epoch is still a real ledger epoch (history is append-only)
         d["J5_LIFECYCLE_LEDGER"]["epoch"] = r.epoch + 1; self.assertEqual(self.st(SJ.check_six_joins(d, r, fence=10))["J5_LIFECYCLE_LEDGER"], SJ.MISMATCH)
+
+class Correlation(unittest.TestCase):
+    """R33 finding: J4 and J5 were each valid but never correlated - M1 components with M2's ledger reported complete."""
+    def corr(self, rep): return {c: s for c, s, _ in rep.correlation}
+    def test_same_generation_positive_and_cross_generation_is_a_mismatch(self):
+        from .test_r29_generation_lifecycle import ev
+        r = reg("M1", "M2"); d = good(r)
+        rep = SJ.check_six_joins(d, r, fence=10); self.assertTrue(rep.complete); self.assertEqual(self.corr(rep)["J4_J5_SAME_GENERATION"], SJ.VERIFIED_AGAINST_REGISTRY)
+        m2 = r.manifest_of("M2"); d["J5_LIFECYCLE_LEDGER"] = {"manifest_id": "M2", "manifest_hash": m2.manifest_hash, "epoch": r.epoch}              # both individually VALID
+        rep = SJ.check_six_joins(d, r, fence=10); self.assertEqual({j: s for j, s, _ in rep.statuses}["J5_LIFECYCLE_LEDGER"], SJ.VERIFIED_AGAINST_REGISTRY)
+        self.assertEqual((self.corr(rep)["J4_J5_SAME_GENERATION"], rep.complete, rep.qualified), (SJ.MISMATCH, False, False))
+        d = good(r); d["J5_LIFECYCLE_LEDGER"]["manifest_hash"] = m2.manifest_hash                                                                          # known-foreign hash under M1's id
+        self.assertFalse(SJ.check_six_joins(d, r, fence=10).complete)
+    def test_request_snapshot_must_be_issued_by_this_registry_for_the_same_manifest(self):
+        from .test_r29_generation_lifecycle import ev
+        import dataclasses
+        r = reg("M1", "M2"); d = good(r); s1 = r.snapshot("q1", ev(), "M1", 100); s2 = r.snapshot("q2", ev(), "M2", 100)
+        self.assertEqual(self.corr(SJ.check_six_joins(d, r, fence=10, request_snapshot=s1))["REQUEST_SNAPSHOT_SAME_GENERATION"], SJ.VERIFIED_AGAINST_REGISTRY)
+        for bad in (s2, dataclasses.replace(s1, manifest_hash="x"), dataclasses.replace(s1, request_id="never-issued"), dataclasses.replace(s1, epoch_at_snapshot=s1.epoch_at_snapshot + 1)):
+            rep = SJ.check_six_joins(d, r, fence=10, request_snapshot=bad); self.assertEqual((self.corr(rep)["REQUEST_SNAPSHOT_SAME_GENERATION"], rep.complete), (SJ.MISMATCH, False))
+    def test_unlinkable_joins_are_reported_not_invented_and_never_qualified(self):
+        r = reg("M1"); rep = SJ.check_six_joins(good(r), r, fence=10); self.assertEqual(self.corr(rep)["J1_J2_J3_J6_TO_GENERATION"], SJ.PRESENT_UNVERIFIED); self.assertFalse(rep.qualified)
+
+class ReverseJ1AndFamily(unittest.TestCase):
+    def st(self, rep): return {j: s for j, s, _ in rep.statuses}
+    def test_j1_is_a_reverse_reference_verified_only_against_supplied_binding_and_index(self):
+        r = reg("M1"); d = good(r); idx = {"dm1": "h1"}
+        self.assertEqual(self.st(SJ.check_six_joins(d, r, fence=10, dataset_manifests=idx, consumer_binding_id="b1"))["J1_DATASET_MANIFEST"], SJ.VERIFIED_AGAINST_REGISTRY)
+        self.assertEqual(self.st(SJ.check_six_joins(d, r, fence=10, dataset_manifests=idx))["J1_DATASET_MANIFEST"], SJ.PRESENT_UNVERIFIED)           # index alone: no consumer binding => not verified
+        for kw in ({"dataset_manifests": {"dm1": "other"}, "consumer_binding_id": "b1"}, {"dataset_manifests": {}, "consumer_binding_id": "b1"}, {"dataset_manifests": idx, "consumer_binding_id": "b-other"}):
+            rep = SJ.check_six_joins(d, r, fence=10, **kw); self.assertEqual((self.st(rep)["J1_DATASET_MANIFEST"], rep.complete), (SJ.MISMATCH, False))
+    def test_hypothesis_family_must_resolve_to_exactly_the_j6_family(self):
+        r = reg("M1"); d = good(r)
+        self.assertEqual(self.st(SJ.check_six_joins(d, r, fence=10, family_map={"h": "fam"}, hypothesis_family_id="h"))["J6_RESEARCH_FAMILY_EXPOSURE"], SJ.PRESENT_UNVERIFIED)
+        for kw in ({"family_map": {"h": "other"}, "hypothesis_family_id": "h"}, {"family_map": {"h": "fam"}, "hypothesis_family_id": "unknown"}, {"family_map": {"h": "fam"}}):
+            self.assertEqual(self.st(SJ.check_six_joins(d, r, fence=10, **kw))["J6_RESEARCH_FAMILY_EXPOSURE"], SJ.MISMATCH)

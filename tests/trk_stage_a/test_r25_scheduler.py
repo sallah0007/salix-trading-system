@@ -184,3 +184,28 @@ class TriggeredPass(unittest.TestCase):
             self.assertEqual(code(S.run_triggered_pass, c, self.b, ["BASE"], [], slots=self.slots(**{n: {"value": 5, "source_ref": ""}}), costs={}, now=11, pass_id="x"), "POLICY_SLOT_UNBOUND:" + n)
         self.assertEqual(code(S.run_triggered_pass, c, self.b, ["BASE"], [], slots=dict(self.slots(), cadence={"value": 1, "source_ref": "r"}), costs={}, now=11, pass_id="x"), "POLICY_SLOT_UNKNOWN")
         self.assertEqual(c.recording_health("BASE", "1", 12).state, "HEALTHY"); self.assertEqual(S.run_triggered_pass(c, self.b, ["BASE"], [], slots=self.slots(), costs={}, now=11, pass_id="ok"), [])                 # BASE fresh: nothing due, nothing run
+
+class UnrelatedBaselineResolvedAtTheGateway(unittest.TestCase):
+    """R33: the unrelated baseline is RESOLVED AT THE GATEWAY (its own feature, binding, published row and chain status), not only checked with `hb.acceptable`, while the dependent with an unknown ancestor is denied."""
+    def test_dependent_denied_and_baseline_delivered_through_the_same_gateway(self):
+        from .strict_gateway import sgw
+        from .test_boundaries import _row, C
+        F2 = b"\x02" * 16
+        c = core(); b1 = G.HealthBinding(I, "1", I, I); b2 = G.HealthBinding(F2, "1", I, I)
+        c.declare_dependency(KEY, "UP")
+        for k in (KEY, "UP", "BASE"): ver(c, k, version="1", at=10, age=50)
+        c.associate_subject(KEY, b1, "assoc1"); c.associate_subject("BASE", b2, "assoc2"); c.declare_ancestry_complete("BASE", "src")
+        gw = sgw(c); gw.publish(_row(fid=F2, ver="1")); gw.status.append(C.StatusFact((F2, "1", I, I, "m1"), 1, C.CURRENT, 1, False))
+        hd = c.gateway_health(KEY, "1", 12, R("hl"), 11, binding=b1, require_ancestry=True)           # UP undeclared => UNKNOWN
+        hb = c.gateway_health("BASE", "1", 12, R("hl"), 11, binding=b2, require_ancestry=True)
+        dep = gw.resolve("dep", _entry(ver="1"), I, I, 3, 20, hd)
+        base = gw.resolve("base", _entry(fid=F2, ver="1"), I, I, 3, 20, hb)
+        self.assertNotIsInstance(dep, G.Binding); self.assertEqual(dep.reason, "HEALTH_UNACCEPTABLE")
+        self.assertIsInstance(base, G.Binding)                                                               # the unrelated baseline is actually DELIVERED
+        self.assertNotIsInstance(gw.resolve("cross", _entry(fid=F2, ver="1"), I, I, 3, 20, hd), G.Binding)   # a snapshot for another subject cannot deliver the baseline entry
+
+class SlotShape(TriggeredPass):
+    def test_slot_records_with_extra_keys_are_refused(self):
+        c = core()
+        for n in S.SLOT_NAMES:
+            sl = self.slots(); sl[n] = dict(sl[n], extra="x"); self.assertEqual(code(S.run_triggered_pass, c, self.b, [], [], slots=sl, costs={}, now=11, pass_id="x"), "POLICY_SLOT_UNBOUND:" + n)
