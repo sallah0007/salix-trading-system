@@ -135,6 +135,10 @@ class FinalResolutionStore:
                 raise
             finally:
                 self._inflight.discard(identity)
+    def outcome_for(self, identity: FinalResolutionIdentity):
+        with self._lock: return self._by_identity.get(identity)
+    def identity_of(self, consumer_id: str, request_id: str):
+        with self._lock: return self._req_ids.get((consumer_id, request_id))
     def late_dependency_mutates(self, identity: FinalResolutionIdentity):
         with self._lock:
             if identity in self._by_identity:
