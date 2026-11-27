@@ -14,7 +14,6 @@ class ClaimService:
     (compare-and-append on the journal head). No caller-supplied authority."""
     def __init__(self, journal, anchor: TrustAnchor, max_fence_retries: int = 3):
         self._j = journal
-        self.authority_class = getattr(journal, "authority_class", "QUALIFIED")
         self._anchor = anchor
         self._p = Projection()
         self._max = max_fence_retries

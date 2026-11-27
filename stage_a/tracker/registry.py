@@ -9,7 +9,7 @@ class FeatureJournalSet:
     @property
     def authority_class(self) -> str:
         from ..storage.authority_class import authority_class_of
-        return authority_class_of(self._store)
+        return authority_class_of(self)
     def journal(self, namespace: str) -> ObjectStoreJournal:
         with self._lock:
             j = self._js.get(namespace)

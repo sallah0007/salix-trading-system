@@ -12,14 +12,14 @@ PRES = ("EVENTS_PRESENT", "NO_EVENT_RECORDED", "UNKNOWN", "NOT_EVALUATED")
 def actual_available_asof(actual_present: bool, publicly_available_at: Optional[int], salix_received_at: Optional[int],
                           decision_cutoff: int) -> Optional[int]:
     """ACTUAL_AVAILABLE_ASOF = max(public, SALIX receipt). Missing either while ACTUAL present => fail closed. Consumable only
-    when <= decision cutoff (the document states <=, not the Gateway's half-open <; the difference is recorded as D14)."""
+    STRICTLY BEFORE the applicable Tracker snapshot fence / decision fence (equality excluded). R21 (D14 reconciliation): the Matrix-current frozen Stage A Blueprint s28 clause (NEWS-02/03, 1xf9Lv0q... para 393 and s29.1) says the frozen half-open fence governs and that retained News Hub wording `<= decision cutoff` is SUBORDINATE and awaits a governed successor. The cutoff passed here is therefore treated AS the fence ('SNAPSHOT_FENCE_TS / decision fence' in that clause). Still OPEN: the exact field relationship between a consumer's decision cutoff and the Tracker snapshot fence where they could differ (not stated in any source read); until recorded, callers must pass the fence."""
     if not actual_present:
         return None
     if publicly_available_at is None or salix_received_at is None:
         raise Refusal("ACTUAL present without both availability timestamps", code="ACTUAL_NOT_CAUSALLY_CONSUMABLE")
     asof = max(publicly_available_at, salix_received_at)
-    if asof > decision_cutoff:
-        raise Refusal("ACTUAL after decision cutoff", code="ACTUAL_AFTER_CUTOFF")
+    if asof >= decision_cutoff:
+        raise Refusal("ACTUAL not strictly before the fence", code="ACTUAL_AFTER_CUTOFF")
     return asof
 
 def check_dimensions(req, src, cov, pres, coverage_basis=None, optional_degraded_policy_ref=None,
@@ -35,7 +35,7 @@ def check_dimensions(req, src, cov, pres, coverage_basis=None, optional_degraded
         raise Refusal("COMPLETE requires exact COVERAGE_BASIS", code="COMPLETE_WITHOUT_BASIS")
     if src == "UNAVAILABLE" and cov == "COMPLETE":
         ok = prior_coverage_contains_window is True and prior_coverage_issued_at is not None and decision_cutoff is not None \
-             and prior_coverage_issued_at <= decision_cutoff
+             and prior_coverage_issued_at < decision_cutoff
         if not ok:
             raise Refusal("UNAVAILABLE+COMPLETE needs a prior immutable coverage object containing the window",
                           code="UNAVAILABLE_COMPLETE_INVALID")
@@ -54,8 +54,8 @@ def check_dimensions(req, src, cov, pres, coverage_basis=None, optional_degraded
     return "USABLE"
 
 def daily_record_joinable(issued_at: int, bar_or_decision_time: int) -> bool:
-    """A DAILY_EVENT_STATE_RECORD may not join to any time earlier than ISSUED_AT."""
-    return bar_or_decision_time >= issued_at
+    """NEWS-03: the record's ISSUED_AT-derived availability must be STRICTLY before the fence; a record issued exactly at the fence is excluded (half-open)."""
+    return bar_or_decision_time > issued_at
 
 def missing_daily_record() -> str:
     """A missing DAILY_EVENT_STATE_RECORD is UNKNOWN / alarm, never a quiet-day inference."""
@@ -139,30 +139,30 @@ def check_daily_record(rec: dict) -> None:
                      rec.get("PRIOR_COVERAGE_ISSUED_AT"), rec["ISSUED_AT"])
 
 def event_consumable(ev: dict, cutoff: int):
-    """(consumable: bool, reason). Consumable at a decision cutoff only when EVERY causal stamp is a verified integer <= cutoff: REVISION_AVAILABLE_AT (sec 9.0 revision rule),
+    """(consumable: bool, reason). Consumable at a decision cutoff only when EVERY causal stamp is a verified integer STRICTLY < cutoff (half-open fence, equality excluded; NEWS-02/03 frozen clause): REVISION_AVAILABLE_AT (sec 9.0 revision rule),
     PUBLICLY_AVAILABLE_AT and SALIX_RECEIVED_AT (sec 9.0 keeps them distinct and forbids backfilling a publicly-earlier fact into an earlier SALIX state, so SALIX receipt must
     also be <= cutoff), the general AVAILABLE_ASOF, and ACTUAL_AVAILABLE_ASOF when ACTUAL is present. DERIVATION (fail-closed, NOT a source formula): AVAILABLE_ASOF earlier
     than max(PUBLIC, RECEIPT) is withheld. Per-value stamps gate consensus/previous: unstamped => withheld. Malformed/missing stamps raise rather than compare."""
     if not _is_ts(cutoff):
         raise Refusal("decision cutoff", code="CUTOFF_MALFORMED")
     check_event_record(ev)                                                              # never rely on the caller having validated
-    if ev["REVISION_AVAILABLE_AT"] > cutoff:
+    if ev["REVISION_AVAILABLE_AT"] >= cutoff:
         return False, "REVISION_NOT_YET_AVAILABLE"
-    if ev["PUBLICLY_AVAILABLE_AT"] > cutoff:
+    if ev["PUBLICLY_AVAILABLE_AT"] >= cutoff:
         return False, "PUBLICLY_NOT_YET_AVAILABLE"
-    if ev["SALIX_RECEIVED_AT"] > cutoff:
+    if ev["SALIX_RECEIVED_AT"] >= cutoff:
         return False, "SALIX_NOT_YET_RECEIVED"
-    if ev["AVAILABLE_ASOF"] > cutoff:
+    if ev["AVAILABLE_ASOF"] >= cutoff:
         return False, "AVAILABLE_ASOF_AFTER_CUTOFF"
     if ev["AVAILABLE_ASOF"] < max(ev["PUBLICLY_AVAILABLE_AT"], ev["SALIX_RECEIVED_AT"]):
         return False, "AVAILABLE_ASOF_BEFORE_PUBLIC_OR_RECEIPT"
-    if _has(ev, ("ACTUAL_VALUE", "ACTUAL")) and ev["ACTUAL_AVAILABLE_ASOF"] > cutoff:
+    if _has(ev, ("ACTUAL_VALUE", "ACTUAL")) and ev["ACTUAL_AVAILABLE_ASOF"] >= cutoff:
         return False, "ACTUAL_NOT_YET_AVAILABLE"
     for a, b, stamp in VALUE_STAMPS:
         if _has(ev, (a, b)):
             if ev.get(stamp) is None:
                 return False, stamp + "_MISSING_VALUE_UNVERIFIED"
-            if ev[stamp] > cutoff:
+            if ev[stamp] >= cutoff:
                 return False, stamp + "_AFTER_CUTOFF"
     return True, ""
 

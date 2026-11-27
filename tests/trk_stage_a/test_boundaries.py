@@ -265,7 +265,7 @@ def test_ml_row_negatives_and_explicit_exclusion():
     assert row_.included
     with pytest.raises(Refusal): ML.build_row("r", R("gen"), [_entry()], [b], _gw(avail=9), "ORIGINAL_AS_OBSERVED", NONE_, lambda o: NONE_)   # F4 no Gateway rebind
     with pytest.raises(Refusal): ML.build_row("r", R("gen"), [_entry()], [b], gw, "EVENTUAL", NONE_, lambda o: NONE_)                        # EVENTUAL look-ahead/mixed era
-    nd = _gw().resolve("z", _entry(fid=J), I, I, 3, 10, _health())
+    nd = gw.resolve("z", _entry(fid=J), I, I, 3, 10, _health())
     ex = ML.build_row("r", R("gen"), [_entry(fid=J)], [nd], gw, "ORIGINAL_AS_OBSERVED", NONE_, lambda o: ("ENUM", "REASON", "NONE"))
     assert not ex.included and ex.row_exclusion_reason is not None                                                                               # explicit, not silent drop
     with pytest.raises(Refusal): ML.build_row("r", R("gen"), [_entry()], [0.0], gw, "ORIGINAL_AS_OBSERVED", NONE_, lambda o: NONE_)          # default/forward fill not representable

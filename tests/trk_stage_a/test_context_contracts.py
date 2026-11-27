@@ -7,7 +7,8 @@ def test_actual_availability_is_max_and_fails_closed():
     assert N.actual_available_asof(False, None, None, 10) is None
     assert N.actual_available_asof(True, 5, 8, 10) == 8
     assert N.actual_available_asof(True, 9, 3, 10) == 9
-    assert N.actual_available_asof(True, 5, 10, 10) == 10                       # document says <= cutoff (D14 vs Gateway half-open)
+    assert N.actual_available_asof(True, 5, 9, 10) == 9                         # strictly before the fence
+    with pytest.raises(Refusal): N.actual_available_asof(True, 5, 10, 10)       # equality EXCLUDED (frozen Blueprint s28 NEWS-02: half-open fence)
     for a, b in ((None, 5), (5, None)):
         with pytest.raises(Refusal): N.actual_available_asof(True, a, b, 10)
     with pytest.raises(Refusal): N.actual_available_asof(True, 5, 11, 10)
@@ -32,13 +33,14 @@ def test_unavailable_complete_needs_prior_object_containing_window():
     with pytest.raises(Refusal): N.check_dimensions(*base, coverage_basis="b")
     with pytest.raises(Refusal): N.check_dimensions(*base, coverage_basis="b", prior_coverage_contains_window=False, prior_coverage_issued_at=1, decision_cutoff=5)
     with pytest.raises(Refusal): N.check_dimensions(*base, coverage_basis="b", prior_coverage_contains_window=True, prior_coverage_issued_at=6, decision_cutoff=5)
-    assert N.check_dimensions(*base, coverage_basis="b", prior_coverage_contains_window=True, prior_coverage_issued_at=5, decision_cutoff=5) == "USABLE"
+    assert N.check_dimensions(*base, coverage_basis="b", prior_coverage_contains_window=True, prior_coverage_issued_at=4, decision_cutoff=5) == "USABLE"
+    with pytest.raises(Refusal): N.check_dimensions(*base, coverage_basis="b", prior_coverage_contains_window=True, prior_coverage_issued_at=5, decision_cutoff=5)     # equality excluded
 
 def test_optional_degraded_needs_policy_and_joins_respect_issued_at():
     with pytest.raises(Refusal): N.check_dimensions("OPTIONAL", "AVAILABLE", "PARTIAL", "UNKNOWN")
     assert N.check_dimensions("OPTIONAL", "AVAILABLE", "PARTIAL", "UNKNOWN", optional_degraded_policy_ref="p") == "USABLE"
     assert N.check_dimensions("OPTIONAL", "AVAILABLE", "COMPLETE", "EVENTS_PRESENT", coverage_basis="b") == "USABLE"
-    assert N.daily_record_joinable(10, 10) and not N.daily_record_joinable(10, 9)
+    assert N.daily_record_joinable(10, 11) and not N.daily_record_joinable(10, 10) and not N.daily_record_joinable(10, 9)       # NEWS-03: issued exactly at the fence is excluded
     assert N.missing_daily_record() == "UNKNOWN"
 
 def _env(**kw):

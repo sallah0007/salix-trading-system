@@ -43,12 +43,10 @@ class Resolution(unittest.TestCase):
         for a in ("authorizes_claim", "authorizes_resurrection", "authorizes_delivery", "authorizes_near_match_substitution"): self.assertIs(getattr(t, a), False)
         self.assertTrue(all(r.is_current is False for r in rows))                          # input rows untouched
 class Callpath(unittest.TestCase):
-    def test_terminal_notes_from_the_real_lookup_result(self):
+    def test_subject_terminal_identities_from_the_real_subject(self):
         rows = [A("b"), rec("b", survivor="c"), rec("c", current=True, state="CURRENT")]; lk, store = lookup(rows)
-        lk2 = T.identity_lookup(store=store, subject=T.subject(), request_id="REQ-T2", search_policy=T.complete_policy(), normalizer=T.normalizer())
-        notes = TI.terminal_notes(lk2, store.all())
-        self.assertEqual(notes, ["TERMINAL_IDENTITY_HINT:'returns.1bar'>'c':'CURRENT':CURRENT_SURVIVOR"])
-        self.assertEqual(TI.terminal_notes(type("L", (), {"errors": ("OTHER",)})(), store.all()), [])
+        res = TI.subject_terminal_identities(T.subject(), store.all(), T.normalizer())
+        self.assertEqual([(t.start_id, t.terminal_id, t.terminal_state, t.status) for t in res], [("returns.1bar", "c", "CURRENT", TI.CURRENT_SURVIVOR)])
     def test_pipeline_baseline_failure_reports_the_terminal_identity_and_still_fails_closed(self):
         from tests.trk_stage_a.fixtures import Rig, package
         from tests.trk_stage_a.test_pipeline import baseline_binding
@@ -65,9 +63,12 @@ class Callpath(unittest.TestCase):
         rig = Rig(baseline=bb); rig.issue(p); o = rig.pipe.run(p)
         self.assertFalse(o.accepted_ok); self.assertEqual(o.stage, "BASELINE_REGISTRATION")
         msgs = [m for _, m in o.failures]
-        self.assertTrue(any(m.startswith("TERMINAL_IDENTITY_HINT:'old.mom3'>'succ':'REJECTED_INVALID':TERMINAL_NONCURRENT") for m in msgs), msgs)
+        t, = o.terminal_identities                                                           # typed, subject-bound (derived from the recomputed content key), not diagnostic text
+        self.assertEqual((t.start_id, t.terminal_id, t.terminal_state, t.status, t.terminal_facts[8]), ("old.mom3", "succ", "REJECTED_INVALID", TI.TERMINAL_NONCURRENT, "REJECTED_INVALID"))
+        self.assertIn("CANONICAL_SURVIVOR_REPORT_SLOT", dict(o.limits)); self.assertIsNone(o.report["CANONICAL_SURVIVOR"])      # report encoding is UNBOUND: not substituted by strings
+        self.assertFalse(any("TERMINAL_IDENTITY" in m for m in msgs))
         self.assertEqual(rig.claims.claim("CLAIM:REQ-1")["state"], "RELEASED")              # no new claim authority was created
-    def test_pipeline_does_not_report_a_foreign_instrument_chain(self):
+    def test_pipeline_reports_only_the_subjects_match_not_unrelated_same_scope_rows(self):
         from tests.trk_stage_a.fixtures import Rig, package
         from tests.trk_stage_a.test_pipeline import baseline_binding
         from stage_a.tracker.quant_intake_adapter import admit
@@ -77,13 +78,13 @@ class Callpath(unittest.TestCase):
         old = T.keyed_row(key, feature_id="old.mom3", current=False, scope="canonical_survivor_discarded")
         old = FeatureIdentity(**{**old.__dict__, "lifecycle_state": "RETIRED", "canonical_survivor": "succ"})
         succ = rec("succ", state="REJECTED_INVALID")
-        old = FeatureIdentity(**{**old.__dict__, "instrument": "OTHERFX", "timeframe": d.timeframe}); succ = FeatureIdentity(**{**succ.__dict__, "instrument": "OTHERFX", "timeframe": d.timeframe})   # same identity scope as the package
+        old = FeatureIdentity(**{**old.__dict__, "instrument": d.instrument, "timeframe": d.timeframe}); succ = FeatureIdentity(**{**succ.__dict__, "instrument": d.instrument, "timeframe": d.timeframe})   # same identity scope as the package
         bb = baseline_binding()
-        with mock.patch.object(S, "_fixture_seeding_permitted", lambda: True): bb.store._fixture_write_records([old, succ]) if hasattr(bb.store, "_fixture_write_records") else T.seed_fixture(bb.store, [old, succ])
+        with mock.patch.object(S, "_fixture_seeding_permitted", lambda: True): bb.store._fixture_write_records([old, succ, rec("unrelated", survivor="z"), rec("z", state="RETIRED")]) if hasattr(bb.store, "_fixture_write_records") else T.seed_fixture(bb.store, [old, succ, rec("unrelated", survivor="z"), rec("z", state="RETIRED")])
         rig = Rig(baseline=bb); rig.issue(p); o = rig.pipe.run(p)
         self.assertFalse(o.accepted_ok); self.assertEqual(o.stage, "BASELINE_REGISTRATION")
         msgs = [m for _, m in o.failures]
-        self.assertFalse(any(m.startswith("TERMINAL_IDENTITY_HINT") for m in msgs), msgs)
+        self.assertEqual([t.start_id for t in o.terminal_identities], ["old.mom3"])                  # the unrelated same-scope start is NOT reported
         self.assertEqual(rig.claims.claim("CLAIM:REQ-1")["state"], "RELEASED")              # no new claim authority was created
 if __name__ == "__main__": unittest.main()
 if __name__ == "__main__": unittest.main()
