@@ -1,0 +1,13 @@
+# Source locator note (pointers only; no private whole-body copy)
+FULL Drive IDs so they cannot be abbreviated by compaction. Status words are as reported by Codex/Manager or read by the Coder; none is a gate.
+- Build Plan (STAGE A CURRENT BUILD PLAN, Matrix V5 / Connected Contract V0.38): `1CVUUPJ4GSOqQiDxZgsFjzu6_R0dKZU9Tn_nEnaBHyRo` — E-03 final module map, TR matrix s27, s11-s14. Coder-read R26 (text sha256 `5c0a02d510aaf5dc986138fd2b899e447e25d97b19b476a104fa02854249c5cf`).
+- Matrix: `1RRZD4i_81Q4L6koxqyNs4INELOuI8aKVupznM-aBmTc` (paras 1068-1096 elect Parent/Annex as governed Matrix-pinned adjuncts).
+- Registry / version-relationship (DISTINCT; not a whole-Tracker freeze): `1eZThdektQNUc5uCNOM96K_rquZYOBoPMonjI3kX4CHo`. Coder-read R26.
+- Frozen Blueprint: `1xf9Lv0qCoUkGaJ5k_MBDvOzm_W19SosiDZMey454wRA` (current body through para 1189 only).
+- Frozen Parent: `1i5P8zxQmvBDKz397BxIUKM8AnBY00-ItzLMOjNGOkRM`; frozen Typed Annex: `13PE_pli3ZlFjjPdhHtWtLyyH2XdAv8XGA4FN0KGcIlA` (open status overlays 1-13 and Matrix 1068-1096; predecessor `1GXX...` is not the frozen home).
+- Composer V9: `1aMYAmh5i7ogdQ0vIInPKki3lCSV4Nwotx48zllZhfVw` (s7A/27/28). Decision Context V4: `1dwGRh2EOxzhQGwV6x6TS4K5FFTu3_TJaES4R4BpW-PQ`. News Hub V2: `1GSaxvVSkRmJDOgr7SqbPO2vHmuWEASVHzmn6Nuc5Ehw`.
+- MLCore: `1cf1uR0wJLPVsWitIy9aVLM9CZPk2fyd4bP_3tFyLKrw`. Connected Contract V0.38: `1neiQsQ9AG-QKdyMgOqJxXE026D0uY___yhfGaTlIJ8Y`. Master Health V3: `1paXK6vPORaZ4QtQo3Vv3f49h7w2oHVt1-McSC2g6Bkk`.
+- Frozen Tracker DOCX: `15mPi14mG5MAOerZTnhbWfWXwcOIpzWsA` (55,918 B, sha256 `ecaa9af35c712dbc38bdfe8a22b1cb81406a13a6db46cf640caeca89b5f3de4c`).
+- A04 raw mapping: `12h77ZuFRezmZr4_8Zrs1BDyYUtpnoMlI` (61967 B, sha256 `ea9e7949397dd1e9ad001334425fdfeb96706d7eadca67bd043496d6ec91dfc0`). C25 raw: `1GuI4R58P3G8x9mo5NY9fGurA_Cq-lNjG` (162037 B, sha256 `cd47a366f4cd49bef008bc97bfb8fcf04c5bb49f50fbd883cd875bcc82d20013`). Producer bindings remain unadmitted/null; shape is not admission.
+- A07 source-review extract zip: `1Avpm0dFCr5jH-ax6WhPXSXpV4jQMtY4m`; member `V235_CROSSWALK_CANDIDATE.json` sha256 `282d0fd2d541562ca956b973e9aa9b4888ee302ca06d37cf1948cd382f9ad7fb`.
+- NOT the module-map source: change register `1ddBOTaD9rdOq9_OzJVAZXXIgdl-m2mMH` (sha256 `b5762085a0403bb62ec3d466131a25642a42e9664de2879ec9c5529460d8caca`).

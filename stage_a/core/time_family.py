@@ -56,9 +56,41 @@ def latest_visible_parent(parents, query_asof: int) -> ParentSelection:
     seen = {}
     for pid, asof, complete in parents:
         if pid in seen and seen[pid][0] != asof: raise Refusal(str(pid), code="PARENT_LISTED_WITH_TWO_AVAILABILITIES")
+        if pid in seen and seen[pid][1] != complete: raise Refusal(str(pid), code="PARENT_LISTED_WITH_CONFLICTING_COMPLETENESS")      # conflicting facts are held, never last-wins/order-dependent
         seen[pid] = (asof, complete)
     vis = {pid: a for pid, (a, c) in seen.items() if c is True and parent_visible_asof(a, query_asof)}
     if not vis: return ParentSelection(NONE_VISIBLE)
     top = max(vis.values()); tied = sorted((str(p) for p, a in vis.items() if a == top))
     if len(tied) > 1: return ParentSelection(MULTIPLE_CANDIDATES, None, top, tuple(tied))
     pid = [p for p, a in vis.items() if a == top][0]; return ParentSelection(SELECTED, pid, top)
+
+# ---- R26: multi-stream snapshot with explicit PER-TIMEFRAME resolved vintage/watermark (Registry: one common query/as-of boundary + explicit per-timeframe vintage/watermark; no false simultaneity) ----
+RESOLVED, UNRESOLVED = "RESOLVED", "UNRESOLVED"
+@dataclass(frozen=True)
+class StreamView:
+    """One timeframe's candidate sealed (COMPLETE) parents, plus the vintage and currentness watermark resolved FOR THAT timeframe. Vintage/watermark values and their freshness policy are caller/source supplied (not invented)."""
+    parents: tuple; vintage: str; watermark: int
+@dataclass(frozen=True)
+class SnapshotEntry:
+    timeframe: str; selection: ParentSelection; vintage: object; watermark: object; state: str; reasons: tuple
+@dataclass(frozen=True)
+class SnapshotResolution:
+    query_asof: int; entries: tuple; state: str      # RESOLVED only if every timeframe is uniquely selected with its own vintage and watermark; otherwise UNRESOLVED (no partial 'simultaneous' claim)
+    def entry(self, tf): return next(e for e in self.entries if e.timeframe == tf)
+
+def resolve_snapshot(registry: TimeframeRegistry, query_asof: int, streams: dict) -> SnapshotResolution:
+    """Every timeframe resolves as-of the SAME query_asof (half-open, no back-projection) but keeps its OWN vintage and watermark; a scalar vintage/watermark shared across timeframes is refused. Ambiguity, absence,
+    missing vintage or malformed watermark leaves that entry and the whole snapshot UNRESOLVED; nothing is picked by order and no policy is invented."""
+    if not _int(query_asof) or query_asof < 0: raise Refusal("query_asof", code="ASOF_MALFORMED")
+    if not isinstance(streams, dict) or not streams: raise Refusal("streams", code="SNAPSHOT_STREAMS_INVALID")
+    out = []
+    for tf in sorted(streams):                        # sorted for a deterministic report only: the entry content never depends on order
+        registry.require(tf); v = streams[tf]
+        if not isinstance(v, StreamView): raise Refusal(tf, code="SNAPSHOT_STREAM_NOT_PER_TIMEFRAME")
+        sel = latest_visible_parent(list(v.parents), query_asof); why = []
+        if sel.state == NONE_VISIBLE: why.append("NO_SEALED_PARENT_VISIBLE")
+        if sel.state == MULTIPLE_CANDIDATES: why.append("AMBIGUOUS_PARENT")
+        if not (isinstance(v.vintage, str) and v.vintage): why.append("VINTAGE_NOT_RESOLVED")
+        if not _int(v.watermark) or v.watermark < 0: why.append("WATERMARK_NOT_RESOLVED")
+        out.append(SnapshotEntry(tf, sel, v.vintage if isinstance(v.vintage, str) and v.vintage else None, v.watermark if _int(v.watermark) and v.watermark >= 0 else None, UNRESOLVED if why else RESOLVED, tuple(why)))
+    return SnapshotResolution(query_asof, tuple(out), RESOLVED if all(e.state == RESOLVED for e in out) else UNRESOLVED)

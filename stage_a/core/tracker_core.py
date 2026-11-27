@@ -51,7 +51,7 @@ class TrackerCore:
 
     # ---- replay: pure function of the journal up to a given sequence ---------------------------
     def _replay(self, upto=None):
-        st = dict(obs={}, cands={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={}, reviews={}, tasks={})
+        st = dict(obs={}, cands={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={}, reviews={}, tasks={}, authev={}, xform={})
         for r in self._j.read_from(0):
             if upto is not None and r.seq > upto: break
             b = json.loads(r.body_json); k = r.kind
@@ -85,6 +85,8 @@ class TrackerCore:
             elif k == "Q_REACTIVATE": st["q"][b["subject"]]["status"] = "ACTIVE"; st["reverify"][b["subject"]] = r.seq        # eligibility must be re-evidenced after reactivation
             elif k == "HEALTH": st["health"][b["subject"]] = dict(b, seq=r.seq)
             elif k == "FINDING": st["findings"].append(b)
+            elif k == "AUTH_EVIDENCE": st["authev"][b["subject"]] = b
+            elif k == "TRANSFORM_VERDICT": st["xform"][b["subject"]] = b
             elif k == "REVIEW_TASK": st["tasks"][b["task_origin"]] = b
         return st
 
@@ -375,7 +377,8 @@ class TrackerCore:
             if result is None: raise Refusal("composed evidence needs the verifier result", code="HEALTH_COMPOSED_RESULT_MISSING")
             if not result_is_self_consistent(result): raise Refusal("result not self-consistent", code="HEALTH_COMPOSED_RESULT_FORGED")
             if (result.scope != SCOPE_MATERIALIZATION or verifier_id != COMPOSED_VERIFIER_ID or result_digest != result.result_hash
-                    or dict(result.subject).get("expect_scope_key") != subject or l2_requirement != "REQUIRED" or (l1, l2_status) != split_levels(result)):
+                    or dict(result.subject).get("expect_scope_key") != subject or l2_requirement != "REQUIRED" or (l1, l2_status) != split_levels(result)
+                    or str(dict(result.subject).get("expect_scope_key")).rsplit("/", 1)[-1] != version):      # the verified VERSION (last scope-key segment), not only the scope-key string
                 raise Refusal("composed evidence not bound to result", code="HEALTH_COMPOSED_RESULT_UNBOUND")
         elif result is not None: raise Refusal("result only for composed evidence", code="HEALTH_RESULT_WITHOUT_COMPOSED_CLASS")
         if l2_requirement not in REQ or l2_status not in L2_ST or l1 not in L1_ST: raise Refusal("vocabulary", code="HEALTH_VOCABULARY_UNKNOWN")
@@ -396,11 +399,12 @@ class TrackerCore:
         if trigger not in ("STALE", "ABSENT", "EPOCH_ADVANCED", "QUARANTINE_CLEARED", "SCHEDULED"): raise Refusal(trigger, code="UNKNOWN_REVERIFY_TRIGGER")
         self._commit(lambda st: (None, ("REVERIFY_REQUESTED", {"key": subject, "trigger": trigger})))
 
-    def due_for_reverification(self, subjects, now: int) -> list:
+    def due_for_reverification(self, subjects, now: int, versions: dict = None) -> list:
+        """versions: optional {subject: expected_version}. Health recorded for a DIFFERENT version never satisfies the expected one (it is ABSENT for that version) and never suppresses needed work."""
         st = self._replay(); due = []
         for s in subjects:
             h = st["health"].get(s)
-            if h is None: due.append((s, "ABSENT"))
+            if h is None or (versions is not None and s in versions and h["version"] != versions[s]): due.append((s, "ABSENT"))
             elif h["at"] > now or now - h["at"] > h["max_age"]: due.append((s, "STALE"))
             elif st["reverify"].get(s, 0) >= h["seq"]: due.append((s, "EPOCH_ADVANCED"))
         return due
@@ -426,6 +430,9 @@ class TrackerCore:
         st = self._replay(asof_seq); reasons = []
         if self._blocked(st, subject): reasons += self._blocked(st, subject)
         if self._health(st, subject, version, now) != "HEALTHY": reasons.append("RECORDING_HEALTH_NOT_HEALTHY")
+        a = st["authev"].get(subject); x = st["xform"].get(subject)
+        if a is not None and a["status"] != "VALID": reasons.append("AUTHORITY_TRANSITION_EVIDENCE_NOT_VALID")      # R26: a recorded non-VALID evidence verdict blocks; absence of a verdict is not a claim of validity
+        if x is not None and x["status"] != "VALID": reasons.append("TRANSFORM_NOT_CAUSAL_OR_UNPROVEN")
         if self._chain is not None and mv is not None and fence is not None:
             f = self._chain.status_at(mv, fence)
             if f is None or f.status != "CURRENT": reasons.append("CHAIN_STATUS_NOT_CURRENT")
@@ -434,14 +441,35 @@ class TrackerCore:
         missing = list(QUALIFIED_PREREQS_UNBOUND) + ([] if self._chain is not None else ["BASELINE_LIFECYCLE_AUTHORITY_UNBOUND"])
         return {"state": HELD, "eligible": False, "reasons": reasons, "undetermined_inputs": missing, "mode": "QUALIFIED_HELD"}
 
+    def resolve_snapshot(self, query_asof: int, streams: dict):
+        """Cross-timeframe snapshot resolution over the bound timeframe registry (UNBOUND registry => refusal: no calendar default). Journals the per-timeframe result; it selects/binds nothing else."""
+        from . import time_family as TF
+        if self._timeframes is None: raise Refusal("registry", code="TIMEFRAME_REGISTRY_UNBOUND")
+        r = TF.resolve_snapshot(self._timeframes, query_asof, streams)
+        self._commit(lambda st: (None, ("SNAPSHOT_RESOLVED", {"query_asof": query_asof, "state": r.state, "entries": [[e.timeframe, e.selection.state, e.selection.parent_id, e.vintage, e.watermark, e.state, list(e.reasons)] for e in r.entries]})))
+        return r
+    def judge_transition_evidence(self, claim, index: dict, now: int):
+        """Candidate evidence-truth predicate (tracker.evidence_truth) with its verdict journaled; the caller-supplied index is NOT an admitted authority. Records the verdict; never advances authority."""
+        from ..tracker.evidence_truth import judge_transition_evidence
+        v = judge_transition_evidence(claim, index, now)
+        self._commit(lambda st: (None, ("AUTH_EVIDENCE", {"subject": claim.subject, "status": v.status, "reasons": list(v.reasons), "at": now})))
+        return v
+    def judge_transform(self, subject: str, spec):
+        from ..tracker.evidence_truth import judge_transform
+        v = judge_transform(spec)
+        self._commit(lambda st: (None, ("TRANSFORM_VERDICT", {"subject": subject, "status": v.status, "reasons": list(v.reasons)})))
+        return v
+
     # ---- composition output: the health the downstream Gateway actually consumes -------------------
-    def gateway_health(self, subject: str, version: str, now: int, ref, resolved_at: int, *, asof_seq: int = None):
+    def gateway_health(self, subject: str, version: str, now: int, ref, resolved_at: int, *, asof_seq: int = None, binding=None):
+        """binding: gateway.contracts.HealthBinding naming the dependency this reading speaks for. Without it the Gateway DENIES (HEALTH_BINDING_UNBOUND); its version must equal the queried Health version."""
         from ..gateway.contracts import HealthSnapshot
         from dataclasses import dataclass
         if asof_seq is not None: raise Refusal("historical Health consistency mode has no source-correct rule here", code="HISTORICAL_HEALTH_MODE_UNRESOLVED")
         st = self._replay()
         ok = self.simulation and not self._blocked(st, subject) and self._health(st, subject, version, now) == "HEALTHY"
-        return CoreHealthSnapshot(ref, resolved_at, ok, "SIMULATION" if self.simulation else "QUALIFIED_HELD")
+        if binding is not None and getattr(binding, "feature_version", None) != version: raise Refusal("binding version != Health version", code="HEALTH_BINDING_VERSION_MISMATCH")
+        return CoreHealthSnapshot(ref, resolved_at, ok, "SIMULATION" if self.simulation else "QUALIFIED_HELD", binding=binding)
 
     # ---- reviewer / write-plane boundary ------------------------------------------------------------
     FINDING_FIELDS = ("finding_id", "task_origin", "summary", "author")
@@ -498,6 +526,8 @@ from ..gateway.contracts import HealthSnapshot as _HS
 class CoreHealthSnapshot(_HS):
     """A Health snapshot from Core that carries its evidence class. `acceptable` can be True ONLY for SIMULATION evidence; a qualified Core always reports QUALIFIED_HELD (acceptable=False)."""
     evidence_class: str = "SIMULATION"
+    binding: object = None
+    typed_internal: bool = True
 
 
 @dataclass(frozen=True)
