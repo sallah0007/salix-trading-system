@@ -76,6 +76,9 @@ class GenerationRegistry:
         with self._lock:
             m = self._manifests.get(manifest_id); l = self._latest(manifest_id, as_of_ts)
             return m is not None and l is not None and l.manifest_hash == m.manifest_hash and l.state == "COMPLETE_CERTIFIED"
+    def manifest_of(self, manifest_id):
+        """The registered immutable manifest (frozen dataclass) or None."""
+        with self._lock: return self._manifests.get(manifest_id)
     def read_class(self, manifest_id, as_of_ts=None) -> dict:
         """Source-known read distinction (current MLCore): SUPERSEDED = historical-readable, never new-serving; REVOKED = forensic-only. `later_revoked` is the append-only trust annotation (the ledger now says REVOKED though the as-of state was not). No other transition semantics are claimed."""
         with self._lock:
