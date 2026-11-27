@@ -2,7 +2,7 @@
 R29: the former 'equivalent' mutant (verify via the producer composition) IS killable by the producer fault-injection test and is included; Named behavioural equivalents (NOT run): (a) dropping the redundant `manifest_hash == ledger hash` check in `eligible` (the ledger copies the immutable manifest hash at append); (b) dropping `or not self.eligible(...)` in `compare_and_publish` (a non-eligible latest state always implies a changed epoch since the snapshot, which itself required eligibility). Both are defensive duplicates, kept on purpose."""
 import subprocess, sys, pathlib, os
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-TC = "stage_a/core/tracker_core.py"; VR = "stage_a/tracker/verification/verification_result.py"; GC = "stage_a/gateway/contracts.py"; GB = "stage_a/gateway/binding.py"; MLR = "stage_a/ml/receiver.py"; FWR = "stage_a/fw/receiver.py"; V38 = "stage_a/gateway/v038.py"; CLS = "stage_a/ml/closure.py"; GL = "stage_a/ml/generation_lifecycle.py"; IN = "stage_a/composer/intake.py"; BG = "stage_a/composer/build_gate.py"; H3 = "stage_a/gateway/outcome_series.py"; OA = "stage_a/composer/order_authority.py"
+TC = "stage_a/core/tracker_core.py"; VR = "stage_a/tracker/verification/verification_result.py"; GC = "stage_a/gateway/contracts.py"; GB = "stage_a/gateway/binding.py"; MLR = "stage_a/ml/receiver.py"; FWR = "stage_a/fw/receiver.py"; V38 = "stage_a/gateway/v038.py"; CLS = "stage_a/ml/closure.py"; GL = "stage_a/ml/generation_lifecycle.py"; IN = "stage_a/composer/intake.py"; BG = "stage_a/composer/build_gate.py"; H3 = "stage_a/gateway/outcome_series.py"; OA = "stage_a/composer/order_authority.py"; RS = "stage_a/tracker/reverify_scheduler.py"
 M = [
  (TC, 'return json.dumps(list(parts), separators=(",", ":"), ensure_ascii=True)', 'return "|".join(",".join(x) if isinstance(x, list) else x for x in parts)'),
  (TC, 'if not self.confirm_snapshot(snap) or not _int(use_at) or use_at < snap.evaluated_at: return False', 'if False: return False'),
@@ -116,8 +116,16 @@ M = [
  (BG, '            continue\n        if k not in build_request: raise Refusal(k, code="COMPOSER_BUILD_OMITS_ORDER_CONSTRAINT")', '            continue\n        if False: raise Refusal(k, code="COMPOSER_BUILD_OMITS_ORDER_CONSTRAINT")'),
  (BG, '    for k in stored:\n        if k not in build_request: raise Refusal(k, code="COMPOSER_BUILD_OMITS_ORDER_CONSTRAINT")\n        if build_request[k] != cons[k]: raise Refusal(k, code="COMPOSER_BUILD_DIFFERS_FROM_ORDER")', '    for k in stored:\n        if k not in build_request: raise Refusal(k, code="COMPOSER_BUILD_OMITS_ORDER_CONSTRAINT")'),
  (BG, '    for k in stored:\n        if k not in build_request: raise', '    for k in stored:\n        if False: raise'),
+ (TC, 'if m is None: raise Refusal(key, code="PARENT_NOT_IN_SEALED_SNAPSHOT")', 'if m is None: continue'),
+ (TC, 'if m["timeframe"] != tf: raise Refusal(key, code="PARENT_TIMEFRAME_MISMATCH")', 'pass'),
+ (TC, 'plist.append((key, m["available_asof"], complete))', 'plist.append((key, 0, complete))'),
+ (TC, 'if kind != "SEALED" or h is None: return', 'if False: return'),
+ (TC, '"snapshot_hash": h, "state": r.state', '"state": r.state'),
+ (TC, 'raise Refusal(pass_id, code="REVERIFY_PASS_ID_REUSED")', 'return None, None'),
+ (TC, 'if {k: old[k] for k in body} == _s(body): return None, None', 'if False: return None, None'),
+ (RS, 'if pass_id is not None: core.record_reverify_pass', 'if False: core.record_reverify_pass'),
 ]
-T = ["tests/trk_stage_a/test_r25_defects.py", "tests/trk_stage_a/test_r26_evidence_truth.py", "tests/trk_stage_a/test_r27_binding.py", "tests/trk_stage_a/test_boundaries.py", "tests/trk_stage_a/test_r24_core.py", "tests/trk_stage_a/test_r25_scheduler.py", "tests/trk_stage_a/test_r28_closure.py", "tests/trk_stage_a/test_r28_h3.py", "tests/trk_stage_a/test_r29_generation_lifecycle.py", "tests/trk_stage_a/test_r29_intake_order.py", "tests/trk_stage_a/test_r31_order_lifecycle.py", "tests/trk_stage_a/test_r11_both.py", "tests/trk_stage_a/test_v038_conformance.py"]
+T = ["tests/trk_stage_a/test_r25_defects.py", "tests/trk_stage_a/test_r26_evidence_truth.py", "tests/trk_stage_a/test_r27_binding.py", "tests/trk_stage_a/test_boundaries.py", "tests/trk_stage_a/test_r24_core.py", "tests/trk_stage_a/test_r25_scheduler.py", "tests/trk_stage_a/test_r28_closure.py", "tests/trk_stage_a/test_r28_h3.py", "tests/trk_stage_a/test_r29_generation_lifecycle.py", "tests/trk_stage_a/test_r29_intake_order.py", "tests/trk_stage_a/test_r31_order_lifecycle.py", "tests/trk_stage_a/test_r26_snapshot.py", "tests/trk_stage_a/test_r11_both.py", "tests/trk_stage_a/test_v038_conformance.py"]
 def run():
     try: return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", *[str(ROOT / t) for t in T]], cwd=ROOT, capture_output=True, text=True, timeout=120, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1")).returncode
     except subprocess.TimeoutExpired: return 99

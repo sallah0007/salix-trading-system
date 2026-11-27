@@ -35,3 +35,31 @@ class Snapshot(unittest.TestCase):
         c = TrackerCore(j, simulation=True, timeframes=REG()); r = c.resolve_snapshot(10, good()); self.assertEqual(r.state, TF.RESOLVED)
         rec = [x for x in j.read_from(0) if x.kind == "SNAPSHOT_RESOLVED"]; self.assertEqual(len(rec), 1)
 if __name__ == "__main__": unittest.main()
+
+class SealedResolution(unittest.TestCase):
+    """R31: seal -> per-timeframe selection ONLY among sealed members -> vintage read from the sealed records -> resolve. Candidate mechanics; watermarks are supplied."""
+    def core(self):
+        st = SimulationStore(InMemoryObjectStore()); j = ObjectStoreJournal(st, "r31", "w"); j.acquire_epoch(); return TrackerCore(j, simulation=True, timeframes=REG())
+    def put(self, c, tf, bar, av, v):
+        from .test_r24_core import facts
+        f = facts(timeframe=tf, bar_identity=bar); c.admit_observation(f, ("p-" + bar).encode(), av, v); return c.obs_key(f)
+    def rig(self):
+        c = self.core(); k = {n: self.put(c, tf, n, av, v) for n, tf, av, v in (("P4", "H4", 5, "v1"), ("P1", "H1", 8, "v1"), ("P1late", "H1", 12, "v1"))}; return c, k
+    def test_positive_selects_from_sealed_records_with_per_tf_vintage_and_journals_the_sealed_hash(self):
+        c, k = self.rig(); out = c.resolve_sealed_snapshot("XAUUSD", 10, 10, [k["P4"], k["P1"]], {"H4": [(k["P4"], True)], "H1": [(k["P1"], True)]}, {"H4": 9, "H1": 10})
+        r = out["resolution"]; self.assertEqual((out["state"], r.entry("H4").selection.parent_id, r.entry("H4").vintage, r.entry("H1").vintage, r.entry("H1").watermark), (TF.RESOLVED, k["P4"], "v1", "v1", 10))
+        self.assertTrue(c.verify_snapshot(out["snapshot_hash"], "XAUUSD", 10, 10, [k["P4"], k["P1"]])); self.assertEqual(out, c.resolve_sealed_snapshot("XAUUSD", 10, 10, [k["P4"], k["P1"]], {"H4": [(k["P4"], True)], "H1": [(k["P1"], True)]}, {"H4": 9, "H1": 10}))
+        rec = [x for x in c._j.read_from(1) if x.kind == "SNAPSHOT_RESOLVED"]; self.assertEqual(rec[-1].body()["snapshot_hash"], out["snapshot_hash"])
+    def test_fence_excluded_unknown_wrong_timeframe_and_caller_availability_cannot_select(self):
+        c, k = self.rig(); mem = [k["P4"], k["P1"], k["P1late"]]
+        self.assertEqual(code(c.resolve_sealed_snapshot, "XAUUSD", 10, 10, mem, {"H1": [(k["P1late"], True)]}, {"H1": 10}), "PARENT_NOT_IN_SEALED_SNAPSHOT")         # available 12 >= fence 10: excluded by the half-open fence
+        self.assertEqual(code(c.resolve_sealed_snapshot, "XAUUSD", 10, 10, mem, {"H1": [("ghost", True)]}, {"H1": 10}), "PARENT_NOT_IN_SEALED_SNAPSHOT")
+        self.assertEqual(code(c.resolve_sealed_snapshot, "XAUUSD", 10, 10, mem, {"H1": [(k["P4"], True)]}, {"H1": 10}), "PARENT_TIMEFRAME_MISMATCH")
+        o = c.resolve_sealed_snapshot("XAUUSD", 8, 10, mem, {"H1": [(k["P1"], True)]}, {"H1": 10}); self.assertEqual((o["state"], o["resolution"].entry("H1").reasons), (TF.UNRESOLVED, ("NO_SEALED_PARENT_VISIBLE",)))     # availability 8 not < query 8: the SEALED record decides, not the caller
+    def test_missing_watermark_incomplete_parent_and_held_seal_are_unresolved_never_partial(self):
+        c, k = self.rig()
+        o = c.resolve_sealed_snapshot("XAUUSD", 10, 10, [k["P4"], k["P1"]], {"H4": [(k["P4"], True)], "H1": [(k["P1"], True)]}, {"H4": 9}); self.assertEqual((o["state"], o["resolution"].entry("H1").reasons), (TF.UNRESOLVED, ("WATERMARK_NOT_RESOLVED",)))
+        self.assertEqual(c.resolve_sealed_snapshot("XAUUSD", 10, 10, [k["P4"]], {"H4": [(k["P4"], False)]}, {"H4": 9})["state"], TF.UNRESOLVED)
+        c2 = self.core(); a = self.put(c2, "H4", "A", 5, "v1"); b = self.put(c2, "H4", "B", 6, "v2"); h = c2.resolve_sealed_snapshot("XAUUSD", 10, 10, [a, b], {"H4": [(a, True)]}, {"H4": 9})
+        self.assertEqual((h["state"], h["resolution"], h["reason"]), ("UNRESOLVED_HELD", None, "MIXED_VINTAGE_REFUSED"))                                       # mixed vintage without a policy: no selection at all
+        self.assertEqual(code(TrackerCore(c._j, simulation=True).resolve_sealed_snapshot, "XAUUSD", 10, 10, [], {"H4": []}, {}), "TIMEFRAME_REGISTRY_UNBOUND")

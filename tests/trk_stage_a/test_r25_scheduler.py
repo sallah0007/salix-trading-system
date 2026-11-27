@@ -127,3 +127,16 @@ class PinnedEvidence(unittest.TestCase):
         c = core(); S.run_reverification_pass(c, self.b, [KEY], now=10, max_age=5); before = self.raw()
         self.assertFalse(self.store.put_if_absent(self.pk, b"other")); self.assertEqual(self.raw(), before)
         plain = InMemoryObjectStore(); c2 = core(); r = S.run_reverification_pass(c2, {KEY: (self.m, declared(self.m), plain)}, [KEY], now=10, max_age=5); self.assertEqual(r[0].detail, "REVERIFY_CARRIER_CLASS_MISMATCH"); self.assertEqual(plain.list_prefix(""), [])
+
+class PersistedPass(unittest.TestCase):
+    """R31: the pass result (including work NOT done) is journaled and re-readable after restart; skipped/unbound never become health."""
+    def test_pass_record_persists_skipped_and_unbound_work_survives_restart_and_is_idempotent_but_not_rewritable(self):
+        m = Manifest.from_dict(momentum_manifest()); b = {KEY: (m, declared(m), SIMS())}; c = core()
+        r = S.run_reverification_pass(c, b, [KEY, "A/H4/a/1", "B/H4/b/1"], now=10, max_age=50, max_items=1, pass_id="P1")
+        self.assertEqual([i.outcome for i in r], ["VERIFIED", "SKIPPED_BOUND_EXCEEDED", "SKIPPED_BOUND_EXCEEDED"])
+        c2 = TrackerCore(c._j, simulation=True); p = c2.reverify_pass("P1"); self.assertEqual((p["at"], p["max_items"], [i[2] for i in p["items"]]), (10, 1, ["VERIFIED", "SKIPPED_BOUND_EXCEEDED", "SKIPPED_BOUND_EXCEEDED"]))
+        self.assertEqual(c2.recording_health("A/H4/a/1", "1", 11).state, "UNKNOWN")                                          # skipped work is not health
+        n = len(c._j.read_from(0)); c.record_reverify_pass("P1", 10, 1, p["items"]); self.assertEqual(len(c._j.read_from(0)), n)   # identical re-record: no-op
+        self.assertEqual(code(c.record_reverify_pass, "P1", 10, 1, [["x", "y", "VERIFIED", "PASS", ""]]), "REVERIFY_PASS_ID_REUSED")
+        self.assertEqual(code(c.record_reverify_pass, "", 10, 1, []), "REVERIFY_PASS_INVALID"); self.assertIsNone(c.reverify_pass("nope"))
+        S.run_reverification_pass(c, b, [KEY], now=11, max_age=50); self.assertEqual([k.kind for k in c._j.read_from(0)].count("REVERIFY_PASS"), 1)       # no pass_id: nothing recorded
