@@ -24,6 +24,8 @@ L1_ST = ("PASS", "FAIL")
 NEW, REPEAT, CONFLICT = "NEW", "IDEMPOTENT_REPEAT", "CONFLICT_QUARANTINED"
 REJECTED_KNOWN = "REJECTED_KNOWN_CANDIDATE_NOT_CURRENT"   # R24: a previously REJECTED candidate re-sent after resolution; history only, state unchanged, NO retry/clear policy adopted (D25 unresolved)
 HELD = "HELD"
+CALLER_ASSERTED, COMPOSED_RECOMPUTATION = "CALLER_ASSERTED", "COMPOSED_RECOMPUTATION_SIMULATION"   # R24: the second is produced by tracker/reverification (real materializer + independent verifier, still simulation-labelled, never qualified)
+EVIDENCE_CLASSES = (CALLER_ASSERTED, COMPOSED_RECOMPUTATION)
 SIM_ELIGIBLE, SIM_NOT_ELIGIBLE = "SIMULATION_EVIDENCE_ELIGIBLE", "SIMULATION_EVIDENCE_NOT_ELIGIBLE"
 QUALIFIED_PREREQS_UNBOUND = ("OBSERVATION_ADMISSION_SCHEMA_UNBOUND", "VERIFIER_BINDING_UNBOUND", "GOVERNED_THRESHOLD_UNBOUND", "L2_APPOINTMENT_PROFILE_UNBOUND")
 
@@ -364,13 +366,14 @@ class TrackerCore:
     def blocked(self, key: str) -> list: return self._blocked(self._replay(), key)
 
     # ---- B14 verification / Recording Health (caller-asserted evidence until a verifier is bound) ------
-    def record_verification(self, subject: str, version: str, l2_requirement: str, l2_status: str, l1: str, at: int, max_age: int, verifier_id: str, result_digest: str, definition_ref: str = None):
+    def record_verification(self, subject: str, version: str, l2_requirement: str, l2_status: str, l1: str, at: int, max_age: int, verifier_id: str, result_digest: str, definition_ref: str = None, evidence_class: str = "CALLER_ASSERTED"):
+        if evidence_class not in EVIDENCE_CLASSES: raise Refusal(str(evidence_class), code="HEALTH_EVIDENCE_CLASS_UNKNOWN")
         if l2_requirement not in REQ or l2_status not in L2_ST or l1 not in L1_ST: raise Refusal("vocabulary", code="HEALTH_VOCABULARY_UNKNOWN")
         if not _int(at) or at < 0 or not _int(max_age) or max_age <= 0: raise Refusal("interval", code="HEALTH_INTERVAL_INVALID")
         if not all(isinstance(x, str) and x for x in (subject, version, verifier_id, result_digest)): raise Refusal("binding", code="HEALTH_BINDING_INCOMPLETE")
         if l2_requirement == "NOT_APPLICABLE_BY_GOVERNED_DEFINITION" and not definition_ref: raise Refusal("definition proof", code="NOT_APPLICABLE_NEEDS_DEFINITION_PROOF")
         self._commit(lambda st: (None, ("HEALTH", {"subject": subject, "version": version, "req": l2_requirement, "l2": l2_status, "l1": l1, "at": at, "max_age": max_age,
-                                                    "verifier_id": verifier_id, "result_digest": result_digest, "definition_ref": definition_ref or "", "evidence_class": "CALLER_ASSERTED",
+                                                    "verifier_id": verifier_id, "result_digest": result_digest, "definition_ref": definition_ref or "", "evidence_class": evidence_class,
                                                     "basis": self._basis(st, subject)})))
 
     def reverify(self, subject: str, version: str, verifier, now: int, l2_requirement: str, max_age: int, definition_ref: str = None):
@@ -405,7 +408,8 @@ class TrackerCore:
         """Typed reading. The calculation is over CALLER-ASSERTED evidence, so it is never presented as qualified Recording Health: a qualified core reports state HELD (the local calculation stays visible as
         `local_state`); a simulation core reports the calculation labelled SIMULATION_CALLER_ASSERTED. NOT_APPLICABLE is not an admitted definition proof; reverify() is an injected callable."""
         local = self._health(self._replay(), subject, version, now)
-        return HealthReading(local if self.simulation else HELD, "SIMULATION_CALLER_ASSERTED" if self.simulation else "QUALIFIED_HELD", local, False)
+        h = self._replay()["health"].get(subject); composed = h is not None and h.get("evidence_class") == COMPOSED_RECOMPUTATION
+        return HealthReading(local if self.simulation else HELD, ("SIMULATION_COMPOSED_RECOMPUTATION" if composed else "SIMULATION_CALLER_ASSERTED") if self.simulation else "QUALIFIED_HELD", local, False)
 
     # ---- as-of eligibility: bound to the ONE existing chain-status authority; qualified use is HELD -----
     def eligible_asof(self, subject: str, version: str, asof_seq: int, now: int, *, mv=None, fence=None) -> dict:

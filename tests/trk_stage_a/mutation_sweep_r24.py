@@ -2,7 +2,7 @@
 reresolve, fail-closed safety integration + restoration prohibition). Author-run; a surviving mutant is a finding. Earlier sweeps are not re-run."""
 import subprocess, sys, pathlib, os
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-TC = "stage_a/core/tracker_core.py"
+TC = "stage_a/core/tracker_core.py"; RV = "stage_a/tracker/reverification.py"; TF = "stage_a/core/time_family.py"
 M = [
      (TC, 'if b.get("plane") != self._plane: raise IntegrityFailure', 'if self._plane is not None and b.get("plane") != self._plane: raise IntegrityFailure'),
      (TC, '        self._replay()          # R24: the established', '        pass          # R24: the established'),
@@ -23,8 +23,21 @@ M = [
      (TC, '"CHAIN_STILL_CURRENT" if (f is not None and f.status == "CURRENT")', '"CHAIN_NOT_CURRENT" if (f is not None and f.status == "CURRENT")'),
      (TC, '"NOT_APPLIED_SUBJECT_TO_MV_AND_STATUS_KIND_MAPPING_UNBOUND"', '"APPLIED"'),
      (TC, '; st["reviews"].setdefault(b["subject"], []).append(b["review"])\n            elif k == "Q_CLEAR"', '\n            elif k == "Q_CLEAR"'),
-     (TC, 'if subject_kind not in SUBJECT_DOMAIN: raise Refusal(subject_kind, code="UNKNOWN_SUBJECT_KIND")', 'pass')]
-T = ["tests/trk_stage_a/test_r24_core.py"]
+     (TC, 'if subject_kind not in SUBJECT_DOMAIN: raise Refusal(subject_kind, code="UNKNOWN_SUBJECT_KIND")', 'pass'),
+     (TC, 'if evidence_class not in EVIDENCE_CLASSES: raise Refusal(str(evidence_class), code="HEALTH_EVIDENCE_CLASS_UNKNOWN")', 'pass'),
+     (TC, '("SIMULATION_COMPOSED_RECOMPUTATION" if composed else "SIMULATION_CALLER_ASSERTED")', '"SIMULATION_CALLER_ASSERTED"'),
+     (RV, 'if result.status == INSUFFICIENT_EVIDENCE: return "FAIL", "UNAVAILABLE"', 'pass'),
+     (RV, 'if not all(n in names for n in _L2_CHECKS): return l1, "UNAVAILABLE"', 'pass'),
+     (RV, 'res.result_hash, evidence_class=COMPOSED_RECOMPUTATION)', 'res.result_hash)'),
+     (RV, 'if not isinstance(declared, dict) or set(declared)', 'if False or set(declared)'),
+     (RV, 'declared=declared, expect_scope_key=fk.key())', 'declared=declared2(declared, raw), expect_scope_key=fk.key())'),
+     (TF, 'return parent_available_asof < query_asof', 'return parent_available_asof <= query_asof'),
+     (TF, 'if p[2] is True and parent_visible_asof', 'if parent_visible_asof'),
+     (TF, '    if len(set(got)) != len(got): raise Refusal(parent_id, code="DUPLICATE_CHILD_OBSERVATION")', '    pass'),
+     (TF, '    if extra: raise Refusal(', '    if False: raise Refusal('),
+     (TF, 'if not isinstance(segmentation, dict) or parent_id not in segmentation: return UNDETERMINED', 'if not isinstance(segmentation, dict): return UNDETERMINED'),
+     (TF, '        if tf not in self._e: raise Refusal(str(tf), code="UNKNOWN_TIMEFRAME")', '        pass')]
+T = ["tests/trk_stage_a/test_r24_core.py", "tests/trk_stage_a/test_r24_composed.py"]
 def run():
     try: return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", *[str(ROOT / t) for t in T]], cwd=ROOT, capture_output=True, text=True, timeout=90, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1")).returncode
     except subprocess.TimeoutExpired: return 99
