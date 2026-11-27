@@ -21,11 +21,12 @@ M = [(CE, 'if not isinstance(ref, str) or not ref.strip():', "if False:"), (CE, 
      (SP, "if not isinstance(f, StatusFact):", "if False:"), (SP, "if f is None:", "if False:"),
      (SP, "self._auth, self._built, self._invalid = fresh, head, None", "self._auth, self._built, self._invalid = self._auth, head, None"),
      (GW, 'if not getattr(self.status, "authoritative", False) and not self.allow_uncommitted_status:', "if False:"),
-     (BR, "if proven:", "if False:"), (BR, "        elif unread:", "        elif False:"), (BR, "        elif features_incomplete:", "        elif False:"),
+     (BR, "if proven:", "if False:"), (BR, "            incomplete = features_incomplete\n            if closure_features is not None:", "            incomplete = False\n            if closure_features is not None:"),   # R18: `elif unread:` is now EQUIVALENT (the consumer-specific probe refuses the same ancestry); global fallback covered here
+    
      (BR, "if f not in affected:", "if True:"), (BR, "return impact.verdict == AFFECTED", "return impact.verdict != UNAFFECTED"),
      (BR, "if not isinstance(failed, bytes) or not failed:", "if False:"), (BR, "if d not in feature_deps and d != failed:", "if False:"),
-     (ML, 'if m.kind != "ML":', "if False:"), (ML, "if m.derived_from is None:\n        raise Refusal(m.manifest_id, code=\"AUGMENTED_WITHOUT", "if False:\n        raise Refusal(m.manifest_id, code=\"AUGMENTED_WITHOUT"),
-     (ML, 'if parent.kind != "FW":', "if False:"), (ML, 'not getattr(aug.gateway_rebind, "request_id", None)', "False")]
+     (ML, "if m.derived_from is None:\n        raise Refusal(m.manifest_id, code=\"AUGMENTED_WITHOUT", "if False:\n        raise Refusal(m.manifest_id, code=\"AUGMENTED_WITHOUT"),
+     (ML, 'if parent.kind != "FW":', "if False:")]   # R18: two ML anchors removed (R16 rewrote that code; mutation_sweep_r16 covers STANDALONE_REQUIRES_ML_MANIFEST and the rebind check)
 T = ["tests/trk_stage_a/test_r12_ceilings.py", "tests/trk_stage_a/test_r12_sqe_opset.py", "tests/trk_stage_a/test_r12_status_projection.py",
      "tests/trk_stage_a/test_r12_blast_radius.py", "tests/trk_stage_a/test_r12_ml_augmented.py"]
 def run():

@@ -14,7 +14,7 @@ INTEGRATED = ("stage_a.tracker.quant_intake_adapter", "stage_a.tracker.build_out
               "stage_a.tracker.verification.stateful_verifier", "stage_a.authority")
 REFERENCE_ONLY = ("stage_a.context.news_hub_v2", "stage_a.tracker.lifecycle_status_event", "stage_a.tracker.status_projection", "stage_a.health.blast_radius",
                   "stage_a.gateway.v038", "stage_a.gateway.contracts", "stage_a.fw.receiver", "stage_a.fw.return_lineage", "stage_a.fw.descriptor_crosswalk",
-                  "stage_a.ml.receiver", "stage_a.composer.expression.sqe_opset", "stage_a.health.envelope", "stage_a.health.evidence", "stage_a.tracker.publication", "stage_a.tracker.feature_lineage")
+                  "stage_a.ml.receiver", "stage_a.composer.expression.sqe_opset", "stage_a.health.envelope", "stage_a.health.evidence", "stage_a.tracker.publication", "stage_a.tracker.feature_lineage", "stage_a.tracker.version_relationship")
 
 class Reachability(unittest.TestCase):
     def test_integrated_rows_have_a_non_test_path_from_the_pipeline(self):
@@ -59,4 +59,17 @@ class FunctionInvocation(unittest.TestCase):
         from tests.trk_stage_a.integration_reach import called_names
         c = called_names("stage_a/tracker/pipeline.py")
         for f in ("resolve_context", "blast_radius", "check_fw_augmented", "check_generation", "journal_to_status_event", "feature_deps_from_quant_manifests"): self.assertNotIn(f, c, f)
+class BaselineConnectionLimits(unittest.TestCase):
+    """R18: D1 hard-False construction seam and the OPTIONAL baseline path are real connection limitations, pinned (not hidden behind the quant path map)."""
+    def test_optional_baseline_none_accepts_with_no_baseline_identity_registration(self):
+        from tests.trk_stage_a.fixtures import Rig, package
+        rig = Rig(baseline=None); p = package(); rig.issue(p); o = rig.pipe.run(p)
+        self.assertTrue(o.accepted_ok)                                         # journaled acceptance WITHOUT any baseline identity registration: a limitation, not a feature
+        self.assertIsNone(rig.pipe._baseline)
+    def test_production_seam_is_hard_false_and_installed_nowhere_in_non_test_code(self):
+        import pathlib, re
+        from tracker_identity import store
+        self.assertIs(store._governed_construction_authority({}), False)
+        for f in pathlib.Path(__file__).resolve().parents[2].joinpath("stage_a").rglob("*.py"):
+            self.assertNotRegex(f.read_text(), r"_governed_construction_authority\s*=|patch\.object\([^)]*_governed_construction_authority", str(f))
 if __name__ == "__main__": unittest.main()

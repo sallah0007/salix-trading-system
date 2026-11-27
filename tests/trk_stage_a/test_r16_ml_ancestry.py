@@ -26,6 +26,8 @@ class Transitive(unittest.TestCase):
         g = {"a": M("a", "ML", (), derived_from="a")}; self.assertEqual(code(S, g, "a"), "DERIVATION_CYCLE")
     def test_graph_entry_under_another_id_refuses(self):
         g = {"p": M("other", "ML", ()), "m": M("m", "ML", (), derived_from="p")}; self.assertEqual(code(S, g, "m"), "GRAPH_KEY_MISMATCH")
+    def test_ancestry_itself_refuses_a_misbound_entry(self):       # R18: lanes.closure_contains_target now also checks the key, so this pins ancestry() directly
+        g = {"p": M("other", "ML", ()), "m": M("m", "ML", (), derived_from="p")}; self.assertEqual(code(R.ancestry, g["m"], g), "GRAPH_KEY_MISMATCH")
     def test_unknown_ancestor_kind_refuses(self):
         g = {"p": M("p", "X", ()), "m": M("m", "ML", (), derived_from="p")}; self.assertEqual(code(S, g, "m"), "UNKNOWN_ANCESTOR_KIND")
     def test_unaffected_baseline_positive_controls(self):

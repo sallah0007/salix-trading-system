@@ -107,10 +107,11 @@ class UnverifiedDutiesAreLabelled(unittest.TestCase):
         a = A(pk(), EV(False)); self.assertIn(("CAPABILITY_CLASS_STRUCTURE", "NOT_VERIFIED_NO_SOURCE_COMPATIBILITY_RULE"), a.unverified)
     def test_label_absent_when_the_declaration_itself_is_refused(self):
         p = pk(); p = dataclasses.replace(p, capability_declaration=dict(p.capability_declaration, PROGRAM_CAPABILITY_CLASS="NOT_A_CLASS"))
-        a = A(p, EV(False)); self.assertEqual(a.unverified, []); self.assertTrue(dims(a, "CAPABILITY_DECLARATION"))
+        a = A(p, EV(False)); self.assertNotIn("CAPABILITY_CLASS_STRUCTURE", [d for d, _ in a.unverified]); self.assertTrue(dims(a, "CAPABILITY_DECLARATION"))
     def test_accepted_outcome_carries_its_limits(self):
         rig = Rig(conformance_source=lambda q: EV(False)); p = pk(); adm = admit(p, accepted_fit_generations={}, conformance=EV(False))
         rig.claims.issue_order(ConstructionOrder(p.order_id, adm.subject_key, "SRC-BINDING-1", "MANAGER")); o = rig.pipe.run(p)
         self.assertTrue(o.accepted_ok)
-        self.assertEqual(dict(o.limits), {"CAPABILITY_CLASS_STRUCTURE": "NOT_VERIFIED_NO_SOURCE_COMPATIBILITY_RULE", "S28_FULL_CONFORMANCE": "NOT_ASSESSED_BOUNDARY"})
+        self.assertEqual(dict(o.limits), {"S28_FULL_CONFORMANCE": "NOT_ASSESSED_BOUNDARY"})         # the mandatory duties were verified ONLY by SIMULATED test evidence (R18)
+        self.assertIn("SIMULATED", o.duty_evidence.evidence_ref)
 if __name__ == "__main__": unittest.main()

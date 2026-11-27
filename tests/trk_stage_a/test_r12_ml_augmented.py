@@ -6,7 +6,7 @@ from tests.trk_stage_a import test_boundaries as B
 Q = b"quant"
 def aug(gw_b=None):
     gw, bd = gw_b or B._bound(); ref = B.R("x")
-    return gw, R.AugmentedInput(ref, ref, ref, ref, bd, ref, ref)
+    return gw, R.AugmentedInput(ref, ref, ref, ref, bd, ref, ref, ref)
 def code(fn, *a, **k):
     try: return fn(*a, **k)
     except Refusal as e: return e.code
@@ -24,10 +24,10 @@ class T(unittest.TestCase):
         g = FWML(); gw, a = aug(); other, _ = B._bound()                 # a second, independent gateway that never issued `a`'s binding
         self.assertEqual(code(R.check_fw_augmented, g["ml"], a, Q, g, gateway=other), "BINDING_NOT_FROM_GATEWAY")
         forged = dataclasses.replace(a.gateway_rebind, request_id="NOT-ISSUED")
-        ref = B.R("x"); fa = R.AugmentedInput(ref, ref, ref, ref, forged, ref, ref)
+        ref = B.R("x"); fa = R.AugmentedInput(ref, ref, ref, ref, forged, ref, ref, ref)
         self.assertEqual(code(R.check_fw_augmented, g["ml"], fa, Q, g, gateway=gw), "BINDING_NOT_FROM_GATEWAY")
         copy = dataclasses.replace(a.gateway_rebind)                    # equal but not the issued object
-        self.assertEqual(code(R.check_fw_augmented, g["ml"], R.AugmentedInput(ref, ref, ref, ref, copy, ref, ref), Q, g, gateway=gw), "BINDING_NOT_FROM_GATEWAY")
+        self.assertEqual(code(R.check_fw_augmented, g["ml"], R.AugmentedInput(ref, ref, ref, ref, copy, ref, ref, ref), Q, g, gateway=gw), "BINDING_NOT_FROM_GATEWAY")
     def test_hidden_quant_ancestor_through_fw_parent_refused(self):
         g = {"fw": M("fw", "FW", (Q,)), "ml": M("ml", "ML", (b"a",), derived_from="fw")}; gw, a = aug()
         self.assertEqual(code(R.check_fw_augmented, g["ml"], a, Q, g, gateway=gw), "HIDDEN_QUANT_ANCESTOR")
@@ -51,12 +51,12 @@ class T(unittest.TestCase):
 class AugmentedInputStructure(unittest.TestCase):
     def kw(self):
         _, b = B._bound(); ref = B.R("x")
-        return dict(fw_lineage_ref=ref, uncertainty_ref=ref, ood_ref=ref, dependency_interval_ref=ref, gateway_rebind=b, fw_generation_identity_ref=ref, research_exposure_ref=ref)
+        return dict(fw_lineage_ref=ref, uncertainty_ref=ref, ood_ref=ref, dependency_interval_ref=ref, gateway_rebind=b, fw_generation_identity_ref=ref, research_exposure_ref=ref, support_ref=ref)
     def test_each_ref_is_required(self):
-        for n in ("fw_lineage_ref", "uncertainty_ref", "ood_ref", "dependency_interval_ref", "fw_generation_identity_ref", "research_exposure_ref"):
+        for n in ("fw_lineage_ref", "uncertainty_ref", "ood_ref", "dependency_interval_ref", "fw_generation_identity_ref", "research_exposure_ref", "support_ref"):
             k = self.kw(); k[n] = None; self.assertEqual(code(R.AugmentedInput, **k), "AUGMENTED_FIELD_MISSING", n)
     def test_arbitrary_objects_are_not_refs(self):
-        for n in ("fw_lineage_ref", "uncertainty_ref", "ood_ref", "dependency_interval_ref", "fw_generation_identity_ref", "research_exposure_ref"):
+        for n in ("fw_lineage_ref", "uncertainty_ref", "ood_ref", "dependency_interval_ref", "fw_generation_identity_ref", "research_exposure_ref", "support_ref"):
             for bad in (object(), "x", b"x", 1):
                 k = self.kw(); k[n] = bad; self.assertEqual(code(R.AugmentedInput, **k), "AUGMENTED_FIELD_MALFORMED", (n, bad))
     def test_rebind_must_be_a_binding_with_a_request_id(self):

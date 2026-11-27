@@ -16,14 +16,14 @@ M = [(RR, 'if rec.get("OUTCOME_INFORMATION_ACCESS") is None: raise', 'if False: 
      (QI, '        a.unverified.append(("CAPABILITY_CLASS_STRUCTURE", "NOT_VERIFIED_NO_SOURCE_COMPATIBILITY_RULE"))', '        pass'),
      (QI, '"NOT_VERIFIED_NO_SOURCE_COMPATIBILITY_RULE"', '"VERIFIED"'),
      (PL, '+ (("S28_FULL_CONFORMANCE", "NOT_ASSESSED_BOUNDARY"),)', '+ ()'),
-     (PL, 'tuple(getattr(self.admission, "unverified", ()))', '()'),
+     (PL, 'tuple(u for u in getattr(self.admission, "unverified", ()) if u[0] not in done)', '()'),
      (FL, '    if not ft:\n', '    if False:\n'),
      (FL, '        if not isinstance(m, QuantManifest):', '        if False:'),
      (FL, '                if ref.target_id == m.feature_id:', '                if False:'),
      (FL, '            if ref.ref_type in ft:', '            if True:'),
      (FL, 'own = deps.setdefault(m.feature_id, set())', 'own = set()'),
      (FL, 'tuple(sorted(d))', 'tuple(d)')]
-T = ["tests/trk_stage_a/test_r16_conformance_wiring.py", "tests/trk_stage_a/test_r17_feature_lineage.py", "tests/trk_stage_a/test_r10_replica_roles.py", "tests/trk_stage_a/test_r11_intake_request.py", "tests/trk_stage_a/test_r13_build_output.py", "tests/trk_stage_a/test_pipeline.py"]
+T = ["tests/trk_stage_a/test_r16_conformance_wiring.py", "tests/trk_stage_a/test_r17_feature_lineage.py", "tests/trk_stage_a/test_r10_replica_roles.py", "tests/trk_stage_a/test_r11_intake_request.py", "tests/trk_stage_a/test_r13_build_output.py", "tests/trk_stage_a/test_pipeline.py", "tests/trk_stage_a/test_r18_mandatory_hold.py"]
 def run():
     try: return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", *[str(ROOT / t) for t in T]], cwd=ROOT, capture_output=True, text=True, timeout=60, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1")).returncode
     except subprocess.TimeoutExpired: return 99

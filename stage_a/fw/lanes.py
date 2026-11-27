@@ -30,8 +30,29 @@ def closure_contains_target(m: ConsumerManifest, target: bytes, graph: Dict[str,
         nxt = graph.get(cur.derived_from)
         if nxt is None:
             raise Refusal(cur.derived_from, code="DERIVED_FROM_UNRESOLVED")      # unread ancestry fails closed
+        if nxt.manifest_id != cur.derived_from:
+            raise Refusal(cur.derived_from, code="GRAPH_KEY_MISMATCH")            # a misbound ancestor is not a read ancestor (as ml.receiver.ancestry)
         cur = nxt
     return False
+
+def closure_features(m: ConsumerManifest, graph: Dict[str, ConsumerManifest]):
+    """Every feature the consumer's dependency closure carries (own + derived ancestors', dependencies and artifact closure). Same fail-closed walk and key binding as
+    closure_contains_target. post_target_retuning is NOT a feature: callers needing it must also use closure_contains_target (blast_radius does)."""
+    seen, out, cur = set(), set(), m
+    while cur is not None:
+        if cur.manifest_id in seen:
+            raise Refusal(cur.manifest_id, code="DERIVATION_CYCLE")
+        seen.add(cur.manifest_id)
+        out.update(cur.dependency_feature_ids); out.update(cur.artifact_closure_features)
+        if cur.derived_from is None:
+            return out
+        nxt = graph.get(cur.derived_from)
+        if nxt is None:
+            raise Refusal(cur.derived_from, code="DERIVED_FROM_UNRESOLVED")
+        if nxt.manifest_id != cur.derived_from:
+            raise Refusal(cur.derived_from, code="GRAPH_KEY_MISMATCH")
+        cur = nxt
+    return out
 
 def classify(m: ConsumerManifest, target: bytes, graph: Dict[str, ConsumerManifest]) -> str:
     listed = target in m.dependency_feature_ids

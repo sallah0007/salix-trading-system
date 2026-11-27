@@ -73,10 +73,12 @@ REQUEST_RECORD = {"REQUEST_SCHEMA_VERSION": "1", "REQUESTER_ID": "fixture-reques
                   "REQUEST_CONTEXT": "FW_MANIFEST_NEED", "PURPOSE_STATEMENT": "fixture purpose", "OUTCOME_INFORMATION_ACCESS": "FORBIDDEN"}
 
 from stage_a.tracker.build_output_check import ConformanceEvidence
+from stage_a.tracker.quant_intake_adapter import DutyEvidence, MANDATORY_UNVERIFIED_DUTIES
+SIM_DUTIES = DutyEvidence(frozenset(MANDATORY_UNVERIFIED_DUTIES), "SIMULATED:test-fixture (no real Tracker verification of these duties exists)")
 SIM_CONF = ConformanceEvidence(False, "SIMULATED:test-fixture (no real Tracker verification path exists)")
 
 class Rig:
-    def __init__(self, store=None, fits=None, baseline=None, conformance_source=lambda pkg: SIM_CONF):
+    def __init__(self, store=None, fits=None, baseline=None, conformance_source=lambda pkg: SIM_CONF, duty_source=lambda pkg, adm: SIM_DUTIES):
         self.store = store or InMemoryObjectStore()
         self.claims_journal = ObjectStoreJournal(self.store, "claims", "claims-writer")
         self.claims_journal.acquire_epoch()
@@ -85,7 +87,7 @@ class Rig:
         self.events = EventSink()
         self.fits = fits or {}
         self.pipe = TrackerPipeline(store=self.store, claims=self.claims, journals=self.journals, clock=FixedClock(),
-                                    events=self.events, accepted_fit_generations=self.fits, baseline=baseline, conformance_source=conformance_source)
+                                    events=self.events, accepted_fit_generations=self.fits, baseline=baseline, conformance_source=conformance_source, duty_source=duty_source)
 
     def issue(self, pkg, issuer="MANAGER", binding="SRC-BINDING-1"):
         adm = admit(pkg, accepted_fit_generations=self.fits, conformance=SIM_CONF)

@@ -80,8 +80,8 @@ class ConformanceEvidence:
             raise Refusal("evidence_ref", code="CONFORMANCE_EVIDENCE_WITHOUT_REF")
 
 def check_conformance(bo, evidence, order_declaration) -> None:
-    """Connects check_outcome_access to the intake, BOUND TO THE ORDER (Composer V9 s7A ORDER_READY): the declaration comes from the governed order record, never from the package.
-    The returned BUILD_OUTPUT_PACKAGE must carry the same declaration (missing => refused; different => conflict). FORBIDDEN additionally needs Tracker-originated
+    """Connects check_outcome_access to the intake. The `order_declaration` argument is the request_record SUPPLIED INSIDE the BuildPackage (R18: ConstructionOrder carries no declaration, so this is
+    supplied-record STRUCTURAL equality, NOT issued-order evidence; governed-before-build binding stays OPEN and is labelled unverified at intake). The returned BUILD_OUTPUT_PACKAGE must carry the same declaration (missing => refused; different => conflict). FORBIDDEN additionally needs Tracker-originated
     verification evidence (none/undetermined => HELD). PERMITTED_UNDER_DECLARED_FITTING_CONTRACT is HELD: no source-defined reference to the declared fitting contract exists
     to verify, so the Tracker cannot certify it (named input). Nothing is defaulted to FORBIDDEN."""
     if not isinstance(bo, dict):

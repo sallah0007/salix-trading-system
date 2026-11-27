@@ -119,7 +119,8 @@ def check_fw_augmented(m: ConsumerManifest, aug: "AugmentedInput", target: bytes
 
 @dataclass(frozen=True)
 class AugmentedInput:
-    """ML_FW_AUGMENTED schema-level completeness (F5/F6): lineage, uncertainty, OOD and dependency interval all required."""
+    """ML_FW_AUGMENTED schema-level completeness (F5/F6; Build Plan 13.2: generation identity, uncertainty/OOD/SUPPORT, dependency interval, research exposure). Every field is an INTERNAL typed
+    reference carrier of this seam: the external FW payload representation of any of them (incl. support) is undefined in the sources read and is NOT invented here."""
     fw_lineage_ref: Ref
     uncertainty_ref: Optional[Ref]
     ood_ref: Optional[Ref]
@@ -127,8 +128,9 @@ class AugmentedInput:
     gateway_rebind: Optional[Binding]
     fw_generation_identity_ref: Optional[Ref] = None      # Build Plan 13.2: must preserve FW generation identity
     research_exposure_ref: Optional[Ref] = None           # ... and research exposure
+    support_ref: Optional[Ref] = None                     # ... and support (13.2 names it with uncertainty/OOD); internal carrier only
     def __post_init__(self):
-        for n in ("fw_lineage_ref", "uncertainty_ref", "ood_ref", "dependency_interval_ref", "fw_generation_identity_ref", "research_exposure_ref"):
+        for n in ("fw_lineage_ref", "uncertainty_ref", "ood_ref", "dependency_interval_ref", "fw_generation_identity_ref", "research_exposure_ref", "support_ref"):
             v = getattr(self, n)
             if v is None:
                 raise Refusal(n, code="AUGMENTED_FIELD_MISSING")

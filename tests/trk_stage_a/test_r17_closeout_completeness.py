@@ -18,6 +18,11 @@ class Closeout(unittest.TestCase):
         self.assertIn("| D12' |", DOC)
         for i in range(1, 5): self.assertIn("| A07-%d |" % i, DOC)
         self.assertIn("100", DOC); self.assertIn("RAISE_FOR_SOURCE_OWNER_DISPOSITION", DOC)
+    def test_every_baseline_obligation_row_is_present(self):
+        for i in range(1, 25): self.assertIn("| B%02d |" % i, DOC)
+        for h in ("ecaa9af35c712dbc38bdfe8a22b1cb81406a13a6db46cf640caeca89b5f3de4c", "ea9e7949397dd1e9ad001334425fdfeb96706d7eadca67bd043496d6ec91dfc0", "cd47a366f4cd49bef008bc97bfb8fcf04c5bb49f50fbd883cd875bcc82d20013"): self.assertIn(h, DOC)
+    def test_a07_2_is_recorded_as_settled_staffing_not_reasked(self):
+        self.assertIn("SETTLED STAFFING DECISION (not re-asked)", DOC); self.assertNotIn("meet or waive in writing", DOC)
     def test_every_cited_code_path_exists(self):
         for p in set(re.findall(r"`((?:stage_a|tests|tracker_component)/[A-Za-z0-9_/]+\.py)`", DOC)): self.assertTrue((ROOT / p).exists(), p)
     def test_no_completion_or_signoff_claim(self):
