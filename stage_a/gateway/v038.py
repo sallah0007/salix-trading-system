@@ -137,6 +137,9 @@ class FinalResolutionStore:
                 raise
             finally:
                 self._inflight.discard(identity)
+    def outcomes(self):
+        """Detached read-only list of (identity, outcome) in no promised order (callers sort)."""
+        with self._lock: return [(i, copy.deepcopy(o)) for i, o in self._by_identity.items()]
     def pin_of(self, identity: FinalResolutionIdentity):
         with self._lock: return copy.deepcopy(self._pins.get(identity))
     def set_pin(self, identity: FinalResolutionIdentity, pin):

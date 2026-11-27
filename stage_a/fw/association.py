@@ -41,5 +41,6 @@ class FwAssociation:
             if (old.request_id, old.return_class, old.lineage_ref) != (request_id, return_class, lineage_ref): raise Refusal(return_id, code="FW_RETURN_IMMUTABLE")
             return old
         r = FwReturn(return_id, request_id, ident, return_class, lineage_ref, len(self._order) + 1); self._returns[return_id] = r; self._order.append(return_id); return r
+    def all_returns(self): return tuple(self._returns[i] for i in self._order)
     def returns_for(self, identity): return tuple(self._returns[i] for i in self._order if self._returns[i].resolution_identity == identity)
     def has_lineage_return(self, identity, lineage_ref): return any(r.return_class == "LINEAGE" and r.lineage_ref == lineage_ref for r in self.returns_for(identity))

@@ -17,9 +17,13 @@ class SubjectCoverage:
     local_aggregate: str         # HEALTHY only if every LOCAL kind is HEALTHY; NOT_HEALTHY if any is; else UNKNOWN
     complete: bool               # every LOCAL kind has a reading (not an acceptance)
     admitted: bool = False
+    extra: tuple = ()            # ((kind, state, source), ...) Stage A subjects outside Build Plan 14's eight (adapter observations); never part of the local aggregate
 
-def coverage(core, subject: str, version: str, now: int, *, gateway_snapshot=None, supplied=None) -> SubjectCoverage:
-    supplied = supplied or {}
+def coverage(core, subject: str, version: str, now: int, *, gateway_snapshot=None, supplied=None, observations=None, policies=None) -> SubjectCoverage:
+    """observations: {kind: health.adapters.HealthObservation} (facts read from existing records); policies: {kind: callable(facts)->state} SUPPLIED and unadmitted. Facts without a policy are UNKNOWN (an evidence source EXISTS, a verdict does not)."""
+    from . import adapters as AD
+    supplied = supplied or {}; observations = observations or {}; policies = policies or {}
+    if not isinstance(observations, dict) or not all(isinstance(o, AD.HealthObservation) and o.kind == k for k, o in observations.items()): raise Refusal("observations", code="HEALTH_OBSERVATION_INVALID")
     if not isinstance(supplied, dict) or set(supplied) - set(LOCAL_KINDS): raise Refusal("supplied", code="HEALTH_SUBJECT_KIND_UNKNOWN")
     local = []
     for k in LOCAL_KINDS:
@@ -31,8 +35,11 @@ def coverage(core, subject: str, version: str, now: int, *, gateway_snapshot=Non
         elif k == "GATEWAY_BINDING_NON_DELIVERY" and gateway_snapshot is not None:
             if not core.confirm_snapshot(gateway_snapshot) or gateway_snapshot.subject != subject or gateway_snapshot.version != version or not core.snapshot_current_at_use(gateway_snapshot, now): local.append((k, "UNKNOWN", "SNAPSHOT_NOT_CONFIRMED_FOR_SUBJECT_VERSION_OR_NOT_CURRENT_AT_USE"))
             else: local.append((k, "HEALTHY" if gateway_snapshot.acceptable else "NOT_HEALTHY", gateway_snapshot.evidence_class))
+        elif k in observations:
+            st, lab = AD.state_for(observations[k], policies.get(k)); local.append((k, st, "ADAPTER_FACTS:%s:%s" % (observations[k].source_ref, lab)))
         else: local.append((k, "UNKNOWN", NO_SOURCE))
     sts = [s for _, s, _ in local]
     agg = "NOT_HEALTHY" if "NOT_HEALTHY" in sts else ("HEALTHY" if all(s == "HEALTHY" for s in sts) else "UNKNOWN")
     carried = (("FW_ML_CARRIED_UPSTREAM_IMPACT", tuple(core.blast_radius(subject)["dependents"])),)
-    return SubjectCoverage(tuple(local), carried, agg, all(src != NO_SOURCE for _, _, src in local))
+    extra = tuple((k, *AD.state_for(o, policies.get(k))) for k, o in sorted(observations.items()) if k not in LOCAL_KINDS)
+    return SubjectCoverage(tuple(local), carried, agg, all(src != NO_SOURCE for _, _, src in local), False, extra)
