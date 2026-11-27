@@ -9,7 +9,7 @@ _OPS = {
     "add": (2, False, "ARITH_BINARY64"), "sub": (2, False, "ARITH_BINARY64"), "mul": (2, False, "ARITH_BINARY64"),
     "div": (2, False, "ARITH_BINARY64"), "min": (2, False, "ARITH_BINARY64"), "max": (2, False, "ARITH_BINARY64"),
     "neg": (1, False, "ARITH_BINARY64"), "abs": (1, False, "ARITH_BINARY64"),
-    "sqrt": (1, False, "ELEMENTARY_BINARY64"), "log": (1, False, "ELEMENTARY_BINARY64"),
+    "sqrt": (1, False, "ELEMENTARY_BINARY64"),
     "lag": (1, True, "WINDOW_LAG"), "rolling_sum": (1, True, "WINDOW_ROLLING"), "rolling_mean": (1, True, "WINDOW_ROLLING"),
 }
 
@@ -93,10 +93,14 @@ def _kahn(p):
 class RefEvalError(Exception):
     pass
 
+def _z(x):
+    """Signed-zero canonicalisation by arithmetic (-0.0 + 0.0 == +0.0 under round-to-nearest); independent of the composer's comparison form."""
+    return None if x is None else x + 0.0
+
 def _fin(x):
     if x is not None and not math.isfinite(x):
         raise RefEvalError("NON_FINITE")
-    return x
+    return _z(x)
 
 def reference_evaluate(p, series):
     """Column-wise reference evaluator. Returns list of float|None."""
@@ -106,12 +110,12 @@ def reference_evaluate(p, series):
     for nid in order:
         nd = by[nid]; op = nd["op"]
         if op == "input":
-            col[nid] = list(series[nd["name"]])
+            col[nid] = [_z(x) for x in series[nd["name"]]]
         elif op == "const":
             c = struct.unpack(">d", bytes.fromhex(nd["value"]))[0]
             if not math.isfinite(c):
                 raise RefEvalError("NON_FINITE_CONST")
-            col[nid] = [c] * n_rows
+            col[nid] = [_z(c)] * n_rows
         elif op in ("lag",):
             src, k = col[nd["args"][0]], nd["n"]
             col[nid] = [None] * min(k, n_rows) + src[:max(n_rows - k, 0)]
@@ -122,7 +126,7 @@ def reference_evaluate(p, series):
                 w = src[t - k + 1:t + 1] if t - k + 1 >= 0 else None
                 if w is None or any(x is None for x in w):
                     res.append(None); continue
-                s = reduce(lambda acc, x: _fin(acc + x), w, 0.0)
+                s = reduce(lambda acc, x: _fin(acc + _z(x)), w, 0.0)
                 res.append(s if op == "rolling_sum" else _fin(s / float(k)))
             col[nid] = res
         else:
@@ -131,16 +135,20 @@ def reference_evaluate(p, series):
             for row in zip(*cols):
                 if any(x is None for x in row):
                     res.append(None); continue
+                row = tuple(_z(x) for x in row)
                 if op == "add": r = _fin(row[0] + row[1])
                 elif op == "sub": r = _fin(row[0] - row[1])
                 elif op == "mul": r = _fin(row[0] * row[1])
-                elif op == "div": r = None if row[1] == 0.0 else _fin(row[0] / row[1])
-                elif op == "min": r = min(row[0], row[1]) if row[0] != row[1] else row[0]
-                elif op == "max": r = max(row[0], row[1]) if row[0] != row[1] else row[0]
-                elif op == "neg": r = -row[0]
-                elif op == "abs": r = math.fabs(row[0])
-                elif op == "sqrt": r = None if row[0] < 0.0 else math.sqrt(row[0])
-                elif op == "log": r = None if row[0] <= 0.0 else math.log(row[0])
+                elif op == "div":
+                    if row[1] == 0.0: raise RefEvalError("DOMAIN_FAILURE")
+                    r = _fin(row[0] / row[1])
+                elif op == "min": r = _fin(min(row[0], row[1]) if row[0] != row[1] else row[0])
+                elif op == "max": r = _fin(max(row[0], row[1]) if row[0] != row[1] else row[0])
+                elif op == "neg": r = _fin(-row[0])
+                elif op == "abs": r = _fin(math.fabs(row[0]))
+                elif op == "sqrt":
+                    if row[0] < 0.0: raise RefEvalError("DOMAIN_FAILURE")
+                    r = _fin(math.sqrt(row[0]))
                 else: raise RefEvalError("UNKNOWN_OPCODE")
                 res.append(r)
             col[nid] = res

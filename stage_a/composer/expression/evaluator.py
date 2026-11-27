@@ -1,15 +1,28 @@
 """Generic evaluator. No branch depends on feature id/version/model name (TR-01; enforced by a static test).
-Causality: the value at index t reads inputs at indices <= t only."""
+Causality: the value at index t reads inputs at indices <= t only.
+
+ARITHMETIC SOURCE (R11; cited by ID/lines, not copied): Stateful Quantitative Feature Contract V1.2 (Drive 1i5P8zxQmvBDKz397BxIUKM8AnBY00-ItzLMOjNGOkRM),
+readable lines 116-204, controlling overlay SQE_OPSET_V1_1; Typed Schema Annex V1.2 (Drive 13PE_pli3ZlFjjPdhHtWtLyyH2XdAv8XGA4FN0KGcIlA), lines 84-121.
+Implemented here: binary64, round-to-nearest-even (Python float ops are single IEEE operations: no FMA, no reassociation, no FTZ/DAZ);
+finite inputs and finite results or fail closed; signed zero canonicalised to +0 at operator input and output boundaries; subnormals preserved;
+DIVIDE_GUARDED = zero denominator (after canonicalisation) is a DOMAIN FAILURE (refusal), SQRT_GUARDED = negative input is a DOMAIN FAILURE;
+sequential ascending accumulation from +0 for rolling_sum (the FIXED_SUM rule). LOG/EXP/POW/transcendentals are NOT admitted (see opcodes.py).
+UNDEFINED (None) is retained ONLY as missing-input / warm-up propagation (lag, short window, missing input). That propagation is this repository's
+prototype semantics and is SOURCE-UNBOUND (SQE_OPSET_V1_1 does not define missing inputs); it must not be read as an arithmetic-domain result."""
 import math, struct
 from typing import Dict, List, Optional
 from ...errors import Refusal
 from .manifest import Manifest
 
+def canon(x):
+    """Signed-zero canonicalisation: -0.0 -> +0.0 (None passes through)."""
+    return 0.0 if x is not None and x == 0.0 else x
+
 def decode_const(hex16: str) -> float:
     v = struct.unpack(">d", bytes.fromhex(hex16))[0]
     if not math.isfinite(v):
         raise Refusal(hex16, code="NON_FINITE_CONST")
-    return v
+    return canon(v)
 
 def encode_const(x: float) -> str:
     if type(x) is not float or not math.isfinite(x):
@@ -19,27 +32,30 @@ def encode_const(x: float) -> str:
 def _fin(x):
     if x is not None and not math.isfinite(x):
         raise Refusal("overflow/non-finite result", code="NON_FINITE_RESULT")
-    return x
+    return canon(x)
 
 def op_value(node, t, get):
     """Value of `node` at index t; get(node_id, idx) gives an already-computed value (None if undefined/out of range)."""
     op = node["op"]
     if op == "const":
         return decode_const(node["value"])
-    a = [get(x, t) for x in node.get("args", [])]
-    if op in ("add", "sub", "mul", "div", "min", "max", "neg", "abs", "sqrt", "log"):
+    a = [canon(get(x, t)) for x in node.get("args", [])]
+    if op in ("add", "sub", "mul", "div", "min", "max", "neg", "abs", "sqrt"):
         if any(v is None for v in a):
-            return None
+            return None                                   # missing-input propagation (source-unbound)
         if op == "add": return _fin(a[0] + a[1])
         if op == "sub": return _fin(a[0] - a[1])
         if op == "mul": return _fin(a[0] * a[1])
-        if op == "div": return None if a[1] == 0.0 else _fin(a[0] / a[1])
-        if op == "min": return a[0] if a[0] <= a[1] else a[1]
-        if op == "max": return a[0] if a[0] >= a[1] else a[1]
-        if op == "neg": return -a[0]
-        if op == "abs": return abs(a[0])
-        if op == "sqrt": return None if a[0] < 0.0 else math.sqrt(a[0])
-        if op == "log": return None if a[0] <= 0.0 else math.log(a[0])
+        if op == "div":
+            if a[1] == 0.0: raise Refusal("zero denominator", code="DOMAIN_DIV_ZERO")
+            return _fin(a[0] / a[1])
+        if op == "min": return _fin(a[0] if a[0] <= a[1] else a[1])
+        if op == "max": return _fin(a[0] if a[0] >= a[1] else a[1])
+        if op == "neg": return _fin(-a[0])
+        if op == "abs": return _fin(abs(a[0]))
+        if op == "sqrt":
+            if a[0] < 0.0: raise Refusal("negative sqrt input", code="DOMAIN_SQRT_NEGATIVE")
+            return _fin(math.sqrt(a[0]))
     src = node["args"][0]
     n = node["n"]
     if op == "lag":
@@ -52,7 +68,7 @@ def op_value(node, t, get):
             v = get(src, i)
             if v is None:
                 return None
-            s = _fin(s + v)
+            s = _fin(s + canon(v))
         return s if op == "rolling_sum" else _fin(s / float(n))
     raise Refusal(op, code="UNKNOWN_OPCODE")   # unreachable for validated manifests
 
@@ -91,7 +107,7 @@ def evaluate(m: Manifest, series) -> List[Optional[float]]:
     for nid in topo_order(m):
         node = by_id[nid]
         if node["op"] == "input":
-            vals[nid] = list(series[node["name"]])
+            vals[nid] = [canon(x) for x in series[node["name"]]]
             continue
         vals[nid] = [op_value(node, t, lambda k, i: vals[k][i]) for t in range(length)]
     return vals[m.data["output"]]
