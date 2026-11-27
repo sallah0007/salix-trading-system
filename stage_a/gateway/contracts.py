@@ -131,6 +131,8 @@ class SimulatedGateway:
         elif not self.allow_shape_only_health: return nd("HEALTH_SNAPSHOT_SHAPE_ONLY_NOT_ACCEPTED")        # a plain snapshot is not verified Health for any subject
         if not health.acceptable:
             return nd("HEALTH_UNACCEPTABLE")
+        if type(health) is CoreHealthSnapshot and not self.health_source.snapshot_current_at_use(health, fence):
+            return nd("HEALTH_SNAPSHOT_NOT_CURRENT_AT_USE")             # issuance integrity is not current permission: re-read the CURRENT journal at use (quarantine/epoch/expiry/proof)
         if health.resolved_at >= fence:
             return nd("HEALTH_NOT_RESOLVED_BEFORE_FENCE")
         d = B.build_delivered_entry(row, st.status, health.resolution_ref, health.resolved_at)

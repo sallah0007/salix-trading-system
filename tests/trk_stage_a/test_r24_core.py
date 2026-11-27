@@ -190,7 +190,7 @@ class Composition(unittest.TestCase):
     def test_healthy_simulation_core_yields_typed_simulation_health_and_binding_consumed_downstream(self):
         gw, e, hs, out = self.path(True); self.assertIsInstance(hs, CoreHealthSnapshot); self.assertEqual(hs.evidence_class, "SIMULATION"); self.assertIsInstance(out, G.Binding)
         self.assertIs(FW.receive_verified(out, e, I, I, T, gw), out)
-        self.assertTrue(ML.build_row("r", R("gen"), [e], [out], gw, "ORIGINAL_AS_OBSERVED", NONE_, lambda o: NONE_).included)
+        self.assertTrue(ML.build_row("r", R("gen"), [e], [out], gw, "ORIGINAL_AS_OBSERVED", NONE_, lambda o: NONE_, tables=gw.t).included)
     def test_qualified_core_health_is_held_never_acceptable(self):
         gw, e, hs, out = self.path(True, sim=False); self.assertEqual((hs.acceptable, hs.evidence_class), (False, "QUALIFIED_HELD")); self.assertNotIsInstance(out, G.Binding)
     def test_unknown_health_blocks_and_historical_mode_is_unresolved(self):

@@ -19,8 +19,34 @@ def build_delivered_entry(row, chain_status: str, health_ref, health_resolved_at
         source_or_causal_policy_ref=row.source_or_causal_policy_ref, bound_health_resolution_ref=health_ref, bound_health_resolved_at=health_resolved_at,
         canonical_transition_ref=row.canonical_transition_ref, omissions_exclusions_reason_codes=tuple(omissions))
 
+def _xref(tables, r):
+    if r is None: return None
+    if r.ref_type not in tables.ref_types: raise Refusal(r.ref_type, code="REF_TYPE_NOT_IN_SUPPLIED_TABLE")
+    return (tables.ref_types[r.ref_type], r.target_id, r.target_version, r.target_hash)
+
+def _enum(tables, name, sym):
+    t = tables.enums.get(name)
+    if t is None or sym not in t: raise Refusal("%s:%r" % (name, sym), code="ENUM_SYMBOL_NOT_IN_SUPPLIED_TABLE")
+    return t[sym]
+
+def independent_view(tables, entry) -> dict:
+    """Plain-data view of the entry for the INDEPENDENT composition (refs -> (type code, id, version, hash|None); enum symbols -> codes from the SUPPLIED table; nothing is numbered here)."""
+    d = {f: getattr(entry, f) for f in ANNEX_XII_FIELDS}
+    for f in ("fit_generation_ref", "source_or_causal_policy_ref", "bound_health_resolution_ref", "canonical_transition_ref"): d[f] = _xref(tables, d[f])
+    d["data_vintage_mode"] = _enum(tables, "DATA_VINTAGE_MODE", d["data_vintage_mode"]); d["chain_status_at_bind"] = _enum(tables, "CHAIN_STATUS", d["chain_status_at_bind"])
+    om = []
+    for v in d["omissions_exclusions_reason_codes"]:
+        if not (isinstance(v, tuple) and v): raise Refusal("omission tag", code="OMISSION_MALFORMED")
+        om.append(("ENUM", v[1], _enum(tables, v[1], v[2])) if v[0] == "ENUM" and len(v) == 3 else ("REF", _xref(tables, v[1])) if v[0] == "REF" and len(v) == 2 else (_ for _ in ()).throw(Refusal("omission tag", code="OMISSION_MALFORMED")))
+    d["omissions_exclusions_reason_codes"] = om
+    return d
+
 def verify_delivered(tables, entry, claimed_hash: bytes) -> None:
-    """Read-only consumer check: exact schema type (no look-alike), complete Annex field set, hash recomputed over the canonical encodings."""
+    """Read-only consumer check: exact schema type (no look-alike), complete Annex field set, and the hash RE-DERIVED by the independent composition (schema.independent: its own field order/presence/width rules, not the
+    producer's `objects.delivered_hash`). Any refusal from the independent side (range/presence/unknown code) is a refusal here; disagreement with the claimed hash is HASH_MISMATCH."""
     if type(entry) is not DeliveredFeatureEntry: raise Refusal(type(entry).__name__, code="NOT_THE_FROZEN_DELIVERED_ENTRY")
     if tuple(entry.__dataclass_fields__) != ANNEX_XII_FIELDS: raise Refusal("field set", code="DELIVERED_ENTRY_FIELDS_DIFFER_FROM_ANNEX")
-    if O.delivered_hash(tables, entry) != claimed_hash: raise Refusal("hash", code="HASH_MISMATCH")
+    from ..schema import independent as X
+    try: h = X.delivered_hash(independent_view(tables, entry), tables.enums)
+    except (ValueError, TypeError, KeyError, AttributeError) as e: raise Refusal(str(e), code="DELIVERED_ENTRY_NOT_INDEPENDENTLY_COMPOSABLE")
+    if h != claimed_hash: raise Refusal("hash", code="HASH_MISMATCH")

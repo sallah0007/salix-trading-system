@@ -22,7 +22,7 @@ class MLRow:
     def included(self): return self.row_exclusion_reason is None
 
 def build_row(row_id, generation_binding_ref, entries, outcomes, gateway, requested_vintage_mode, eligibility_reason,
-              exclusion_reason_for_missing, tables=None, expected_request_ids=None):
+              exclusion_reason_for_missing, tables=None, expected_request_ids=None, allow_unverified_hash=False):
     """entries: declared DependencyEntry list; outcomes: gateway outcomes in the same order. R22: the issuing Gateway is REQUIRED (no unverified/None path yields an included row).
     expected_request_ids: optional {(feature_id, feature_version): request_id} - the consumer own request-id association; when given it is enforced. The canonical SOURCE slot that
     defines that association (request/resolution/generation) is UNBOUND, so without it only 'issued by this Gateway' is claimed, never 'issued for THIS consumer request'."""
@@ -43,6 +43,10 @@ def build_row(row_id, generation_binding_ref, entries, outcomes, gateway, reques
                 raise Refusal(o.request_id, code="BINDING_NOT_FROM_GATEWAY")          # F4: no Gateway rebind -> rejected
             if o.entry.feature_id != e.feature_id or o.entry.feature_version != e.feature_version:
                 raise Refusal("binding for a different dependency", code="WRONG_VERSION")
+            if tables is not None:
+                from ..gateway.binding import verify_delivered
+                verify_delivered(tables, o.entry, o.delivered_feature_hash)      # exact owned entry + independent hash re-derivation, read-only
+            elif not allow_unverified_hash: raise Refusal("no code tables supplied", code="DELIVERED_HASH_NOT_VERIFIABLE")   # fail closed on the unread
             if o.entry.data_vintage_mode != requested_vintage_mode:
                 raise Refusal(o.entry.data_vintage_mode, code="VINTAGE_MODE_MIXED_OR_SUBSTITUTED")   # EVENTUAL look-ahead / mixed era
             bindings.append(o)

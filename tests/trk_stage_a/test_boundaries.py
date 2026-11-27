@@ -225,7 +225,7 @@ def _bound(**kw):
 
 def test_fw_receives_exact_binding_and_cross_consumer_identity():
     gw, b = _bound(); assert FW.receive(b, _entry(), I, I, T, gateway=gw) is b
-    ml = ML.build_row("r1", R("gen"), [_entry()], [b], gw, "ORIGINAL_AS_OBSERVED", ("ENUM", "REASON", "NONE"), lambda o: ("ENUM", "REASON", "NONE"))
+    ml = ML.build_row("r1", R("gen"), [_entry()], [b], gw, "ORIGINAL_AS_OBSERVED", ("ENUM", "REASON", "NONE"), lambda o: ("ENUM", "REASON", "NONE"), tables=gw.t)
     assert ml.bindings[0].entry.published_projection_bits == b.entry.published_projection_bits and ml.bindings[0].delivered_feature_hash == b.delivered_feature_hash
 
 def test_fw_fail_closed_negatives():
@@ -261,7 +261,7 @@ def test_lanes_and_closure():
 NONE_ = ("ENUM", "REASON", "NONE")
 def test_ml_row_negatives_and_explicit_exclusion():
     gw, b = _bound()
-    row_ = ML.build_row("r", R("gen"), [_entry()], [b], gw, "ORIGINAL_AS_OBSERVED", NONE_, lambda o: NONE_)
+    row_ = ML.build_row("r", R("gen"), [_entry()], [b], gw, "ORIGINAL_AS_OBSERVED", NONE_, lambda o: NONE_, tables=gw.t)
     assert row_.included
     with pytest.raises(Refusal): ML.build_row("r", R("gen"), [_entry()], [b], _gw(avail=9), "ORIGINAL_AS_OBSERVED", NONE_, lambda o: NONE_)   # F4 no Gateway rebind
     with pytest.raises(Refusal): ML.build_row("r", R("gen"), [_entry()], [b], gw, "EVENTUAL", NONE_, lambda o: NONE_)                        # EVENTUAL look-ahead/mixed era

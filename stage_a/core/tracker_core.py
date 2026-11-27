@@ -32,6 +32,12 @@ QUALIFIED_PREREQS_UNBOUND = ("OBSERVATION_ADMISSION_SCHEMA_UNBOUND", "VERIFIER_B
 def _s(x): return json.loads(canonical_bytes(x).decode("ascii"))
 def _int(x): return isinstance(x, int) and not isinstance(x, bool)
 
+def _scope_key(*parts) -> str:
+    """Unambiguous replay key: a JSON array of typed parts (strings stay strings, the dependency sequence stays a nested array, order preserved). No delimiter or forbidden-character assumption: a value containing
+    '|' or ',' cannot collide with a different scope because structure, not concatenation, separates the fields."""
+    import json
+    return json.dumps(list(parts), separators=(",", ":"), ensure_ascii=True)
+
 class TrackerCore:
     PLANES = ("core_market", "event_context", "market_features", "research")       # source-named planes (DOCX s4/s21; registry s18); the write-role/restore ADMISSION is unbound (D2)
 
@@ -85,8 +91,8 @@ class TrackerCore:
             elif k == "Q_REACTIVATE": st["q"][b["subject"]]["status"] = "ACTIVE"; st["reverify"][b["subject"]] = r.seq        # eligibility must be re-evidenced after reactivation
             elif k == "HEALTH": st["health"][b["subject"]] = dict(b, seq=r.seq)
             elif k == "FINDING": st["findings"].append(b)
-            elif k == "AUTH_EVIDENCE": st["authev"]["|".join((b["subject"], b["version"], b["instrument"], b["timeframe"], b["battery"], b["vintage"], ",".join(b["dependencies"])))] = b      # keyed by the FULL claim scope: one version/scope never clears another
-            elif k == "TRANSFORM_VERDICT": st["xform"]["|".join((b["subject"], b["version"], b["kind"], b["transform_version"], b["lineage_ref"]))] = b
+            elif k == "AUTH_EVIDENCE": st["authev"][_scope_key(b["subject"], b["version"], b["instrument"], b["timeframe"], b["battery"], b["vintage"], list(b["dependencies"]))] = b      # keyed by the FULL claim scope: one version/scope never clears another
+            elif k == "TRANSFORM_VERDICT": st["xform"][_scope_key(b["subject"], b["version"], b["kind"], b["transform_version"], b["lineage_ref"])] = b
             elif k == "SUBJECT_ASSOC": st["assoc"].setdefault(b["subject"], []).append(b["binding"])
             elif k == "SNAPSHOT_ISSUED": st["snapiss"][b["snapshot_id"]] = b
             elif k == "REVIEW_TASK": st["tasks"][b["task_origin"]] = b
@@ -375,9 +381,10 @@ class TrackerCore:
     def record_verification(self, subject: str, version: str, l2_requirement: str, l2_status: str, l1: str, at: int, max_age: int, verifier_id: str, result_digest: str, definition_ref: str = None, evidence_class: str = "CALLER_ASSERTED", result=None):
         if evidence_class not in EVIDENCE_CLASSES: raise Refusal(str(evidence_class), code="HEALTH_EVIDENCE_CLASS_UNKNOWN")
         if evidence_class == COMPOSED_RECOMPUTATION:       # the composed label is earned by a typed verifier result bound to THIS subject/digest/levels, never asserted by label alone
-            from ..tracker.verification.verification_result import SCOPE_MATERIALIZATION, COMPOSED_VERIFIER_ID, split_levels, result_is_self_consistent
+            from ..tracker.verification.verification_result import SCOPE_MATERIALIZATION, COMPOSED_VERIFIER_ID, split_levels, result_is_self_consistent, issued_by_verifier_run
             if result is None: raise Refusal("composed evidence needs the verifier result", code="HEALTH_COMPOSED_RESULT_MISSING")
             if not result_is_self_consistent(result): raise Refusal("result not self-consistent", code="HEALTH_COMPOSED_RESULT_FORGED")
+            if not issued_by_verifier_run(result): raise Refusal("a structurally valid result is not a verifier run", code="HEALTH_COMPOSED_RESULT_NOT_FROM_VERIFIER_RUN")   # asserted PASS-shaped objects stay CALLER_ASSERTED
             if (result.scope != SCOPE_MATERIALIZATION or verifier_id != COMPOSED_VERIFIER_ID or result_digest != result.result_hash
                     or dict(result.subject).get("expect_scope_key") != subject or l2_requirement != "REQUIRED" or (l1, l2_status) != split_levels(result)
                     or str(dict(result.subject).get("expect_scope_key")).rsplit("/", 1)[-1] != version):      # the verified VERSION (last scope-key segment), not only the scope-key string
@@ -489,13 +496,24 @@ class TrackerCore:
         if not isinstance(binding.feature_id, bytes) or not isinstance(binding.instrument_id, bytes) or not isinstance(binding.timeframe_id, bytes) or not isinstance(binding.feature_version, str): raise Refusal("binding types", code="SUBJECT_ASSOCIATION_INVALID")
         h = self._bhex(binding); self._commit(lambda st: (None, None) if h in st["assoc"].get(subject, []) else (None, ("SUBJECT_ASSOC", {"subject": subject, "binding": h, "source_ref": source_ref, "admission": "CALLER_ASSERTED_UNADMITTED"})))
     @staticmethod
-    def _snapshot_id(subject, version, bhex, ref, resolved_at, acceptable, evidence_class, now, held):
-        return domain_hash("TRK/HEALTH_SNAPSHOT", canonical_bytes({"s": subject, "v": version, "b": bhex, "ref": repr(ref), "r": resolved_at, "a": acceptable, "c": evidence_class, "n": now, "h": held}))
+    def _snapshot_id(subject, version, bhex, ref, resolved_at, acceptable, evidence_class, now, held, ra=False, rt=False):
+        return domain_hash("TRK/HEALTH_SNAPSHOT", canonical_bytes({"s": subject, "v": version, "b": bhex, "ref": repr(ref), "r": resolved_at, "a": acceptable, "c": evidence_class, "n": now, "h": held, "ra": ra, "rt": rt}))
     def confirm_snapshot(self, snap) -> bool:
         """True only if `snap` is a Core-typed snapshot whose id re-derives from its own fields AND is present in this Core's journal as issued (survives restart). A replaced/forged field changes the id."""
         if type(snap) is not CoreHealthSnapshot or snap.binding is None: return False
-        if self._snapshot_id(snap.subject, snap.version, self._bhex(snap.binding), snap.resolution_ref, snap.resolved_at, snap.acceptable, snap.evidence_class, snap.evaluated_at, snap.held_reason) != snap.snapshot_id: return False
+        if self._snapshot_id(snap.subject, snap.version, self._bhex(snap.binding), snap.resolution_ref, snap.resolved_at, snap.acceptable, snap.evidence_class, snap.evaluated_at, snap.held_reason, snap.require_authority_evidence, snap.require_transform_proof) != snap.snapshot_id: return False
         return snap.snapshot_id in self._replay()["snapiss"]
+    def _current_ok(self, st, subject, version, now, ra, rt) -> bool:
+        return self.simulation and not self._blocked(st, subject) and self._health(st, subject, version, now) == "HEALTHY" and not self._proof_blocks(st, subject, version, now, ra, rt)
+    def snapshot_current_at_use(self, snap, use_at: int) -> bool:
+        """Journal issuance proves only that THIS Core issued the snapshot; it is not current permission. At USE (a NEW ordinary binding) the issued snapshot must still be confirmable AND the same Health/blocks/epoch/
+        evidence-truth/transform predicates, re-read from the CURRENT journal at `use_at`, must still accept the same (subject, version, binding). Quarantine, epoch invalidation, ambiguity, a later re-verification request,
+        expired evidence and an invalidated proof all fail here. Already-finalized bindings are immutable and are NOT re-judged by this (no retroactive rewrite); no historical Health mode or threshold is invented
+        (freshness uses the Health evidence's own max_age against `use_at`)."""
+        if not self.confirm_snapshot(snap) or not _int(use_at) or use_at < snap.evaluated_at: return False
+        st = self._replay()
+        if snap.binding is not None and self._bhex(snap.binding) not in st["assoc"].get(snap.subject, []): return False
+        return self._current_ok(st, snap.subject, snap.version, use_at, snap.require_authority_evidence, snap.require_transform_proof)
 
     # ---- composition output: the health the downstream Gateway actually consumes -------------------
     def gateway_health(self, subject: str, version: str, now: int, ref, resolved_at: int, *, asof_seq: int = None, binding=None, require_authority_evidence: bool = False, require_transform_proof: bool = False):
@@ -506,14 +524,14 @@ class TrackerCore:
         from dataclasses import dataclass
         if asof_seq is not None: raise Refusal("historical Health consistency mode has no source-correct rule here", code="HISTORICAL_HEALTH_MODE_UNRESOLVED")
         st = self._replay()
-        ok = self.simulation and not self._blocked(st, subject) and self._health(st, subject, version, now) == "HEALTHY" and not self._proof_blocks(st, subject, version, now, require_authority_evidence, require_transform_proof)
+        ok = self._current_ok(st, subject, version, now, require_authority_evidence, require_transform_proof)
         if binding is not None and getattr(binding, "feature_version", None) != version: raise Refusal("binding version != Health version", code="HEALTH_BINDING_VERSION_MISMATCH")
         held = ""
         if binding is not None and self._bhex(binding) not in st["assoc"].get(subject, []): ok = False; held = "SUBJECT_ASSOCIATION_UNBOUND"
         ec = "SIMULATION" if self.simulation else "QUALIFIED_HELD"
-        sid = self._snapshot_id(subject, version, self._bhex(binding) if binding is not None else None, ref, resolved_at, ok, ec, now, held)
+        sid = self._snapshot_id(subject, version, self._bhex(binding) if binding is not None else None, ref, resolved_at, ok, ec, now, held, require_authority_evidence, require_transform_proof)
         if binding is not None: self._commit(lambda st2: (None, None) if sid in st2["snapiss"] else (None, ("SNAPSHOT_ISSUED", {"snapshot_id": sid, "subject": subject, "version": version, "at": now})))
-        return CoreHealthSnapshot(ref, resolved_at, ok, ec, binding=binding, subject=subject, version=version, evaluated_at=now, held_reason=held, snapshot_id=sid)
+        return CoreHealthSnapshot(ref, resolved_at, ok, ec, binding=binding, subject=subject, version=version, evaluated_at=now, held_reason=held, snapshot_id=sid, require_authority_evidence=require_authority_evidence, require_transform_proof=require_transform_proof)
 
     # ---- reviewer / write-plane boundary ------------------------------------------------------------
     FINDING_FIELDS = ("finding_id", "task_origin", "summary", "author")
@@ -576,6 +594,8 @@ class CoreHealthSnapshot(_HS):
     evaluated_at: int = 0
     held_reason: str = ""
     snapshot_id: str = ""
+    require_authority_evidence: bool = False
+    require_transform_proof: bool = False
 
 
 @dataclass(frozen=True)

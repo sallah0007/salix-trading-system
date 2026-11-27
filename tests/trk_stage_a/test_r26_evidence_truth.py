@@ -64,7 +64,8 @@ class EvidenceTruth(unittest.TestCase):
         from .strict_gateway import sgw, bind
         from .test_boundaries import _entry, R, I
         c = mk(); ver(c, "S", version="1", at=11, age=50); c.judge_transition_evidence(claim(version_or_hash="1"), {"E1": rec(version_or_hash="1")}, 12)           # valid until 15
-        hs = c.gateway_health("S", "1", 12, R("hl"), 11, binding=bind(c, "S")); self.assertTrue(hs.acceptable); self.assertIsInstance(sgw(c).resolve("o", _entry(ver="1"), I, I, 3, 20, hs), G.Binding)
+        hs = c.gateway_health("S", "1", 12, R("hl"), 11, binding=bind(c, "S")); self.assertTrue(hs.acceptable); self.assertIsInstance(sgw(c).resolve("o", _entry(ver="1"), I, I, 3, 14, hs), G.Binding)
+        self.assertEqual(sgw(c).resolve("late", _entry(ver="1"), I, I, 3, 20, hs).reason, "HEALTH_SNAPSHOT_NOT_CURRENT_AT_USE")      # issued snapshot used after its evidence expired (valid until 15)
         self.assertFalse(c.gateway_health("S", "1", 16, R("hl"), 11, binding=bind(c, "S")).acceptable)                                    # stale AT USE although the verdict was VALID when made
         c.judge_transition_evidence(claim(version_or_hash="1"), {}, 12); self.assertFalse(c.gateway_health("S", "1", 12, R("hl"), 11, binding=bind(c, "S")).acceptable)   # same S/1: eligibility blocked => Gateway Health blocked too
     def test_required_proofs_are_held_only_when_the_caller_declares_them(self):
@@ -92,3 +93,67 @@ class CausalFirewall(unittest.TestCase):
         c.judge_transform("S", self.spec(direction="FUTURE", version="t3"), "1"); c.judge_transform("S", self.spec(version="t1"), "1")
         self.assertIn("TRANSFORM_NOT_CAUSAL_OR_UNPROVEN", c.eligible_asof("S", "1", c._j.head().seq, 12)["reasons"])      # a valid verdict for transform t1 does not clear the failing t3
 if __name__ == "__main__": unittest.main()
+
+class ReplayKeysAreUnambiguous(unittest.TestCase):
+    """R27 defect 1: separator-containing scalars / dependency sequences must never collide in the replay key."""
+    def _blocked(self, c): return c.eligible_asof("S", "v1", c._j.head().seq, 12)["reasons"]
+    def test_comma_dependency_does_not_collide_with_two_dependencies_either_order(self):
+        from stage_a.core.tracker_core import TrackerCore
+        for first_invalid in (True, False):
+            c = mk(); ver(c, "S", version="v1", at=11, age=50)
+            idx = {"E1": rec(dependencies=("a", "b"))}
+            bad = lambda: c.judge_transition_evidence(claim(dependencies=("a,b",)), {}, 12)
+            good = lambda: c.judge_transition_evidence(claim(dependencies=("a", "b")), idx, 12)
+            (bad(), good()) if first_invalid else (good(), bad())
+            self.assertEqual(self._blocked(c), ["AUTHORITY_TRANSITION_EVIDENCE_NOT_VALID"], first_invalid)             # the invalid scope still blocks
+            self.assertEqual(TrackerCore(c._j, simulation=True).eligible_asof("S", "v1", c._j.head().seq, 12)["reasons"], ["AUTHORITY_TRANSITION_EVIDENCE_NOT_VALID"])   # restart
+    def test_pipe_in_scalar_fields_does_not_collide(self):
+        c = mk(); ver(c, "S", version="v1", at=11, age=50)
+        c.judge_transition_evidence(claim(battery="B1|V1", vintage="X"), {}, 12)                                       # invalid, battery carries the old delimiter
+        c.judge_transition_evidence(claim(battery="B1", vintage="V1|X"), {"E1": rec(vintage="V1|X")}, 12)             # valid, different scope that used to join identically
+        self.assertEqual(self._blocked(c), ["AUTHORITY_TRANSITION_EVIDENCE_NOT_VALID"])
+    def test_unrelated_version_positive_control_and_exact_rejudgement_clears(self):
+        c = mk(); ver(c, "S", version="v1", at=11, age=50)
+        c.judge_transition_evidence(claim(dependencies=("a,b",)), {}, 12)
+        c.judge_transition_evidence(claim(), {"E1": rec()}, 12)                                                         # unrelated valid scope: must NOT clear the invalid one
+        self.assertEqual(self._blocked(c), ["AUTHORITY_TRANSITION_EVIDENCE_NOT_VALID"])
+        c.judge_transition_evidence(claim(dependencies=("a,b",)), {"E1": rec(dependencies=("a,b",))}, 12)           # re-judging that exact scope validly does clear it
+        self.assertEqual(self._blocked(c), [])
+    def test_transform_verdict_keys_are_unambiguous(self):
+        c = mk(); ver(c, "S", version="v1", at=11, age=50)
+        c.judge_transform("S", self.spec(direction="FUTURE", version="t1", lineage_ref="x|L"), "v1")                 # INVALID (future-looking)
+        c.judge_transform("S", self.spec(version="t1|x", lineage_ref="L"), "v1")                                       # VALID, different scope that used to join identically
+        self.assertIn("TRANSFORM_NOT_CAUSAL_OR_UNPROVEN", c.eligible_asof("S", "v1", c._j.head().seq, 12)["reasons"])
+    def spec(self, **k):
+        d = dict(kind="IMPUTATION", direction="CAUSAL", version="t1", fit_window_end=5, fit_permitted_until=8, asof=10, lineage_ref="L", missingness_observable=True, provenance_ref="P"); d.update(k); return ET.TransformSpec(**d)
+
+
+class IssuedSnapshotIsNotCurrentPermission(unittest.TestCase):
+    """R27 defect 2 (Codex repro): quarantine / epoch / evidence expiry / re-verification AFTER issuance must stop a NEW ordinary binding; finalized bindings stay immutable."""
+    def _issue(self, c, subject="S"):
+        from stage_a.gateway import contracts as G
+        from .strict_gateway import bind
+        from .test_boundaries import R
+        return c.gateway_health(subject, "1", 12, R("hl"), 11, binding=bind(c, subject))
+    def _use(self, c, hs, rid="n", fence=20):
+        from .strict_gateway import sgw
+        from .test_boundaries import _entry, I
+        return sgw(c).resolve(rid, _entry(ver="1"), I, I, 3, fence, hs)
+    def test_quarantine_after_issuance_rejects_new_binding_but_not_the_finalized_one(self):
+        from stage_a.gateway import contracts as G
+        c = mk(); ver(c, "S", version="1", at=11, age=50); hs = self._issue(c); self.assertTrue(hs.acceptable)
+        gw_first = self._use(c, hs, "first"); self.assertIsInstance(gw_first, G.Binding)                          # positive control, before the defect
+        c.quarantine("S", "DEFECT")
+        self.assertFalse(c.gateway_health("S", "1", 13, None, 11).acceptable); self.assertTrue(c.confirm_snapshot(hs))   # journal issuance is still true...
+        out = self._use(c, hs, "second"); self.assertNotIsInstance(out, G.Binding); self.assertEqual(out.reason, "HEALTH_SNAPSHOT_NOT_CURRENT_AT_USE")  # ...but is not current permission
+    def test_epoch_invalidation_and_reverification_request_reject_new_binding(self):
+        from stage_a.gateway import contracts as G
+        for mut in (lambda c: c.advance_epoch("S", 2), lambda c: c.request_reverification("S", "SCHEDULED")):
+            c = mk(); ver(c, "S", version="1", at=11, age=50); hs = self._issue(c); mut(c)
+            out = self._use(c, hs); self.assertNotIsInstance(out, G.Binding); self.assertEqual(out.reason, "HEALTH_SNAPSHOT_NOT_CURRENT_AT_USE")
+    def test_health_evidence_expiry_at_use_and_unrelated_subject_positive_control(self):
+        from stage_a.gateway import contracts as G
+        c = mk(); ver(c, "S", version="1", at=11, age=5); ver(c, "T", version="1", at=11, age=500); hs = self._issue(c, "S"); ht = self._issue(c, "T")
+        self.assertEqual(self._use(c, hs, "s", 40).reason, "HEALTH_SNAPSHOT_NOT_CURRENT_AT_USE")                  # S's own max_age (5) elapsed by the use time
+        self.assertIsInstance(self._use(c, ht, "t", 40), G.Binding)                                                # T unaffected: positive control
+        c.quarantine("S", "X"); self.assertIsInstance(self._use(c, ht, "t2", 40), G.Binding)                       # an unrelated subject blocked later does not block T
