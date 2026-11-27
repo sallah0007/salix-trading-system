@@ -30,6 +30,7 @@ class ComposedOrderToConsumer(unittest.TestCase):
         def hs(subj, b): return c.gateway_health(subj, "1", 12, R("hl"), 11, binding=b, require_ancestry=True)
         dep = gw.resolve("d1", _entry(ver="1"), I, I, 3, 20, hs(key, b1)); self.assertEqual((type(dep).__name__, dep.reason), ("NonDeliveryResolution", "HEALTH_UNACCEPTABLE"))        # required ancestor undeclared => fail closed
         self.assertIsInstance(gw.resolve("b1", _entry(fid=F2, ver="1"), I, I, 3, 20, hs("BASE", b2)), G.Binding)                                                                 # unrelated baseline delivered
+        self.assertEqual(c.recording_health(key, "1", 12).local_state, "HEALTHY")                                    # Build Plan 14A: the carried-upstream denial never overwrites the subject's LOCAL_STATE
         c.declare_ancestry_complete("UP", "src"); c.declare_ancestry_complete(key, "src")
         self.assertIsInstance(gw.resolve("d2", _entry(ver="1"), I, I, 3, 20, hs(key, b1)), G.Binding)             # declared complete + healthy => delivered
     def test_qualified_rig_holds_an_unadmitted_issuer_before_any_pipeline_work(self):
