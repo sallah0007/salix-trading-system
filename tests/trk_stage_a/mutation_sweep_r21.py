@@ -36,7 +36,7 @@ M = [(AC, '    if t is SimulationStore:\n        return SIMULATION', '    if Fal
      (TC, 'if (cls == QUALIFIED) == self.simulation:', 'if False:'),
      (TC, 'if set(finding) != set(self.FINDING_FIELDS)', 'if False and set(finding) != set(self.FINDING_FIELDS)')]
 T = ["tests/trk_stage_a/test_r20_simulation_boundary.py", "tests/trk_stage_a/test_r20_terminal_scope.py", "tests/trk_stage_a/test_r19_terminal_identity.py", "tests/trk_stage_a/test_r21_absence_binding.py",
-     "tests/trk_stage_a/test_r21_core.py", "tests/trk_stage_a/test_r21_version_relationship_reason.py", "tests/trk_stage_a/test_context_contracts.py", "tests/trk_stage_a/test_r14_event_causality.py", "tests/trk_stage_a/test_r13_context_resolver.py"]
+     "tests/trk_stage_a/test_r22_core.py", "tests/trk_stage_a/test_r21_version_relationship_reason.py", "tests/trk_stage_a/test_context_contracts.py", "tests/trk_stage_a/test_r14_event_causality.py", "tests/trk_stage_a/test_r13_context_resolver.py"]
 def run():
     try: return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", *[str(ROOT / t) for t in T]], cwd=ROOT, capture_output=True, text=True, timeout=90, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1")).returncode
     except subprocess.TimeoutExpired: return 99

@@ -82,9 +82,18 @@ def subject_start_rows(subject, records: Iterable, normalizer) -> list:
             out.append(r)
     return out
 
-def subject_terminal_identities(subject, records: Iterable, normalizer) -> Tuple[TerminalIdentity, ...]:
+def subject_terminal_identities(subject, records: Iterable, normalizer, active_era_id=None, searched_scopes=None) -> Tuple[TerminalIdentity, ...]:
     """Typed, subject-bound terminal results (identity + governed state + full facts) for the lookup subject: one per matching noncurrent row, in a deterministic order. This is what the
     pipeline returns on its Outcome. Report-only: authorizes no claim, resurrection, delivery or near-match substitution, and the narrow lookup stays CURRENT-ONLY and fail-closed."""
     recs = list(records)
+    ls = str(subject.get("lookup_era_scope", "ALL_ERAS")).strip().upper() or "ALL_ERAS"
+    if ls not in ("ERA_1_ONLY", "ALL_ERAS"):
+        return ()                                                       # invalid scope: nothing asserted
+    if ls == "ERA_1_ONLY":
+        if active_era_id != "ERA_1":
+            return ()                                                   # unverified/unsupported active era: fail closed
+        recs = [r for r in recs if r.era_id == active_era_id]            # the verified lookup's era bound, not all store rows
+    if searched_scopes is not None:
+        ss = set(searched_scopes); recs = [r for r in recs if r.scope in ss]   # rows outside the searched scopes are not evidence of anything
     starts = sorted(subject_start_rows(subject, recs, normalizer), key=full_facts)
     return tuple(resolve_terminal_identity(r, recs) for r in starts)

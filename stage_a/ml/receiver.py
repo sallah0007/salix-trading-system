@@ -22,13 +22,19 @@ class MLRow:
     def included(self): return self.row_exclusion_reason is None
 
 def build_row(row_id, generation_binding_ref, entries, outcomes, gateway, requested_vintage_mode, eligibility_reason,
-              exclusion_reason_for_missing, tables=None):
-    """entries: declared DependencyEntry list; outcomes: gateway outcomes in the same order."""
+              exclusion_reason_for_missing, tables=None, expected_request_ids=None):
+    """entries: declared DependencyEntry list; outcomes: gateway outcomes in the same order. R22: the issuing Gateway is REQUIRED (no unverified/None path yields an included row).
+    expected_request_ids: optional {(feature_id, feature_version): request_id} - the consumer own request-id association; when given it is enforced. The canonical SOURCE slot that
+    defines that association (request/resolution/generation) is UNBOUND, so without it only 'issued by this Gateway' is claimed, never 'issued for THIS consumer request'."""
+    if gateway is None:
+        raise Refusal("ML row building needs the issuing Gateway", code="GATEWAY_REQUIRED_FOR_VERIFIED_ML_ROW")
     if len(entries) != len(outcomes):
         raise Refusal("one outcome per declared dependency", code="OUTCOME_COUNT_MISMATCH")
     bindings, absences, keys = [], [], set()
     for e, o in zip(entries, outcomes):
         k = (e.feature_id, e.feature_version)
+        if expected_request_ids is not None and getattr(o, "request_id", None) != expected_request_ids.get(k):
+            raise Refusal(str(getattr(o, "request_id", None)), code="OUTCOME_FOR_DIFFERENT_CONSUMER_REQUEST")
         if k in keys:
             raise Refusal("duplicate dependency", code="DUPLICATE_DEPENDENCY")
         keys.add(k)

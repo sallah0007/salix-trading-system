@@ -45,7 +45,7 @@ class Resolution(unittest.TestCase):
 class Callpath(unittest.TestCase):
     def test_subject_terminal_identities_from_the_real_subject(self):
         rows = [A("b"), rec("b", survivor="c"), rec("c", current=True, state="CURRENT")]; lk, store = lookup(rows)
-        res = TI.subject_terminal_identities(T.subject(), store.all(), T.normalizer())
+        res = TI.subject_terminal_identities(T.subject(), store.all(), T.normalizer(), active_era_id=store.active_era_id)
         self.assertEqual([(t.start_id, t.terminal_id, t.terminal_state, t.status) for t in res], [("returns.1bar", "c", "CURRENT", TI.CURRENT_SURVIVOR)])
     def test_pipeline_baseline_failure_reports_the_terminal_identity_and_still_fails_closed(self):
         from tests.trk_stage_a.fixtures import Rig, package

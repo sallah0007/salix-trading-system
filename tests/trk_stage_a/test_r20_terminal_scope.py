@@ -7,7 +7,7 @@ from tests import test_identity_surface as T
 from .test_r19_terminal_identity import rec, A, lookup
 X = lambda r, **k: replace(r, **k)
 def results(rows, subject=None):
-    lk, store = lookup(rows); return TI.subject_terminal_identities(subject or T.subject(), store.all(), T.normalizer())
+    lk, store = lookup(rows); return TI.subject_terminal_identities(subject or T.subject(), store.all(), T.normalizer(), active_era_id=store.active_era_id)
 class Faithful(unittest.TestCase):
     def test_comma_and_colon_ids_are_not_lost(self):                                  # Codex repro: rows=[A('b,comma'), rec('b,comma', REJECTED)]
         for fid in ("b,comma", "b:colon", "b,c:d"):
@@ -74,4 +74,27 @@ class NoContentSubject(unittest.TestCase):
         sub = dict(T.subject()); sub.pop("candidate_content", None)
         row = X(A("b"), content_key_composite="K", content_key_definition="d", content_key_causal_time="c", content_key_provenance="p", content_key_scope="s", content_key_fitted="f"); self.assertTrue(row.has_content_key)
         lk, store = lookup([row, rec("b", state="REJECTED_INVALID")])
-        self.assertEqual(len(TI.subject_terminal_identities(sub, store.all(), T.normalizer())), 1)        # still found by exact canonical key, no content-key crash/match
+        self.assertEqual(len(TI.subject_terminal_identities(sub, store.all(), T.normalizer(), active_era_id=store.active_era_id)), 1)        # still found by exact canonical key, no content-key crash/match
+class R22EraAndSearchBounds(unittest.TestCase):
+    """Codex PR45 repro: lookup_era_scope=ERA_1_ONLY must not return an ERA_2 terminal."""
+    def rows(self):
+        return [A("b"), rec("b", state="REJECTED_INVALID"), X(A("foreign-era-terminal"), era_id="ERA_2"), X(rec("foreign-era-terminal", state="RETIRED"), era_id="ERA_2")]
+    def test_era_1_only_excludes_other_era_rows(self):
+        sub = dict(T.subject(), lookup_era_scope="ERA_1_ONLY"); lk, store = lookup(self.rows())
+        res = TI.subject_terminal_identities(sub, store.all(), T.normalizer(), active_era_id=store.active_era_id)
+        self.assertEqual([t.terminal_id for t in res], ["b"])
+    def test_unknown_or_unverified_era_and_bad_scope_fail_closed(self):
+        lk, store = lookup(self.rows()); n = T.normalizer()
+        self.assertEqual(TI.subject_terminal_identities(dict(T.subject(), lookup_era_scope="ERA_1_ONLY"), store.all(), n), ())          # no verified active era
+        self.assertEqual(TI.subject_terminal_identities(dict(T.subject(), lookup_era_scope="ERA_9"), store.all(), n, active_era_id="ERA_1"), ())
+    def test_rows_outside_searched_scopes_are_not_evidence(self):
+        lk, store = lookup(self.rows()); n = T.normalizer()
+        self.assertEqual(TI.subject_terminal_identities(T.subject(), store.all(), n, active_era_id="ERA_1", searched_scopes=("some_other_scope",)), ())
+    def test_malformed_normalization_yields_nothing(self):
+        lk, store = lookup(self.rows()); bad = dict(T.subject()); bad["feature_id"] = None
+        self.assertEqual(TI.subject_terminal_identities(bad, store.all(), T.normalizer(), active_era_id="ERA_1"), ())
+
+class R22UnsupportedActiveEra(unittest.TestCase):
+    def test_active_era_other_than_era_1_with_era_1_only_scope_asserts_nothing(self):
+        rows = [X(A("b"), era_id="ERA_2"), X(rec("b", state="REJECTED_INVALID"), era_id="ERA_2")]; lk, store = lookup(rows)
+        self.assertEqual(TI.subject_terminal_identities(dict(T.subject(), lookup_era_scope="ERA_1_ONLY"), store.all(), T.normalizer(), active_era_id="ERA_2"), ())

@@ -82,3 +82,6 @@ R19 (PR43): `stage_a/tracker/terminal_identity.py`, `ml/receiver.{union_closure,
 
 ## 18. R21 additions
 `stage_a/core/tracker_core.py` (proposed internal ports + one composition path), `gateway/outcome_binding.py`, structural `storage/authority_class.py` (`SimulationStore`), subject-bound `tracker/terminal_identity`, `tracker/version_relationship.classify_not_computed`, `context/news_hub_v2` strict half-open fence, tests `test_r21_*`, `mutation_sweep_r21.py` (31 mutants), appendix and closeout corrections. Preservation is not acceptance.
+
+## 19. R22 additions
+Corrected `stage_a/core/tracker_core.py` (held-unless-bound eligibility, stored-fact snapshot members, atomic admission, reconstructability, health validity), `storage/authority_class` exact-type whitelist + `approve_test_adapter`, `ml/receiver.build_row` gateway requirement, `tracker/terminal_identity` era/scope bounds, `tracker/construction_binding.py` (D1, not installed), `docs/a07/A07_R06_V03_RECONCILIATION_PROPOSED_R04.md`, tests `test_r22_*`, `mutation_sweep_r22.py` (33 mutants). Preservation is not acceptance.
