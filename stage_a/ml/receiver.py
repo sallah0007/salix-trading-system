@@ -110,6 +110,7 @@ class StandaloneCheck:
     lane: str
     union_closure: str            # never 'PROVEN': completeness of the supplied edge set has no witness in any source read
     reached: tuple = ()
+    closure_verdict: object = None   # ClosureVerdict (candidate, witness unadmitted) when a DEPENDENCY_CLOSURE_RECORD was supplied
 
 def union_closure(root: str, edges, taint_sources) -> tuple:
     """Traverse supplied (child, parent, class) edges from `root` over CONTENT_CARRYING edges only. Refuses: UNCLASSIFIED_EDGE (any class other than the two source-given ones, on an edge
@@ -132,6 +133,15 @@ def union_closure(root: str, edges, taint_sources) -> tuple:
             if parent not in seen:
                 seen.add(parent); stack.append(parent)
     return tuple(sorted(seen - {root}))
+
+def check_standalone_with_closure(m: ConsumerManifest, target: bytes, graph, kind: str, closure) -> StandaloneCheck:
+    """Linear structural lane + the Contract section X.1 closure record DERIVED over the union of content-carrying edges. FAIL_CLOSED (unknown/unresolved/missing edge, incomplete closure, FW taint, contradiction) refuses.
+    A candidate PASS is still never qualified (`require_standalone_qualified` holds: no accepted completeness witness/provider exists in any source read)."""
+    from . import closure as CL
+    lane = check_generation(m, target, graph, kind); v = CL.derive(closure)
+    if closure.subject_id != m.manifest_id: raise Refusal(closure.subject_id, code="CLOSURE_SUBJECT_NOT_THIS_MANIFEST")
+    if v.verdict != "PASS": raise Refusal(",".join(v.reasons), code="ML_STANDALONE_CLOSURE_FAIL_CLOSED")
+    return StandaloneCheck(lane, "CLOSURE_RECORD_DERIVED_CANDIDATE_WITNESS_UNADMITTED", v.reached, v)
 
 def check_standalone(m: ConsumerManifest, target: bytes, graph, kind: str, edges=None, taint_sources=()) -> StandaloneCheck:
     """The ML_STANDALONE boundary: the linear check (check_generation) plus, if edges are supplied, the union traversal. The result is NEVER qualified: see require_standalone_qualified."""

@@ -40,3 +40,9 @@ def receive(binding, expected: DependencyEntry, instrument_id: bytes, timeframe_
     if gateway is not None and gateway.outcome(binding.request_id) is not binding:
         raise Refusal("not the stored Gateway binding", code="BINDING_NOT_FROM_GATEWAY")
     return binding        # exact preservation: same object, nothing re-derived
+
+
+def receive_outcome_series(pkg, ctx):
+    """H3 outcome/target-series receipt: the Gateway-side validator decides; WITHHELD raises. Segment authorization and conditional applicability in `ctx` are caller-supplied and UNADMITTED (see gateway.outcome_series)."""
+    from ..gateway.outcome_series import require_delivery
+    return require_delivery(pkg, ctx)

@@ -2,7 +2,7 @@
 Known equivalent (NOT killable by behaviour): replacing the independent composition call with the producer composition is behaviourally identical when both are correct - independence is structural, proven by the two-implementation equality tests, not by this sweep."""
 import subprocess, sys, pathlib, os
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-TC = "stage_a/core/tracker_core.py"; VR = "stage_a/tracker/verification/verification_result.py"; GC = "stage_a/gateway/contracts.py"; GB = "stage_a/gateway/binding.py"; MLR = "stage_a/ml/receiver.py"; FWR = "stage_a/fw/receiver.py"
+TC = "stage_a/core/tracker_core.py"; VR = "stage_a/tracker/verification/verification_result.py"; GC = "stage_a/gateway/contracts.py"; GB = "stage_a/gateway/binding.py"; MLR = "stage_a/ml/receiver.py"; FWR = "stage_a/fw/receiver.py"; CLS = "stage_a/ml/closure.py"; H3 = "stage_a/gateway/outcome_series.py"
 M = [
  (TC, 'return json.dumps(list(parts), separators=(",", ":"), ensure_ascii=True)', 'return "|".join(",".join(x) if isinstance(x, list) else x for x in parts)'),
  (TC, 'if not self.confirm_snapshot(snap) or not _int(use_at) or use_at < snap.evaluated_at: return False', 'if False: return False'),
@@ -22,8 +22,29 @@ M = [
  (MLR, 'elif not allow_unverified_hash: raise', 'elif False: raise'),
  (MLR, 'verify_delivered(tables, o.entry, o.delivered_feature_hash)', 'pass'),
  (FWR, 'verify_delivered(tables, e, binding.delivered_feature_hash)', 'pass'),
+ (CLS, 'if e.edge_class == "FW_PREDICTIVE_EDGE" or e.parent in r.fw_taint_source_ids: taint = True', 'if e.edge_class == "FW_PREDICTIVE_EDGE": taint = True'),
+ (CLS, 'if e.edge_class == "FW_PREDICTIVE_EDGE" or e.parent in r.fw_taint_source_ids: taint = True', 'if e.parent in r.fw_taint_source_ids: taint = True'),
+ (CLS, 'if not e.content_carrying: continue', 'pass'),
+ (CLS, 'if not r.closure_complete: reasons.append("CLOSURE_COMPLETE_FALSE")', 'pass'),
+ (CLS, 'if r.missing_required_edges: reasons.append("MISSING_REQUIRED_EDGES_PRESENT")', 'pass'),
+ (CLS, 'if r.unresolved_edges: reasons.append("UNRESOLVED_EDGES_PRESENT")', 'pass'),
+ (CLS, 'if r.unknown_edge_types: reasons.append("UNKNOWN_EDGE_TYPES_PRESENT")', 'pass'),
+ (CLS, 'if e.parent not in nodes or e.child not in nodes: reasons.append("EDGE_ENDPOINT_NOT_IN_NODE_SET"); continue', 'pass'),
+ (CLS, 'if e.edge_class == "UNKNOWN" or e.edge_class not in EDGE_CLASSES: reasons.append("UNKNOWN_EDGE_TYPE_ON_REQUIRED_PATH"); continue', 'pass'),
+ (CLS, 'if taint and not r.fw_taint_present: reasons.append("FW_TAINT_UNDECLARED")', 'pass'),
+ (CLS, 'if r.fw_taint_present and not r.fw_taint_source_ids: raise', 'if False: raise'),
+ (MLR, 'if v.verdict != "PASS": raise Refusal(",".join(v.reasons), code="ML_STANDALONE_CLOSURE_FAIL_CLOSED")', 'pass'),
+ (MLR, 'if closure.subject_id != m.manifest_id: raise', 'if False: raise'),
+ (H3, 'if not _covered(s, e, segs): w.append("INTERVAL_OUTSIDE_AUTHORIZED_SEGMENTS")', 'pass'),
+ (H3, 'if s > cur: break', 'pass'),
+ (H3, 'if any(s <= se and hs <= e for hs, se in sealed) and not _s(pkg.holdout_unseal_event_ref): w.append("SEALED_HOLDOUT_WITHOUT_UNSEAL_EVENT_REF")', 'pass'),
+ (H3, 'if any(s <= se and hs <= e for hs, se in sealed) and not _s(pkg.holdout_unseal_event_ref): w.append("SEALED_HOLDOUT_WITHOUT_UNSEAL_EVENT_REF")', 'if any(s <= se and hs <= e for hs, se in sealed) and False: w.append("SEALED_HOLDOUT_WITHOUT_UNSEAL_EVENT_REF")'),
+ (H3, 'if getattr(ctx, flag) and not _s(getattr(pkg, ref)): w.append("MISSING_CONDITIONAL:" + ref)', 'pass'),
+ (H3, 'pkg.available_asof >= pkg.delivery_decision_ts', 'pkg.available_asof > pkg.delivery_decision_ts'),
+ (H3, 'if not _s(getattr(pkg, f)): w.append("MISSING_REQUIRED:" + f)', 'pass'),
+ (FWR, 'return require_delivery(pkg, ctx)', 'return None'),
 ]
-T = ["tests/trk_stage_a/test_r25_defects.py", "tests/trk_stage_a/test_r26_evidence_truth.py", "tests/trk_stage_a/test_r27_binding.py", "tests/trk_stage_a/test_boundaries.py", "tests/trk_stage_a/test_r24_core.py", "tests/trk_stage_a/test_r25_scheduler.py"]
+T = ["tests/trk_stage_a/test_r25_defects.py", "tests/trk_stage_a/test_r26_evidence_truth.py", "tests/trk_stage_a/test_r27_binding.py", "tests/trk_stage_a/test_boundaries.py", "tests/trk_stage_a/test_r24_core.py", "tests/trk_stage_a/test_r25_scheduler.py", "tests/trk_stage_a/test_r28_closure.py", "tests/trk_stage_a/test_r28_h3.py"]
 def run():
     try: return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", *[str(ROOT / t) for t in T]], cwd=ROOT, capture_output=True, text=True, timeout=120, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1")).returncode
     except subprocess.TimeoutExpired: return 99
