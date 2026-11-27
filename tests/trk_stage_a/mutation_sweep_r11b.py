@@ -8,15 +8,18 @@ M = [(Q, "    if pkg.request_record is None:\n        fail(", "    if False:\n  
      (Q, 'if self.request_record is not None: d["request_record"] = self.request_record', "pass"),
      (Q, '"CONSTRUCTION_AUTHORITY", "REQUEST_RECORD"]', '"CONSTRUCTION_AUTHORITY"]'),
      (G, '        if fw[f] == ml[f]:', "        if False:"),
-     (G, '        if rec["PACKAGE_CLASS"] != _LANE_PACKAGE_CLASS[lane]:', "        if False:"),
-     (G, '        if rec["TARGET_CONSUMER"] not in (lane, "BOTH"):', "        if False:"),
-     (G, '    if fw["REQUEST_ID"] != ml["REQUEST_ID"]:', "    if False:"),
-     (G, "    check_h1(ml, consumer_is_ml=True)", "    check_h1(ml, consumer_is_ml=False)"),
-     (G, "    check_h1(fw, consumer_is_ml=False)\n", "    pass\n"),
-     (G, "if fw_identity.consumer_id == ml_identity.consumer_id or fw_identity == ml_identity:", "if fw_identity == ml_identity:"),
+     (G, '        if rec["PACKAGE_CLASS"] != BOTH_LANES[lane]["PACKAGE_CLASS"]:', "        if False:"),
+     (G, '        if rec["TARGET_CONSUMER"] != "BOTH":', "        if False:"),
+     (G, '        if rec["CONSUMER_ID"] != lane:', "        if False:"),
+     (G, '        check_h1(rec, consumer_is_ml=BOTH_LANES[lane]["ML"])', "        check_h1(rec, consumer_is_ml=False)"),
+     (G, '    if identity.consumer_id != h1["CONSUMER_ID"]:', "    if False:"),
+     (G, '    if b is not None and identity.manifest_or_dataset_binding_id != b:', "    if False:"),
+     (G, "    check_binding_matches_identity(ml_h1, ml_identity)\n", "    pass\n"),
+     (G, "    check_both_separation(fw_h1, ml_h1)\n    check_binding", "    check_binding"),
      (G, "        except Refusal as e:\n            out[lane] = (\"REFUSED\", e.code)", "        except Refusal as e:\n            raise"),
-     (G, '"%s#%s" % (request_id, lane)', "request_id")]
-T = ["tests/trk_stage_a/test_r11_intake_request.py", "tests/trk_stage_a/test_r11_both.py"]
+     (G, "rk = (identity.consumer_id, request_id)", "rk = request_id"),
+     (G, "store.resolve(h1[\"REQUEST_ID\"], ident, ev)", "store.resolve(h1[\"REQUEST_ID\"] + \"#\" + lane, ident, ev)")]
+T = ["tests/trk_stage_a/test_r11_intake_request.py", "tests/trk_stage_a/test_r11_both.py", "tests/trk_stage_a/test_v038_conformance.py"]
 def run(): return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", *[str(ROOT / t) for t in T]], cwd=ROOT, capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1")).returncode
 def main():
     assert run() == 0; bad = []

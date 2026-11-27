@@ -132,7 +132,7 @@ def test_nested_same_request_different_identity_is_refused_and_cannot_rebind():
     assert s.resolve("same-request", A_ID, outer) == "A"
     assert seen == ["REQUEST_ID_REBOUND_TO_OTHER_IDENTITY"]
     assert B_ID not in s._by_identity                                                    # inner never stored
-    assert s._req_ids["same-request"] == A_ID                                            # binding not overwritten
+    assert s._req_ids[("C", "same-request")] == A_ID                                            # binding not overwritten
     with pytest.raises(Refusal): s.resolve("same-request", B_ID, lambda: "B")            # retry for b still refused (a owns it)
     assert s.resolve("same-request", A_ID, lambda: "X") == "A"
 
@@ -154,7 +154,7 @@ def test_failure_after_inner_success_on_other_request_keeps_inner_final_and_rele
 def test_failure_does_not_drop_a_binding_that_pre_existed():
     s = V.FinalResolutionStore(); assert s.resolve("r", A_ID, lambda: "A") == "A"
     assert s.resolve("r", A_ID, lambda: 1 / 0) == "A"                                    # stored outcome returned, evaluator unused
-    assert s._req_ids["r"] == A_ID
+    assert s._req_ids[("C", "r")] == A_ID
 
 def test_second_thread_with_same_request_other_identity_is_refused_while_first_is_inside_evaluator():
     s = V.FinalResolutionStore(); entered, release, res = threading.Event(), threading.Event(), {}

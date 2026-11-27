@@ -138,7 +138,7 @@ def test_replay_storm_does_not_starve_unrelated_head():
 # ---------- TR-15 isolation -------------------------------------------------------------------------------------------
 def test_instrument_isolation_keys_status_and_gateway():
     assert keys.head_key("XAUUSD/f1") != keys.head_key("EURUSD/f1")
-    st = C.ChainStatusAuthority(); gw = G.SimulatedGateway(T, st, watermark=100)
+    st = C.ChainStatusAuthority(); gw = G.SimulatedGateway(T, st, allow_uncommitted_status=True, watermark=100)
     mvx = (I, "f1", I, I, "m1"); mve = (I, "f1", J, I, "m1")
     st.append(C.StatusFact(mvx, 1, C.CURRENT, 1, False)); st.append(C.StatusFact(mve, 1, C.CURRENT, 1, False))
     gw.publish(_row(instr=I)); gw.publish(_row(instr=J))
@@ -156,7 +156,7 @@ def _row(instr=I, fid=I, avail=4, visible=4, step=3, vint="ORIGINAL_AS_OBSERVED"
     return G.PublishedRow(fid, ver, H, instr, I, "m1", step, 10, "l", "p", BITS, H, R("fit"), vint, avail, visible, R("pol"), R("ct"))
 def _gw(status=C.CURRENT, mvfid=I, **rowkw):
     st = C.ChainStatusAuthority(); st.append(C.StatusFact((mvfid, rowkw.get("ver", "f1"), I, I, "m1"), 1, status, 1, False))
-    gw = G.SimulatedGateway(T, st, watermark=100); gw.publish(_row(**rowkw)); return gw
+    gw = G.SimulatedGateway(T, st, allow_uncommitted_status=True, watermark=100); gw.publish(_row(**rowkw)); return gw
 
 def test_g1_equality_at_fence_excluded_and_ob1_positive_control():
     gw = _gw(avail=10)
@@ -200,7 +200,7 @@ def test_g8_generic_dependency_schema_only():
     with pytest.raises(Refusal): G.DependencyEntry.from_dict(dict(d, garch_lambda=1))
 
 def test_ob2_failed_quant_lane_does_not_block_unrelated_binding():
-    st = C.ChainStatusAuthority(); gw = G.SimulatedGateway(T, st, watermark=100)
+    st = C.ChainStatusAuthority(); gw = G.SimulatedGateway(T, st, allow_uncommitted_status=True, watermark=100)
     st.append(C.StatusFact((I, "f1", I, I, "m1"), 1, C.HALTED, 1, True)); st.append(C.StatusFact((J, "f1", I, I, "m1"), 1, C.CURRENT, 1, False))
     gw.publish(_row(fid=I, avail=4)); gw.publish(_row(fid=J, avail=4))
     assert isinstance(gw.resolve("bad", _entry(fid=I), I, I, 3, 10, _health()), G.NonDeliveryResolution)
@@ -327,7 +327,7 @@ def test_context_edge_declared_only():
     with pytest.raises(Refusal): CE.assert_declared([(I, "c1")], [(I, "c2")])
 
 def test_no_status_fact_fails_closed_and_verifier_refusals():
-    st = C.ChainStatusAuthority(); gw = G.SimulatedGateway(T, st, watermark=100); gw.publish(_row(avail=4))
+    st = C.ChainStatusAuthority(); gw = G.SimulatedGateway(T, st, allow_uncommitted_status=True, watermark=100); gw.publish(_row(avail=4))
     assert gw.resolve("a", _entry(), I, I, 3, 10, _health()).reason == "NO_STATUS_AUTHORITY_FACT"
     bad = dict(row_content_hash=H, verification_evidence_ref=xref(R("v")), sifp_fencing_epoch=2, canonical_commit_point_id=I,
                canonical_accepted_at=5, available_asof=6, gate_dependency_transition_ref=None, currentness_state_at_acceptance=1, status_event=1)

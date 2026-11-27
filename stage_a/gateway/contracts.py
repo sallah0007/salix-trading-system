@@ -58,8 +58,11 @@ class Binding:
 
 class SimulatedGateway:
     """Resolves dependencies at a consumer fence and stores each outcome ONCE (G4 idempotent, G5/G6 immutable)."""
-    def __init__(self, tables: CodeTables, status: ChainStatusAuthority, watermark: int = 0):
+    def __init__(self, tables: CodeTables, status, watermark: int = 0, allow_uncommitted_status: bool = False):
+        """status must be a committed-journal projection (tracker.status_projection.StatusProjection, `authoritative` True). A bare in-memory ChainStatusAuthority
+        is NOT consumer-authoritative: it is accepted only when allow_uncommitted_status=True (tests/simulation), never by default."""
         self.t, self.status, self.watermark = tables, status, watermark
+        self.allow_uncommitted_status = allow_uncommitted_status
         self.rows: Dict[tuple, list] = {}
         self._outcomes: Dict[str, object] = {}
         self._later_lineage: Dict[str, list] = {}
@@ -100,7 +103,12 @@ class SimulatedGateway:
         if data_vintage_mode is not None and row.data_vintage_mode != data_vintage_mode:
             return nd("DATA_VINTAGE_MODE_MISMATCH")
         mv = (row.feature_id, row.feature_version, row.instrument_id, row.timeframe_id, row.materialization_version)
-        st = self.status.status_at(mv, fence)
+        if not getattr(self.status, "authoritative", False) and not self.allow_uncommitted_status:
+            return nd("STATUS_SOURCE_NOT_COMMITTED_PROJECTION")      # fail closed: a direct append is not consumer authority
+        try:
+            st = self.status.status_at(mv, fence)
+        except Refusal:
+            return nd("STATUS_PROJECTION_UNAVAILABLE")
         if st is None:
             return nd("NO_STATUS_AUTHORITY_FACT")                    # fail closed on the unread
         if require_current and st.status != CURRENT:

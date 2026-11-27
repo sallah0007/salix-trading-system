@@ -61,6 +61,23 @@ def check_generation(m: ConsumerManifest, target: bytes, graph, kind: str):
         raise Refusal(m.derived_from, code="HIDDEN_FW_ANCESTRY")
     return lane
 
+def check_fw_augmented(m: ConsumerManifest, aug: "AugmentedInput", target: bytes, graph):
+    """ML_FW_AUGMENTED (Build Plan 13.2): an explicit separate generation class. FW ancestry must be DECLARED (derived_from resolves to an FW manifest), never
+    hidden; a Gateway re-bind is required (carried by AugmentedInput); a standalone-style manifest with no FW parent cannot be augmented. Structural only:
+    FW return/lineage PAYLOAD fields are not defined by any source read, so only the refs supplied in AugmentedInput are checked for presence."""
+    if m.kind != "ML":
+        raise Refusal(m.kind, code="AUGMENTED_REQUIRES_ML_MANIFEST")
+    if m.derived_from is None:
+        raise Refusal(m.manifest_id, code="AUGMENTED_WITHOUT_FW_ANCESTRY")
+    parent = graph.get(m.derived_from)
+    if parent is None:
+        raise Refusal(m.derived_from, code="DERIVED_FROM_UNRESOLVED")
+    if parent.kind != "FW":
+        raise Refusal(parent.kind, code="AUGMENTED_PARENT_NOT_FW")
+    if not isinstance(aug, AugmentedInput) or not getattr(aug.gateway_rebind, "request_id", None):
+        raise Refusal("rebind", code="NO_GATEWAY_REBIND")
+    return classify(m, target, graph)
+
 @dataclass(frozen=True)
 class AugmentedInput:
     """ML_FW_AUGMENTED schema-level completeness (F5/F6): lineage, uncertainty, OOD and dependency interval all required."""
