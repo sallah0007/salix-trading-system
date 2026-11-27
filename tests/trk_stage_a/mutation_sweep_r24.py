@@ -2,7 +2,7 @@
 reresolve, fail-closed safety integration + restoration prohibition). Author-run; a surviving mutant is a finding. Earlier sweeps are not re-run."""
 import subprocess, sys, pathlib, os
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-TC = "stage_a/core/tracker_core.py"; RV = "stage_a/tracker/reverification.py"; TF = "stage_a/core/time_family.py"
+TC = "stage_a/core/tracker_core.py"; RV = "stage_a/tracker/reverification.py"; TF = "stage_a/core/time_family.py"; AM = "stage_a/tracker/accepted_manifest.py"
 M = [
      (TC, 'if b.get("plane") != self._plane: raise IntegrityFailure', 'if self._plane is not None and b.get("plane") != self._plane: raise IntegrityFailure'),
      (TC, '        self._replay()          # R24: the established', '        pass          # R24: the established'),
@@ -36,8 +36,15 @@ M = [
      (TF, '    if len(set(got)) != len(got): raise Refusal(parent_id, code="DUPLICATE_CHILD_OBSERVATION")', '    pass'),
      (TF, '    if extra: raise Refusal(', '    if False: raise Refusal('),
      (TF, 'if not isinstance(segmentation, dict) or parent_id not in segmentation: return UNDETERMINED', 'if not isinstance(segmentation, dict): return UNDETERMINED'),
-     (TF, '        if tf not in self._e: raise Refusal(str(tf), code="UNKNOWN_TIMEFRAME")', '        pass')]
-T = ["tests/trk_stage_a/test_r24_core.py", "tests/trk_stage_a/test_r24_composed.py"]
+     (TF, '        if tf not in self._e: raise Refusal(str(tf), code="UNKNOWN_TIMEFRAME")', '        pass'),
+     (AM, 'if manifest_digest(raw) != body["manifest_hash"] or graph_digest', 'if False or graph_digest'),
+     (AM, ' or graph_digest(p, enc_bytes) != body["graph_hash"] or program_digest(p, enc_bytes) != body["program_hash"]:', ' or program_digest(p, enc_bytes) != body["program_hash"]:'),
+     (AM, ' or program_digest(p, enc_bytes) != body["program_hash"]:', ':'),
+     (AM, 'if not isinstance(p, dict) or enc_bytes(p) != raw: raise', 'if not isinstance(p, dict): raise'),
+     (AM, 'if (p.get("instrument"), p.get("timeframe")', 'if False and (p.get("instrument"), p.get("timeframe")'),
+     (AM, 'if got is None: raise Refusal(body["manifest_hash"], code="ACCEPTED_ARTIFACT_ABSENT")', 'pass'),
+     (AM, 'if st is None: raise Refusal(feature_key.key(), code="NO_ACCEPTED_RECORD")', 'pass')]
+T = ["tests/trk_stage_a/test_r24_core.py", "tests/trk_stage_a/test_r24_composed.py", "tests/trk_stage_a/test_r24_accepted_readback.py"]
 def run():
     try: return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", *[str(ROOT / t) for t in T]], cwd=ROOT, capture_output=True, text=True, timeout=90, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1")).returncode
     except subprocess.TimeoutExpired: return 99
