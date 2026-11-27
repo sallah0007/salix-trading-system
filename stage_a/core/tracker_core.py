@@ -15,12 +15,14 @@ from ..storage.byte_primitives import canonical_bytes, domain_hash
 from ..storage.authority_class import authority_class_of, QUALIFIED
 from tracker_component.journal_port import HeadMismatch, record_hash
 from tracker_component.canonical import canonical_json
+from ..context.decision_context import fail_closed_transition, SUBJECT_DOMAIN
 
 OBS_FACTS_CANDIDATE = ("instrument", "timeframe", "bar_identity", "broker_time", "utc_time", "broker_utc_rule", "source_provider", "raw_source_version", "schema_version")
 REQ = ("REQUIRED", "NOT_APPLICABLE_BY_GOVERNED_DEFINITION")
 L2_ST = ("PASS", "FAIL", "UNAVAILABLE")
 L1_ST = ("PASS", "FAIL")
 NEW, REPEAT, CONFLICT = "NEW", "IDEMPOTENT_REPEAT", "CONFLICT_QUARANTINED"
+REJECTED_KNOWN = "REJECTED_KNOWN_CANDIDATE_NOT_CURRENT"   # R24: a previously REJECTED candidate re-sent after resolution; history only, state unchanged, NO retry/clear policy adopted (D25 unresolved)
 HELD = "HELD"
 SIM_ELIGIBLE, SIM_NOT_ELIGIBLE = "SIMULATION_EVIDENCE_ELIGIBLE", "SIMULATION_EVIDENCE_NOT_ELIGIBLE"
 QUALIFIED_PREREQS_UNBOUND = ("OBSERVATION_ADMISSION_SCHEMA_UNBOUND", "VERIFIER_BINDING_UNBOUND", "GOVERNED_THRESHOLD_UNBOUND", "L2_APPOINTMENT_PROFILE_UNBOUND")
@@ -33,18 +35,25 @@ class TrackerCore:
 
     def __init__(self, journal, *, simulation: bool, chain_status=None, plane: str = None):
         if plane is not None and plane not in self.PLANES: raise Refusal(str(plane), code="UNKNOWN_PLANE")
-        self._j = journal; self.simulation = bool(simulation); self._chain = chain_status; self.plane = plane
+        if not isinstance(simulation, bool): raise Refusal("simulation must be a bool", code="SIMULATION_FLAG_INVALID")
+        self._j = journal; self._simulation = simulation; self._chain = chain_status; self._plane = plane
         cls = authority_class_of(journal)
-        if (cls == QUALIFIED) == self.simulation:
+        if (cls == QUALIFIED) == self._simulation:
             raise Refusal("journal class %s vs simulation=%s" % (cls, simulation), code="AUTHORITY_CLASS_MISMATCH")
+        self._replay()          # R24: the established journal identity is checked at attach time, BEFORE any append (omitted/foreign/mixed identity is refused here)
+
+    @property
+    def plane(self): return self._plane            # read-only: identity is not mutable-by-label
+    @property
+    def simulation(self) -> bool: return self._simulation   # read-only: the evidence mode cannot be flipped mid-session
 
     # ---- replay: pure function of the journal up to a given sequence ---------------------------
     def _replay(self, upto=None):
-        st = dict(obs={}, cands={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={})
+        st = dict(obs={}, cands={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={}, reviews={})
         for r in self._j.read_from(0):
             if upto is not None and r.seq > upto: break
             b = json.loads(r.body_json); k = r.kind
-            if self.plane is not None and b.get("plane") != self.plane: raise IntegrityFailure("record %s belongs to plane %r, not %r (restored/foreign journal)" % (r.seq, b.get("plane"), self.plane))
+            if b.get("plane") != self._plane: raise IntegrityFailure("record %s carries plane %r but this Core's identity is %r (omitted/foreign/mixed journal identity; legacy untagged history is attachable only by a plane-less Core)" % (r.seq, b.get("plane"), self._plane))
             if k == "OBS_ADMITTED": st["obs"][b["key"]] = b; st["cands"].setdefault(b["key"], {})[b["cid"]] = b
             elif k == "OBS_AMBIGUOUS":
                 st["cands"].setdefault(b["key"], {})[b["candidate"]["cid"]] = b["candidate"]
@@ -67,6 +76,8 @@ class TrackerCore:
             elif k == "RERESOLVED": st["inval"].pop(b["key"], None)
             elif k == "REVERIFY_REQUESTED": st["reverify"][b["key"]] = r.seq
             elif k == "Q_REASON": st["q"].setdefault(b["subject"], {"reasons": set(), "status": "QUARANTINED"})["reasons"].add(b["reason"]); st["q"][b["subject"]]["status"] = "QUARANTINED"
+            elif k == "Q_REASON_WITH_REVIEW":
+                st["q"].setdefault(b["subject"], {"reasons": set(), "status": "QUARANTINED"})["reasons"].add(b["reason"]); st["q"][b["subject"]]["status"] = "QUARANTINED"; st["reviews"].setdefault(b["subject"], []).append(b["review"])
             elif k == "Q_CLEAR": st["q"][b["subject"]]["reasons"].discard(b["reason"])
             elif k == "Q_REOPEN": st["q"][b["subject"]]["status"] = "REOPENED"
             elif k == "Q_REACTIVATE": st["q"][b["subject"]]["status"] = "ACTIVE"; st["reverify"][b["subject"]] = r.seq        # eligibility must be re-evidenced after reactivation
@@ -83,7 +94,7 @@ class TrackerCore:
             head = self._j.head(); st = self._replay(head.seq)
             out, rec = decide(st)
             if rec is None: return out
-            body = _s(dict(rec[1], plane=self.plane) if self.plane is not None else rec[1]); want = record_hash(head.seq + 1, head.hash, rec[0], canonical_json(body))
+            body = _s(dict(rec[1], plane=self._plane) if self._plane is not None else rec[1]); want = record_hash(head.seq + 1, head.hash, rec[0], canonical_json(body))
             try:
                 self._j.append(head, rec[0], body); return out
             except HeadMismatch:
@@ -113,11 +124,12 @@ class TrackerCore:
         cand = {"cid": cid, "key": key, "digest": dg, "facts": dict(facts), "available_asof": available_asof, "vintage": vintage, "payload_hex": payload.hex()}
         def decide(st):
             known = st["cands"].get(key, {})
-            if key in st["amb"]:
+            if key in st["amb"]:                                                  # genuine CURRENT ambiguity: the result agrees with the state
                 return CONFLICT, (None if cid in known else ("OBS_AMBIGUOUS", {"key": key, "candidate": cand}))
             if key in st["obs"]:
                 if st["obs"][key]["cid"] == cid: return REPEAT, None
-                return CONFLICT, (None if cid in known else ("OBS_AMBIGUOUS", {"key": key, "candidate": cand}))     # complete candidate retained; never overwritten
+                if cid in known: return REJECTED_KNOWN, None                      # history only: NOT current ambiguity; reopening/retry policy is D25 (unadopted), so state is unchanged
+                return CONFLICT, ("OBS_AMBIGUOUS", {"key": key, "candidate": cand})     # complete candidate retained; never overwritten
             return NEW, ("OBS_ADMITTED", cand)
         return self._commit(decide)
 
@@ -152,9 +164,12 @@ class TrackerCore:
         return domain_hash("TRK/ENVELOPE_SHAPE", canonical_bytes(shape))
 
     def register_contract(self, cid: str, version: str, fingerprint: str, max_staleness: int, battery_passed: bool):
+        if not all(isinstance(x, str) and x for x in (cid, version, fingerprint)) or not _int(max_staleness) or max_staleness < 0 or not isinstance(battery_passed, bool):
+            raise Refusal("contract fields (explicit non-negative integer staleness bound and bool battery result required; no defaults)", code="CONTRACT_FIELDS_INVALID")
         self._commit(lambda st: (None, ("CONTRACT_REGISTERED", {"id": cid, "version": version, "fingerprint": fingerprint, "max_staleness": max_staleness, "battery_passed": bool(battery_passed)})))
 
     def resolve_contract(self, envelope: dict, raw: bytes, now: int):
+        if not isinstance(envelope, dict) or not isinstance(raw, bytes) or not _int(now) or now < 0: raise Refusal("contract resolution inputs", code="CONTRACT_INPUT_INVALID")
         fp = self.derive_fingerprint(envelope); rd = domain_hash("TRK/RAW", raw); out = {}
         def decide(st):
             hits = [c for c in st["contracts"].values() if c["fingerprint"] == fp]
@@ -164,7 +179,9 @@ class TrackerCore:
             c = hits[0]
             if not c["battery_passed"]: out["r"] = ("NOT_USABLE", "CHALLENGE_BATTERY_NOT_PASSED"); return None, None
             wm = envelope.get("watermark")
-            if not _int(wm) or now - wm > c["max_staleness"]: out["r"] = ("HELD", "STALE_OR_MISSING_WATERMARK"); return None, None
+            if not _int(wm) or wm < 0: out["r"] = ("HELD", "MISSING_OR_MALFORMED_WATERMARK"); return None, None
+            if wm > now: out["r"] = ("HELD", "FUTURE_WATERMARK"); return None, None             # negative age is never fresh
+            if now - wm > c["max_staleness"]: out["r"] = ("HELD", "STALE_WATERMARK"); return None, None
             out["r"] = ("RESOLVED", (c["id"], c["version"])); return None, None
         self._commit(decide); return out["r"]
 
@@ -253,33 +270,49 @@ class TrackerCore:
         """The current epoch basis of a subject: its own epoch and every recorded ancestor's. A witness is valid only for the basis it was recorded under."""
         return [[k, st["epoch"].get(k, 0)] for k in sorted({subject, *self._closure(st, subject)})]
 
-    def reresolve(self, key: str):
+    def reresolve(self, key: str, version: str, now: int):
         """Clears an invalidation only with a FRESH witness (recorded after the LATEST invalidation AND under the current epoch basis) and only when every recorded upstream is itself valid. The witness
-        is caller-asserted evidence, so a QUALIFIED core holds this (verifier binding unbound). D25 clearance policy is source-owned and unresolved: nothing is restored automatically."""
+        is caller-asserted evidence, so a QUALIFIED core holds this (verifier binding unbound). D25 clearance policy is source-owned and unresolved: nothing is restored automatically.
+        R24: the witness must be POSITIVE for the requested version at `now` (L1 PASS and, when required, L2 PASS; not FAIL/UNAVAILABLE/future/stale/wrong-version). This clears ONLY the epoch
+        invalidation marker (an epoch acknowledgement): it neither lifts a quarantine nor makes the subject eligible - eligible_asof still evaluates every condition itself."""
         if not self.simulation: raise Refusal("fresh permitted witness/materialization binding unbound", code="VERIFIER_BINDING_UNBOUND_HELD")
         def decide(st):
             if key not in st["inval"]: raise Refusal(key, code="NOT_INVALIDATED")
             if any(u in st["inval"] or self._blocked(st, u) for u in st["ups"].get(key, [])): raise Refusal(key, code="UPSTREAM_STILL_INVALID")
             h = st["health"].get(key)
             if h is None or h["seq"] <= st["inval"][key][1] or h["basis"] != self._basis(st, key): raise Refusal(key, code="NO_FRESH_WITNESS")
-            return None, ("RERESOLVED", {"key": key})
+            if self._health(st, key, version, now) != "HEALTHY": raise Refusal(key, code="WITNESS_NOT_POSITIVE")      # FAIL/UNAVAILABLE/future/stale/wrong-version never clears
+            return None, ("RERESOLVED", {"key": key, "version": version})
         self._commit(decide)
 
     # ---- quarantine: multi-reason, retry suppression, reopen != reactivation ------------------------
     def quarantine(self, subject: str, reason: str):
         self._commit(lambda st: (None, ("Q_REASON", {"subject": subject, "reason": reason})))
+    REASON_CONTEXT_DOMAIN_METADATA_MISSING = "CONTEXT_DOMAIN_METADATA_MISSING"
+    def fail_closed_missing_context_metadata(self, subject: str, *, subject_kind: str = "TRACKER", mv=None, fence: int = None) -> "FailClosedResult":
+        """Existing-authority SAFETY action for an already defective subject whose Context-domain metadata is missing (DecisionContextV4 FAIL-CLOSED SAFETY RULE, source clause cited by ID/range only).
+        Available in BOTH modes: a generic qualification hold never suppresses a risk-reducing action. What this DOES, in one atomic journal record: opens the Core quarantine reason and raises the
+        source-named review `CONTEXT_DOMAIN_RESOLUTION_FAILURE` (derived from `fail_closed_transition`, not retyped). Restoration stays prohibited until governed context exists.
+        What this does NOT do (exact integration blocker, R24): it does not transition the OWNING lifecycle authority. The existing ChainStatusAuthority is keyed by materialization version (mv), the Core
+        by subject string, and no source-bound subject->mv mapping or status-kind choice (DEGRADED_NOT_CURRENT vs HALTED, the latter terminal) is supplied, so none is invented. When a bound chain and an
+        mv are supplied the result REPORTS whether the chain still reads CURRENT; it is never reported as applied."""
+        if subject_kind not in SUBJECT_DOMAIN: raise Refusal(subject_kind, code="UNKNOWN_SUBJECT_KIND")
+        decision = fail_closed_transition(subject_kind, True, False)               # the source rule: apply=True, review raised, restoration prohibited
+        self._commit(lambda st: (None, ("Q_REASON_WITH_REVIEW", {"subject": subject, "reason": self.REASON_CONTEXT_DOMAIN_METADATA_MISSING, "review": decision["review"]})))
+        chain = "NO_CHAIN_BOUND_OR_MV_NOT_SUPPLIED"
+        if self._chain is not None and mv is not None and fence is not None:
+            f = self._chain.status_at(mv, fence); chain = "CHAIN_STILL_CURRENT" if (f is not None and f.status == "CURRENT") else ("CHAIN_NOT_CURRENT" if f is not None else "CHAIN_NO_VISIBLE_STATUS")
+        return FailClosedResult(subject, True, decision["review"], decision["restoration_allowed"], "NOT_APPLIED_SUBJECT_TO_MV_AND_STATUS_KIND_MAPPING_UNBOUND", chain)
+
+    def reviews(self, subject: str) -> list: return list(self._replay()["reviews"].get(subject, []))
     def clear_reason(self, subject: str, reason: str, certifier: str, creator: str):
         if not self.simulation: raise Refusal("source approval/evidence binding unbound", code="SOURCE_APPROVAL_BINDING_UNBOUND_HELD")
         if not certifier or certifier == creator: raise Refusal("creator!=certifier", code="CREATOR_IS_CERTIFIER")
+        if reason == self.REASON_CONTEXT_DOMAIN_METADATA_MISSING: raise Refusal(reason, code="RESTORATION_PROHIBITED_UNTIL_GOVERNED_CONTEXT")   # no governed context exists to bind (D2/Context registry)
         def decide(st):
             if reason not in st["q"].get(subject, {"reasons": set()})["reasons"]: raise Refusal(reason, code="REASON_NOT_OPEN")
             return None, ("Q_CLEAR", {"subject": subject, "reason": reason})
         self._commit(decide)
-    REASON_CONTEXT_DOMAIN_METADATA_MISSING = "CONTEXT_DOMAIN_METADATA_MISSING"
-    def fail_closed_missing_context_metadata(self, subject: str):
-        """Existing-authority SAFETY action (DecisionContext exception): an already defective subject whose Context-domain metadata is missing must not stay CURRENT. Available in BOTH modes (a generic
-        qualification hold never suppresses fail-closed actions); RESTORATION stays blocked: clearing needs source approval (held when qualified) and reactivation needs reconstruction proof."""
-        self.quarantine(subject, self.REASON_CONTEXT_DOMAIN_METADATA_MISSING)
 
     def retry_allowed(self, subject: str) -> bool:
         q = self._replay()["q"].get(subject); return q is None or (not q["reasons"] and q["status"] == "ACTIVE")
@@ -409,6 +442,16 @@ from ..gateway.contracts import HealthSnapshot as _HS
 class CoreHealthSnapshot(_HS):
     """A Health snapshot from Core that carries its evidence class. `acceptable` can be True ONLY for SIMULATION evidence; a qualified Core always reports QUALIFIED_HELD (acceptable=False)."""
     evidence_class: str = "SIMULATION"
+
+
+@dataclass(frozen=True)
+class FailClosedResult:
+    subject: str
+    core_quarantined: bool
+    review: str                  # source-named review raised (CONTEXT_DOMAIN_RESOLUTION_FAILURE)
+    restoration_allowed: bool    # always False
+    owning_lifecycle_transition: str   # exact integration blocker; never "APPLIED" here
+    chain_reading: str           # what the bound existing chain reads, if supplied
 
 
 @dataclass(frozen=True)

@@ -25,7 +25,7 @@ M = [
      (TC, 'if self.plane is not None and b.get("plane") != self.plane: raise IntegrityFailure', 'if False: raise IntegrityFailure'),
      (TC, '; st["reverify"][b["subject"]] = r.seq        # eligibility', '        # eligibility'),
      (TC, 'if o is not None: return up not in st["amb"] and self._payload_reconstructs(o)', 'if o is not None: return up not in st["amb"]')]
-T = ["tests/trk_stage_a/test_r23_core.py", "tests/trk_stage_a/test_r22_construction_binding.py", "tests/trk_stage_a/test_r20_terminal_scope.py", "tests/trk_stage_a/test_r22_boundaries.py"]
+T = ["tests/trk_stage_a/test_r24_core.py", "tests/trk_stage_a/test_r22_construction_binding.py", "tests/trk_stage_a/test_r20_terminal_scope.py", "tests/trk_stage_a/test_r22_boundaries.py"]
 def run():
     try: return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", *[str(ROOT / t) for t in T]], cwd=ROOT, capture_output=True, text=True, timeout=90, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1")).returncode
     except subprocess.TimeoutExpired: return 99

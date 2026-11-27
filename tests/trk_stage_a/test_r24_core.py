@@ -6,7 +6,7 @@ from stage_a.errors import Refusal, StaleFence, UnknownCommit
 from stage_a.storage.object_store import InMemoryObjectStore
 from stage_a.storage.authority_class import SimulationStore
 from stage_a.coordination.object_store_journal import ObjectStoreJournal
-from stage_a.core.tracker_core import TrackerCore, NEW, REPEAT, CONFLICT, OBS_FACTS_CANDIDATE, HELD, SIM_ELIGIBLE, CoreHealthSnapshot
+from stage_a.core.tracker_core import TrackerCore, NEW, REPEAT, CONFLICT, REJECTED_KNOWN, OBS_FACTS_CANDIDATE, HELD, SIM_ELIGIBLE, CoreHealthSnapshot
 from stage_a.gateway import contracts as G
 from stage_a.fw import receiver as FW
 from stage_a.ml import receiver as ML
@@ -69,7 +69,7 @@ class Contract(unittest.TestCase):
         c.register_contract("A", "1", fp, 10, True); self.assertEqual(c.resolve_contract(env, b"r", 105), ("RESOLVED", ("A", "1")))
         self.assertEqual(c.resolve_contract(dict(env, label="SOMETHING_ELSE"), b"r", 105)[0], "RESOLVED")
         self.assertEqual(c.resolve_contract(dict(env, extra=[]), b"r", 105)[0], "QUARANTINED")
-        self.assertEqual(c.resolve_contract(env, b"r", 200), ("HELD", "STALE_OR_MISSING_WATERMARK"))
+        self.assertEqual(c.resolve_contract(env, b"r", 200), ("HELD", "STALE_WATERMARK"))
         c.register_contract("B", "1", fp, 10, True); self.assertEqual(c.resolve_contract(env, b"r", 105), ("QUARANTINED", "MULTI_MATCH"))
     def test_battery_not_passed_is_not_usable(self):
         c = mk(); env = {"o": 1, "watermark": 1}; c.register_contract("A", "1", c.derive_fingerprint(env), 10, False)
@@ -111,10 +111,10 @@ class EpochQuarantine(unittest.TestCase):
     def test_epoch_invalidates_transitive_dependents_and_codex_repro_reresolve_needs_valid_upstream_and_fresh_witness(self):
         c = mk(); c.declare_dependency("B", "A"); c.declare_dependency("C", "B"); c.advance_epoch("A", 2)
         self.assertEqual(c.blocked("C"), ["EPOCH_INVALIDATED", "UPSTREAM_BLOCKED"]); self.assertEqual(code(c.advance_epoch, "A", 2), "EPOCH_NOT_ADVANCING")
-        self.assertEqual(code(c.reresolve, "C"), "UPSTREAM_STILL_INVALID")                       # Codex repro: B still invalid
-        self.assertEqual(code(c.reresolve, "B"), "NO_FRESH_WITNESS")
-        ver(c, "B"); c.reresolve("B"); ver(c, "C"); c.reresolve("C"); self.assertEqual(c.blocked("C"), []); self.assertEqual(code(c.reresolve, "C"), "NOT_INVALIDATED")
-        self.assertEqual(code(mk(False).reresolve, "x"), "VERIFIER_BINDING_UNBOUND_HELD")
+        self.assertEqual(code(c.reresolve, "C", "1", 11), "UPSTREAM_STILL_INVALID")                       # Codex repro: B still invalid
+        self.assertEqual(code(c.reresolve, "B", "1", 11), "NO_FRESH_WITNESS")
+        ver(c, "B"); c.reresolve("B", "1", 11); ver(c, "C"); c.reresolve("C", "1", 11); self.assertEqual(c.blocked("C"), []); self.assertEqual(code(c.reresolve, "C", "1", 11), "NOT_INVALIDATED")
+        self.assertEqual(code(mk(False).reresolve, "x", "1", 11), "VERIFIER_BINDING_UNBOUND_HELD")
     def test_dependency_cycle_is_refused(self):
         c = mk(); c.declare_dependency("B", "A"); self.assertEqual(code(c.declare_dependency, "A", "B"), "DEPENDENCY_CYCLE")
     def test_codex_repro_reactivate_uses_recorded_closure_not_a_caller_list(self):
@@ -261,7 +261,7 @@ class ConflictResolutionRestoresChosenBytes(unittest.TestCase):
         c2, k2 = self.two(b"A", b"A", v2="V2"); self.assertEqual(len(c2.candidates(k2)), 2)
     def test_a_rejected_known_candidate_does_not_reopen_the_ambiguity_and_restart_replays(self):
         c, k = self.two(); ca = [cid for cid, r in c.candidates(k).items() if r["payload_hex"] == b"A".hex()][0]; c.resolve_ambiguity(k, ca, "m", "c")
-        self.assertEqual(adm(c, b"B"), CONFLICT); self.assertTrue(c.observation_usable(k)); self.assertEqual(sum(1 for r in c._j.read_from(0) if r.kind == "OBS_AMBIGUOUS"), 1)
+        self.assertEqual(adm(c, b"B"), REJECTED_KNOWN); self.assertTrue(c.observation_usable(k)); self.assertEqual(sum(1 for r in c._j.read_from(0) if r.kind == "OBS_AMBIGUOUS"), 1)
         j2 = ObjectStoreJournal(c._j._s, "core1", "w2"); j2.acquire_epoch(); c2 = TrackerCore(j2, simulation=True); self.assertTrue(c2.observation_usable(k))
     def test_corrupted_candidate_cannot_be_selected_or_used_or_sealed(self):
         c = mk(); adm(c); k = c.obs_key(facts()); st = c._replay(); good = dict(st["obs"][k])
@@ -281,16 +281,16 @@ class EpochSupersession(unittest.TestCase):
         c = mk(); c.declare_dependency("B", "A"); c.declare_dependency("C", "B"); return c
     def test_codex_repro_second_epoch_before_reresolution_invalidates_old_witnesses(self):
         c = self.chain(); c.advance_epoch("A", 1); ver(c, "B"); ver(c, "C"); c.advance_epoch("A", 2)
-        self.assertEqual(code(c.reresolve, "B"), "NO_FRESH_WITNESS"); self.assertEqual(rh(c, "C", "1", 11), "UNKNOWN"); self.assertNotEqual(c.blocked("C"), [])
-        ver(c, "B"); c.reresolve("B"); self.assertEqual(code(c.reresolve, "C"), "NO_FRESH_WITNESS"); ver(c, "C"); c.reresolve("C"); self.assertEqual(c.blocked("C"), [])
+        self.assertEqual(code(c.reresolve, "B", "1", 11), "NO_FRESH_WITNESS"); self.assertEqual(rh(c, "C", "1", 11), "UNKNOWN"); self.assertNotEqual(c.blocked("C"), [])
+        ver(c, "B"); c.reresolve("B", "1", 11); self.assertEqual(code(c.reresolve, "C", "1", 11), "NO_FRESH_WITNESS"); ver(c, "C"); c.reresolve("C", "1", 11); self.assertEqual(c.blocked("C"), [])
     def test_witness_must_match_the_current_basis_not_only_follow_an_old_marker(self):
         c = self.chain(); c.advance_epoch("A", 1); ver(c, "B"); c.advance_epoch("A", 2)                              # witness recorded under epoch 1 basis
-        self.assertEqual(code(c.reresolve, "B"), "NO_FRESH_WITNESS")
+        self.assertEqual(code(c.reresolve, "B", "1", 11), "NO_FRESH_WITNESS")
     def test_branching_shared_ancestry_and_unaffected_baseline(self):
         c = mk(); c.declare_dependency("B", "A"); c.declare_dependency("C", "A"); c.declare_dependency("D", "B"); c.declare_dependency("D", "C"); c.declare_dependency("X", "Z")
         ver(c, "X"); c.advance_epoch("A", 1); c.advance_epoch("A", 2)
         self.assertTrue(all(c.blocked(n) for n in "BCD")); self.assertEqual(c.blocked("X"), []); self.assertEqual(rh(c, "X", "1", 11), "HEALTHY")      # unaffected positive control
-        c.advance_epoch("B", 1); self.assertEqual(code(c.reresolve, "D"), "UPSTREAM_STILL_INVALID")                                                  # a new failure before outstanding re-resolution
+        c.advance_epoch("B", 1); self.assertEqual(code(c.reresolve, "D", "1", 11), "UPSTREAM_STILL_INVALID")                                                  # a new failure before outstanding re-resolution
 class ReconstructabilityAndHealthTyping(unittest.TestCase):
     def test_codex_repro_health_record_is_not_reconstruction(self):
         c = mk(); c.declare_dependency("S", "derived-missing-raw"); ver(c, "derived-missing-raw", l2="UNAVAILABLE", age=100)
@@ -325,4 +325,93 @@ class PlaneAndSafetyActions(unittest.TestCase):
         self.assertEqual(code(q.reactivate, "SUBJ"), "RECONSTRUCTION_PROOF_BINDING_UNBOUND_HELD")
         adm(q, bar_identity="x"); kx = q.obs_key(facts(bar_identity="x")); q.quarantine(kx, "R"); self.assertEqual(code(q.seal, "XAUUSD", 10, 10, [kx]), "MEMBER_BLOCKED")
 import json
+
+from stage_a.errors import IntegrityFailure
+from stage_a.tracker.chain_status import ChainStatusAuthority, StatusFact
+def shared(plane=None, sim=True, ns="pl"):
+    st = InMemoryObjectStore(); st = SimulationStore(st) if sim else st; j = ObjectStoreJournal(st, ns, "w"); j.acquire_epoch(); return st, j, TrackerCore(j, simulation=sim, plane=plane)
+def attach(st, ns="pl", w="w2", **k):
+    j = ObjectStoreJournal(st, ns, w); j.acquire_epoch(); return j, TrackerCore(j, simulation=True, **k)
+
+class R24PlaneIdentity(unittest.TestCase):
+    def test_codex_repro_omitted_plane_cannot_attach_to_or_poison_a_tagged_journal(self):
+        st, j, a = shared("core_market"); a.quarantine("S", "R")
+        j2 = ObjectStoreJournal(st, "pl", "w2"); j2.acquire_epoch(); n = len(list(j2.read_from(0)))
+        with self.assertRaises(IntegrityFailure): TrackerCore(j2, simulation=True)                         # refused at attach, before any append
+        self.assertEqual(len(list(j2.read_from(0))), n); self.assertEqual(a.blocked("S"), ["QUARANTINED"])  # the correctly labelled reader is unharmed
+    def test_race_attach_empty_then_other_writer_tags_the_plane_less_core_refuses_before_append(self):
+        st, j, c0 = shared(None); j2, c1 = attach(st, plane="core_market"); c1.quarantine("S", "R")      # plane-less Core attached while the journal was still empty
+        n = len(list(j.read_from(0)))
+        with self.assertRaises(IntegrityFailure): c0.quarantine("S2", "R2")
+        with self.assertRaises(IntegrityFailure): c0.blocked("S")
+        self.assertEqual(len(list(j.read_from(0))), n); self.assertEqual(c1.blocked("S"), ["QUARANTINED"])
+    def test_explicit_foreign_plane_and_mixed_history_are_refused_and_same_plane_restart_works(self):
+        st, j, a = shared("core_market"); a.quarantine("S", "R")
+        with self.assertRaises(IntegrityFailure): attach(st, plane="research")
+        j2 = ObjectStoreJournal(st, "pl", "w3"); j2.acquire_epoch(); j2.append(j2.head(), "Q_REASON", {"subject": "X", "reason": "R"})            # untagged record forced into a tagged history
+        with self.assertRaises(IntegrityFailure): TrackerCore(j2, simulation=True, plane="core_market")                                         # mixed history refused even for the right plane
+        st2, ja, b = shared("research", ns="r"); b.quarantine("S", "R"); _, b2 = attach(st2, ns="r", plane="research"); self.assertEqual(b2.blocked("S"), ["QUARANTINED"])    # same plane restart: positive
+    def test_tagged_core_cannot_attach_to_legacy_untagged_history_and_legacy_scope_is_explicit(self):
+        st, j, legacy = shared(None, ns="lg"); legacy.quarantine("S", "R")
+        with self.assertRaises(IntegrityFailure): attach(st, ns="lg", plane="core_market")
+        _, l2 = attach(st, ns="lg"); self.assertEqual(l2.blocked("S"), ["QUARANTINED"]); self.assertIsNone(l2.plane)                                       # legacy mechanics stay scoped to plane-less Cores
+    def test_identity_and_evidence_mode_are_not_mutable_by_label(self):
+        _, _, c = shared("core_market")
+        with self.assertRaises(AttributeError): c.plane = "research"
+        with self.assertRaises(AttributeError): c.simulation = False
+        self.assertEqual(c.plane, "core_market"); self.assertTrue(c.simulation)
+        self.assertEqual(code(TrackerCore, c._j, simulation="yes"), "SIMULATION_FLAG_INVALID")
+
+class R24FailClosedSafetyIntegration(unittest.TestCase):
+    MV = ("f", "1", "XAUUSD", "H4", "m1")
+    def test_codex_repro_bound_chain_stays_current_and_is_reported_not_claimed_applied(self):
+        ch = ChainStatusAuthority(); ch.append(StatusFact(self.MV, 1, "CURRENT", 1, False))
+        j = ObjectStoreJournal(SimulationStore(InMemoryObjectStore()), "x", "w"); j.acquire_epoch(); c = TrackerCore(j, simulation=True, chain_status=ch)
+        r = c.fail_closed_missing_context_metadata("S", mv=self.MV, fence=10)
+        self.assertEqual(c.blocked("S"), ["QUARANTINED"]); self.assertEqual(ch.status_at(self.MV, 10).status, "CURRENT")         # the owning chain is NOT transitioned by Core
+        self.assertEqual(r.chain_reading, "CHAIN_STILL_CURRENT"); self.assertTrue(r.owning_lifecycle_transition.startswith("NOT_APPLIED")); self.assertFalse(r.restoration_allowed)
+        self.assertEqual(c.reviews("S"), ["CONTEXT_DOMAIN_RESOLUTION_FAILURE"])                                                  # source-named review is a committed projection
+        self.assertEqual(c.eligible_asof("S", "1", None, 11, mv=self.MV, fence=10)["reasons"][0], "QUARANTINED")                  # Core eligibility is closed even though the chain reads CURRENT
+    def test_qualified_hold_does_not_suppress_the_action_and_restoration_stays_prohibited(self):
+        for sim in (True, False):
+            _, _, c = shared(None, sim=sim, ns="q%s" % sim); r = c.fail_closed_missing_context_metadata("S")
+            self.assertTrue(r.core_quarantined and not r.restoration_allowed and r.chain_reading == "NO_CHAIN_BOUND_OR_MV_NOT_SUPPLIED"); self.assertEqual(c.blocked("S"), ["QUARANTINED"])
+        _, _, s = shared(None, ns="qs"); s.fail_closed_missing_context_metadata("S")
+        self.assertEqual(code(s.clear_reason, "S", "CONTEXT_DOMAIN_METADATA_MISSING", "cert", "maker"), "RESTORATION_PROHIBITED_UNTIL_GOVERNED_CONTEXT")   # even simulation cannot restore
+        self.assertEqual(code(s.fail_closed_missing_context_metadata, "S", subject_kind="NOPE"), "UNKNOWN_SUBJECT_KIND"); self.assertFalse(s.retry_allowed("S"))
+    def test_chain_mv_not_supplied_never_claims_a_chain_effect(self):
+        ch = ChainStatusAuthority(); _, _, c = shared(None, ns="z"); c._chain = ch
+        self.assertEqual(c.fail_closed_missing_context_metadata("S", mv=self.MV, fence=5).chain_reading, "CHAIN_NO_VISIBLE_STATUS")
+
+class R24CandidateSemantics(unittest.TestCase):
+    def two(self):
+        c = mk(); adm(c, b"A"); adm(c, b"B"); k = c.obs_key(facts()); ca = [i for i, r in c.candidates(k).items() if r["payload_hex"] == b"A".hex()][0]; return c, k, ca
+    def test_codex_repro_retransmit_of_rejected_candidate_reports_history_not_ambiguity(self):
+        c, k, ca = self.two(); amb_n = lambda: sum(1 for r in c._j.read_from(0) if r.kind == "OBS_AMBIGUOUS"); n0 = amb_n(); self.assertEqual(adm(c, b"B"), CONFLICT); self.assertEqual(amb_n(), n0)   # no duplicate candidate record; while ambiguity is genuinely current the result agrees with state
+        self.assertIn(k, c._replay()["amb"]); c.resolve_ambiguity(k, ca, "m", "c")
+        self.assertEqual(adm(c, b"B"), REJECTED_KNOWN); self.assertTrue(c.observation_usable(k)); self.assertNotIn(k, c._replay()["amb"])    # result agrees with state; no policy adopted
+        n = len(list(c._j.read_from(0))); adm(c, b"B"); self.assertEqual(len(list(c._j.read_from(0))), n)                       # no state change, no reopening
+        self.assertEqual(adm(c, b"C"), CONFLICT); self.assertIn(k, c._replay()["amb"])                                         # a NEW conflicting candidate is still genuine ambiguity
+    def test_future_watermark_is_held_and_freshness_inputs_are_validated(self):
+        c = mk(); env = {"p": 1, "watermark": 1000}; c.register_contract("A", "1", c.derive_fingerprint(env), 5, True)
+        self.assertEqual(c.resolve_contract(env, b"r", 10), ("HELD", "FUTURE_WATERMARK")); self.assertEqual(c.resolve_contract({"p": 1, "watermark": 8}, b"r", 10), ("RESOLVED", ("A", "1")))
+        self.assertEqual(c.resolve_contract({"p": 1, "watermark": 10}, b"r", 10)[0], "RESOLVED")                              # equality: age 0 is fresh
+        self.assertEqual(c.resolve_contract({"p": 1, "watermark": 4}, b"r", 10), ("HELD", "STALE_WATERMARK"))
+        for bad in (-1, True, "8", 8.0, None): self.assertEqual(c.resolve_contract({"p": 1, "watermark": bad}, b"r", 10)[0], "HELD", bad)
+        self.assertEqual(c.resolve_contract({"p": 1, "watermark": -1}, b"r", 3), ("HELD", "MISSING_OR_MALFORMED_WATERMARK"))      # negative watermark is malformed even when the arithmetic age would be inside the bound
+        for args in (({"p": 1, "watermark": 8}, b"r", -1), ({"p": 1, "watermark": 8}, "r", 10), ("x", b"r", 10), ({"p": 1, "watermark": 8}, b"r", True)): self.assertEqual(code(c.resolve_contract, *args), "CONTRACT_INPUT_INVALID")
+        fp = c.derive_fingerprint(env)
+        for a in (("A", "1", fp, None, True), ("A", "1", fp, -1, True), ("A", "1", fp, True, True), ("A", "1", fp, 5, "no"), ("", "1", fp, 5, True)): self.assertEqual(code(c.register_contract, *a), "CONTRACT_FIELDS_INVALID", a)
+    def test_codex_repro_a_failed_unavailable_future_stale_or_wrong_version_witness_never_clears_invalidation(self):
+        def inv():
+            c = mk(); c.declare_dependency("B", "A"); c.advance_epoch("A", 1); return c
+        for kw, now, ver_ in (({"l2": "FAIL"}, 11, "1"), ({"l1": "FAIL"}, 11, "1"), ({"l2": "UNAVAILABLE"}, 11, "1"), ({}, 99, "1"), ({"at": 500}, 11, "1"), ({}, 11, "2")):
+            c = inv(); ver(c, "B", **kw); self.assertEqual(code(c.reresolve, "B", ver_, now), "WITNESS_NOT_POSITIVE", (kw, now, ver_)); self.assertIn("EPOCH_INVALIDATED", c.blocked("B"))
+        c = inv(); ver(c, "B", req="NOT_APPLICABLE_BY_GOVERNED_DEFINITION", l2="UNAVAILABLE", definition_ref="d"); c.reresolve("B", "1", 11)                 # not-applicable L2 + L1 PASS is a positive witness in simulation only
+        c = inv(); ver(c, "B"); c.reresolve("B", "1", 11); self.assertEqual(c.blocked("B"), [])                                                          # positive control
+    def test_epoch_acknowledgement_is_not_restoration_or_eligibility(self):
+        c = mk(); c.declare_dependency("B", "A"); c.quarantine("B", "R"); c.advance_epoch("A", 1); ver(c, "B"); c.reresolve("B", "1", 11)
+        self.assertEqual(c.blocked("B"), ["QUARANTINED"]); self.assertFalse(c.retry_allowed("B"))                               # the quarantine survives the acknowledgement
+        self.assertEqual(c.eligible_asof("B", "1", None, 11)["state"], "SIMULATION_EVIDENCE_NOT_ELIGIBLE")
+
 if __name__ == "__main__": unittest.main()
