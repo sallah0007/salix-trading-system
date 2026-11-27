@@ -48,11 +48,14 @@ def _ivs(xs):
     return out
 
 def _covered(s, e, segs, conv) -> bool:
-    gap = 1 if conv == "DISCRETE_TICK" else 0          # discrete ticks: [0,14] and [15,25] touch; continuous: they do not
+    """Coverage of EXACTLY the requested interval [s, e] by the union of the segments: segments entirely before the first uncovered point are irrelevant and skipped (R30: an earlier unrelated segment must not stop the scan); a real gap
+    stops it. gap = 1 for DISCRETE_TICK (adjacent integer segments touch), 0 for the continuous conventions (they must share the boundary point)."""
+    gap = 1 if conv == "DISCRETE_TICK" else 0
     reach = None
     for a, b in sorted(segs):
         if reach is None:
-            if a > s: continue
+            if a > s: break                                  # sorted: no later segment can cover s either
+            if b < s: continue                               # irrelevant past segment
             reach = b
         elif a <= reach + gap: reach = max(reach, b)
         else: break
@@ -74,7 +77,7 @@ def evaluate(pkg, ctx) -> H3Decision:
     for flag, ref in CONDITIONAL:
         v = getattr(ctx, flag)
         if v is None: u.append("APPLICABILITY_UNKNOWN:" + flag)
-        elif v not in (True, False): raise Refusal(flag, code="H3_APPLICABILITY_NOT_BOOLEAN")
+        elif v is not True and v is not False: raise Refusal(flag, code="H3_APPLICABILITY_NOT_BOOLEAN")           # strict typed booleans: 0/1 are not applicability values
         elif v and not _s(getattr(pkg, ref)): w.append("MISSING_CONDITIONAL:" + ref)
     if _i(pkg.available_asof) and _i(pkg.delivery_decision_ts) and pkg.available_asof >= pkg.delivery_decision_ts: w.append("AVAILABLE_ASOF_NOT_BEFORE_DECISION")       # Gateway G1 rule
     s, e = pkg.dependency_interval_start, pkg.dependency_interval_end
