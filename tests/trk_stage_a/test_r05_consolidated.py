@@ -38,7 +38,9 @@ def test_store_unresolved_identity_not_marked_final_after_failure():
     with pytest.raises(RuntimeError): s.resolve("r", i, lambda: (_ for _ in ()).throw(RuntimeError()))
     s.late_dependency_mutates(i)                                      # nothing stored => no immutability claim
 
-def test_store_concurrent_callers_get_one_outcome():
+def test_store_concurrent_callers_smoke_unsynchronised_start():
+    # NOT barrier-based: threads start without a start gate or evaluator-entry barrier. Smoke only; forced interleavings live in
+    # test_v038_conformance.py (evaluator-entry Events).
     s, i, outs = V.FinalResolutionStore(), _ident("w3"), []
     def run(k): outs.append(s.resolve(f"r{k}", i, lambda: object()))
     ts = [threading.Thread(target=run, args=(k,)) for k in range(16)]

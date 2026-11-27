@@ -118,3 +118,59 @@ def test_inflight_marker_cleared_after_failure():
     s = V.FinalResolutionStore()
     with pytest.raises(RuntimeError): s.resolve("r", IDN, lambda: (_ for _ in ()).throw(RuntimeError("x")))
     assert s.resolve("r", IDN, lambda: 1) == 1                                           # not stuck REENTRANT
+
+# ---------- review R05 (Codex PR#29): request-id reservation across in-flight / nested evaluation -------------------------
+A_ID = V.FinalResolutionIdentity("C", "M", "S", "a")
+B_ID = V.FinalResolutionIdentity("C", "M", "S", "b")
+
+def test_nested_same_request_different_identity_is_refused_and_cannot_rebind():
+    s = V.FinalResolutionStore(); seen = []
+    def outer():
+        try: s.resolve("same-request", B_ID, lambda: "B")
+        except Refusal as e: seen.append(e.code)
+        return "A"
+    assert s.resolve("same-request", A_ID, outer) == "A"
+    assert seen == ["REQUEST_ID_REBOUND_TO_OTHER_IDENTITY"]
+    assert B_ID not in s._by_identity                                                    # inner never stored
+    assert s._req_ids["same-request"] == A_ID                                            # binding not overwritten
+    with pytest.raises(Refusal): s.resolve("same-request", B_ID, lambda: "B")            # retry for b still refused (a owns it)
+    assert s.resolve("same-request", A_ID, lambda: "X") == "A"
+
+def test_nested_rebind_attempt_propagating_failure_leaves_no_binding_created_by_failed_call():
+    s = V.FinalResolutionStore()
+    with pytest.raises(Refusal): s.resolve("rq", A_ID, lambda: s.resolve("rq", B_ID, lambda: "B"))   # inner refusal escapes outer
+    assert "rq" not in s._req_ids and A_ID not in s._by_identity and B_ID not in s._by_identity
+    assert s.resolve("rq", B_ID, lambda: "B") == "B"                                      # request id is usable again, by b
+
+def test_failure_after_inner_success_on_other_request_keeps_inner_final_and_releases_outer():
+    s = V.FinalResolutionStore()
+    def outer():
+        assert s.resolve("inner-req", B_ID, lambda: "B") == "B"                         # different request AND identity: legal
+        raise RuntimeError("outer fails after inner success")
+    with pytest.raises(RuntimeError): s.resolve("outer-req", A_ID, outer)
+    assert s._by_identity == {B_ID: "B"} and "outer-req" not in s._req_ids               # a stored nothing; b's own final outcome stands
+    assert s.resolve("outer-req", A_ID, lambda: "A2") == "A2"
+
+def test_failure_does_not_drop_a_binding_that_pre_existed():
+    s = V.FinalResolutionStore(); assert s.resolve("r", A_ID, lambda: "A") == "A"
+    assert s.resolve("r", A_ID, lambda: 1 / 0) == "A"                                    # stored outcome returned, evaluator unused
+    assert s._req_ids["r"] == A_ID
+
+def test_second_thread_with_same_request_other_identity_is_refused_while_first_is_inside_evaluator():
+    s = V.FinalResolutionStore(); entered, release, res = threading.Event(), threading.Event(), {}
+    def ev(): entered.set(); assert release.wait(5); return "A"
+    t1 = threading.Thread(target=lambda: res.setdefault("a", s.resolve("rq", A_ID, ev)))
+    t1.start(); assert entered.wait(5)                                                  # evaluator-entry barrier: t1 IS inside evaluate()
+    def other():
+        try: s.resolve("rq", B_ID, lambda: "B")
+        except Refusal as e: res["b"] = e.code
+    t2 = threading.Thread(target=other); t2.start(); time.sleep(0.05); release.set(); t1.join(5); t2.join(5)
+    assert res == {"a": "A", "b": "REQUEST_ID_REBOUND_TO_OTHER_IDENTITY"} and B_ID not in s._by_identity
+
+def test_second_thread_same_identity_inside_evaluator_waits_and_gets_stored_outcome():
+    s = V.FinalResolutionStore(); entered, release, outs = threading.Event(), threading.Event(), []
+    def ev(): entered.set(); assert release.wait(5); return object()
+    t1 = threading.Thread(target=lambda: outs.append(s.resolve("r1", A_ID, ev))); t1.start(); assert entered.wait(5)
+    t2 = threading.Thread(target=lambda: outs.append(s.resolve("r2", A_ID, ev))); t2.start(); time.sleep(0.05)
+    release.set(); t1.join(5); t2.join(5)
+    assert s.evaluations == 1 and len(outs) == 2 and outs[0] is outs[1]
