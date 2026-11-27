@@ -57,7 +57,7 @@ class TrackerCore:
 
     # ---- replay: pure function of the journal up to a given sequence ---------------------------
     def _replay(self, upto=None):
-        st = dict(obs={}, cands={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={}, reviews={}, tasks={}, authev={}, xform={}, assoc={}, snapiss={}, anc={}, passes={})
+        st = dict(obs={}, cands={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={}, reviews={}, tasks={}, authev={}, xform={}, assoc={}, snapiss={}, anc={}, passes={}, resolved={})
         for r in self._j.read_from(0):
             if upto is not None and r.seq > upto: break
             b = json.loads(r.body_json); k = r.kind
@@ -94,6 +94,7 @@ class TrackerCore:
             elif k == "AUTH_EVIDENCE": st["authev"][_scope_key(b["subject"], b["version"], b["instrument"], b["timeframe"], b["battery"], b["vintage"], list(b["dependencies"]))] = b      # keyed by the FULL claim scope: one version/scope never clears another
             elif k == "TRANSFORM_VERDICT": st["xform"][_scope_key(b["subject"], b["version"], b["kind"], b["transform_version"], b["lineage_ref"])] = b
             elif k == "SUBJECT_ASSOC": st["assoc"].setdefault(b["subject"], []).append(b["binding"])
+            elif k == "SNAPSHOT_RESOLVED_MANIFEST": st["resolved"][b["resolved_manifest_hash"]] = b
             elif k == "REVERIFY_PASS": st["passes"][b["pass_id"]] = b
             elif k == "ANCESTRY_COMPLETE": st["anc"][b["subject"]] = b
             elif k == "SNAPSHOT_ISSUED": st["snapiss"][b["snapshot_id"]] = b
@@ -506,7 +507,7 @@ class TrackerCore:
         if self._timeframes is None: raise Refusal("registry", code="TIMEFRAME_REGISTRY_UNBOUND")
         if not isinstance(parents_by_tf, dict) or not parents_by_tf or not isinstance(watermarks_by_tf, dict): raise Refusal("streams", code="SNAPSHOT_STREAMS_INVALID")
         kind, h = self.seal(instrument, query_asof, fence, member_keys, mixed_policy_id)
-        if kind != "SEALED" or h is None: return {"state": "UNRESOLVED_HELD", "reason": kind, "snapshot_hash": h, "resolution": None}
+        if kind != "SEALED" or h is None: return {"state": "UNRESOLVED_HELD", "reason": kind, "base_seal_hash": h, "resolved_manifest_hash": None, "resolution": None}
         st = self._replay(); members = {m["key"]: m for m in st["snaps"][h]["members"]}
         if not self.verify_snapshot(h, instrument, query_asof, fence, member_keys): raise IntegrityFailure("sealed snapshot does not re-derive")
         streams = {}
@@ -521,8 +522,19 @@ class TrackerCore:
                 plist.append((key, m["available_asof"], complete))
             streams[tf] = TF.StreamView(tuple(plist), vint[0] if vint else None, watermarks_by_tf.get(tf))       # a SEALED snapshot is single-vintage (mixed => held above), so >1 is unreachable; none => VINTAGE_NOT_RESOLVED
         r = TF.resolve_snapshot(self._timeframes, query_asof, streams)
-        self._commit(lambda st2: (None, ("SNAPSHOT_RESOLVED", {"query_asof": query_asof, "snapshot_hash": h, "state": r.state, "entries": [[e.timeframe, e.selection.state, e.selection.parent_id, e.vintage, e.watermark, e.state, list(e.reasons)] for e in r.entries]})))
-        return {"state": r.state, "reason": "", "snapshot_hash": h, "resolution": r}
+        ents = [{"timeframe": e.timeframe, "selection_state": e.selection.state, "parent_id": e.selection.parent_id, "parent_available_asof": e.selection.available_asof, "candidates": sorted(list(v) for v in streams[e.timeframe].parents),
+                 "vintage": e.vintage, "watermark": e.watermark, "state": e.state, "reasons": list(e.reasons)} for e in r.entries]
+        body = {"label": "CANDIDATE_RESOLVED_SNAPSHOT_COMPOSITION_NOT_THE_REGISTRY_TRACKER_SNAPSHOT_MANIFEST", "base_seal_hash": h, "instrument": instrument, "query_asof": query_asof, "fence": fence, "mixed_policy": mixed_policy_id,
+                "registry_basis": [list(x) for x in self._timeframes.basis()], "state": r.state, "entries": ents, "supplied_unadmitted": ["watermarks", "parent_completeness", "segmentation"]}
+        mh = domain_hash("TRK/RESOLVED_SNAPSHOT_CANDIDATE", canonical_bytes(body))
+        self._commit(lambda st2: (None, None) if mh in st2["resolved"] else (None, ("SNAPSHOT_RESOLVED_MANIFEST", dict(body, resolved_manifest_hash=mh))))
+        self._commit(lambda st2: (None, ("SNAPSHOT_RESOLVED", {"query_asof": query_asof, "base_seal_hash": h, "resolved_manifest_hash": mh, "state": r.state, "entries": [[e.timeframe, e.selection.state, e.selection.parent_id, e.vintage, e.watermark, e.state, list(e.reasons)] for e in r.entries]})))
+        return {"state": r.state, "reason": "", "base_seal_hash": h, "resolved_manifest_hash": mh, "resolution": r}
+    def resolved_manifest(self, mh: str):
+        """Detached copy of a journaled resolved-snapshot CANDIDATE composition (internal label/hash; NOT the Registry TRACKER_SNAPSHOT_MANIFEST: no normative byte layout or admission is inferred)."""
+        import copy
+        b = self._replay()["resolved"].get(mh); return None if b is None else copy.deepcopy(b)
+
     @staticmethod
     def _proof_blocks(st, subject, version, now, require_authority=False, require_transform=False):
         """Reasons from journaled evidence-truth / transform verdicts that bind EXACTLY (subject, version). Freshness is checked at USE time. Absence of a verdict blocks only when the caller declares the proof REQUIRED

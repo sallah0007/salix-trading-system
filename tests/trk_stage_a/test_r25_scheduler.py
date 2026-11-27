@@ -140,3 +140,47 @@ class PersistedPass(unittest.TestCase):
         self.assertEqual(code(c.record_reverify_pass, "P1", 10, 1, [["x", "y", "VERIFIED", "PASS", ""]]), "REVERIFY_PASS_ID_REUSED")
         self.assertEqual(code(c.record_reverify_pass, "", 10, 1, []), "REVERIFY_PASS_INVALID"); self.assertIsNone(c.reverify_pass("nope"))
         S.run_reverification_pass(c, b, [KEY], now=11, max_age=50); self.assertEqual([k.kind for k in c._j.read_from(0)].count("REVERIFY_PASS"), 1)       # no pass_id: nothing recorded
+
+class RequiredAncestryAtTheGateway(unittest.TestCase):
+    """R32: required ancestry through the ACTUAL Gateway consumer-use path (simulation): unknown ancestry denies delivery, declared-complete delivers, an unrelated baseline stays deliverable. Completeness is CALLER_ASSERTED_UNADMITTED."""
+    def test_unknown_ancestor_blocks_delivery_declared_chain_delivers_and_unrelated_baseline_is_unaffected(self):
+        c = core(); b = G.HealthBinding(I, "1", I, I)
+        c.declare_dependency(KEY, "UP"); ver(c, KEY, version="1", at=10, age=50); ver(c, "UP", version="1", at=10, age=50); ver(c, "BASE", version="1", at=10, age=50)
+        c.associate_subject(KEY, b, "assoc")
+        def deliver(req):
+            hs = c.gateway_health(KEY, "1", 12, R("hl"), 11, binding=b, require_ancestry=req); return hs, sgw(c).resolve("o", _entry(ver="1"), I, I, 3, 20, hs)
+        hs, out = deliver(False); self.assertIsInstance(out, G.Binding)                                                      # not required: unchanged baseline
+        hs, out = deliver(True); self.assertNotIsInstance(out, G.Binding); self.assertEqual(out.reason, "HEALTH_UNACCEPTABLE")  # required + undeclared => UNKNOWN => denied at the consumer
+        c.declare_ancestry_complete(KEY, "src"); hs, out = deliver(True); self.assertNotIsInstance(out, G.Binding)             # the ancestor UP is still undeclared: unknown propagates
+        c.declare_ancestry_complete("UP", "src"); hs, out = deliver(True); self.assertIsInstance(out, G.Binding)               # complete chain + healthy: delivered
+        self.assertTrue(c.confirm_snapshot(hs) and hs.require_ancestry)                                                        # the requirement is part of the confirmed snapshot
+        c.quarantine("UP", "DEFECT"); hs, out = deliver(True); self.assertNotIsInstance(out, G.Binding)                        # ancestor defect blocks the dependent
+        c.associate_subject("BASE", b, "assoc2"); c.declare_ancestry_complete("BASE", "src")                                    # unrelated baseline: declared-empty + healthy
+        hb = c.gateway_health("BASE", "1", 12, R("hl"), 11, binding=b, require_ancestry=True); self.assertTrue(hb.acceptable)
+        self.assertFalse(c.snapshot_current_at_use(deliver(True)[0], 13))                                                      # use-time re-evaluation keeps it denied while UP is quarantined
+
+class TriggeredPass(unittest.TestCase):
+    """R32: event-trigger / burst / resource bounded candidate with governed policy INPUT SLOTS (values and refs unadmitted)."""
+    def slots(self, **o):
+        d = {"max_age": {"value": 50, "source_ref": "ref-age"}, "max_items": {"value": 2, "source_ref": "ref-items"}, "max_cost": {"value": 10, "source_ref": "ref-cost"}}; d.update(o); return d
+    def setUp(self): self.m = Manifest.from_dict(momentum_manifest()); self.b = {KEY: (self.m, declared(self.m), SIMS())}
+    def test_event_triggers_coalesce_run_once_and_pass_is_recorded_with_slot_refs(self):
+        c = core(); r = S.run_triggered_pass(c, self.b, [], [(KEY, "SCHEDULED"), (KEY, "QUARANTINE_CLEARED")], slots=self.slots(), costs={KEY: 3}, now=10, pass_id="T1")
+        self.assertEqual([(i.subject, i.trigger, i.outcome, i.detail) for i in r], [(KEY, "QUARANTINE_CLEARED", "VERIFIED", "PASS")])                      # burst of two events => one verification
+        p = c.reverify_pass("T1"); self.assertEqual(p["items"][-1][1:3], ["", "SLOT_REFS"]); self.assertIn("max_cost=ref-cost", p["items"][-1][3])
+        self.assertEqual(sum(1 for x in c._j.read_from(0) if x.kind == "REVERIFY_REQUESTED"), 1)
+    def test_burst_resource_and_unknown_cost_bounds_report_unrun_work_never_health(self):
+        c = core(); ev = [(KEY, "SCHEDULED"), ("A/H4/a/1", "SCHEDULED"), ("B/H4/b/1", "SCHEDULED")]
+        r = S.run_triggered_pass(c, self.b, [], ev, slots=self.slots(max_items={"value": 1, "source_ref": "r"}), costs={KEY: 1, "A/H4/a/1": 1, "B/H4/b/1": 1}, now=10, pass_id="T2")
+        self.assertEqual(sorted(i.outcome for i in r), ["SKIPPED_BOUND_EXCEEDED", "SKIPPED_BOUND_EXCEEDED", "UNBOUND"])                                    # sorted order: A first (UNBOUND), others beyond the burst bound
+        c = core(); r = S.run_triggered_pass(c, self.b, [], [(KEY, "SCHEDULED")], slots=self.slots(max_cost={"value": 2, "source_ref": "r"}), costs={KEY: 3}, now=10, pass_id="T3"); self.assertEqual(r[0].outcome, "SKIPPED_RESOURCE_EXCEEDED")
+        self.assertEqual(c.recording_health(KEY, "1", 11).state, "UNKNOWN")                                                                                   # skipped for resources: not healthy
+        r = S.run_triggered_pass(c, self.b, [], [(KEY, "SCHEDULED")], slots=self.slots(), costs={}, now=10, pass_id="T4"); self.assertEqual(r[0].outcome, "SKIPPED_COST_UNKNOWN")
+        self.assertEqual(code(S.run_triggered_pass, c, self.b, [], [(KEY, "SCHEDULED")], slots=self.slots(), costs={KEY: 1}, now=10, pass_id="T4"), "REVERIFY_PASS_ID_REUSED")
+    def test_unbound_or_malformed_policy_slots_refuse_and_unrelated_baseline_is_untouched(self):
+        c = core(); ver(c, "BASE", at=10, age=100)
+        for n in S.SLOT_NAMES:
+            s = self.slots(); del s[n]; self.assertEqual(code(S.run_triggered_pass, c, self.b, ["BASE"], [], slots=s, costs={}, now=11, pass_id="x"), "POLICY_SLOT_UNBOUND:" + n)
+            self.assertEqual(code(S.run_triggered_pass, c, self.b, ["BASE"], [], slots=self.slots(**{n: {"value": 5, "source_ref": ""}}), costs={}, now=11, pass_id="x"), "POLICY_SLOT_UNBOUND:" + n)
+        self.assertEqual(code(S.run_triggered_pass, c, self.b, ["BASE"], [], slots=dict(self.slots(), cadence={"value": 1, "source_ref": "r"}), costs={}, now=11, pass_id="x"), "POLICY_SLOT_UNKNOWN")
+        self.assertEqual(c.recording_health("BASE", "1", 12).state, "HEALTHY"); self.assertEqual(S.run_triggered_pass(c, self.b, ["BASE"], [], slots=self.slots(), costs={}, now=11, pass_id="ok"), [])                 # BASE fresh: nothing due, nothing run

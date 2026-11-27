@@ -1,3 +1,4 @@
+import copy
 from .journal_port import HeadMismatch
 from .order import (ConstructionOrder, TrustAnchor, CLAIM_BOUND, CLAIM_CONSUMED,
                     CLAIM_RELEASED, ORDER_ISSUED, ORDER_REVOKED, ORDER_PROVENANCE)
@@ -23,7 +24,7 @@ class ClaimService:
         raw = self._p.orders.get(order_id)
         if raw is None:
             raise Refusal("NO_ORDER", order_id)
-        order = ConstructionOrder.from_body(raw)
+        order = ConstructionOrder.from_body(copy.deepcopy(raw))      # detached copy: never alias the projection cache
         if order_id in self._p.revoked:
             raise Refusal("ORDER_REVOKED", order_id)
         if order.issued_by not in self._anchor.issuer_ids:
@@ -74,11 +75,11 @@ class ClaimService:
         """Fresh-synced copy of the journaled order row, or None. Reading is not verification."""
         self._p.sync(self._j)
         o = self._p.orders.get(order_id)
-        return None if o is None else dict(o)
+        return None if o is None else copy.deepcopy(o)       # detached: a caller mutating nested constraints never changes the cached projection
 
     def order_provenance(self, order_id: str):
         self._p.sync(self._j)
-        return [dict(x) for x in self._p.order_prov.get(order_id, [])]
+        return [copy.deepcopy(x) for x in self._p.order_prov.get(order_id, [])]
 
     def verified_order(self, order_id: str):
         """The order if it verifies NOW on the synced journal (anchored issuer, anchored source binding, not revoked, not expired); raises Refusal otherwise. Subject is not checked: the content subject is not yet known at build start."""
