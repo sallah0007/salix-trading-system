@@ -73,6 +73,7 @@ def reverify_accepted(core, *, journal, store, feature_key, now: int, max_age: i
     st = replay(feature_key.namespace(), journal.read_from(1)).get(feature_key.feature_version)
     if st is None: raise Refusal(feature_key.key(), code="NO_ACCEPTED_RECORD")
     body = st.accepted_body
+    if st.legacy_binding_absent: raise Refusal(feature_key.key(), code="ACCEPTED_RECORD_LEGACY_MAINTENANCE_HOLD")      # pre-R34 acceptance: no accepted-materialization binding exists; nothing is verified, back-filled or pinned
     for k in ACCEPTED_FIELDS:
         if not isinstance(body.get(k), str) or not body[k]: raise Refusal(k, code="ACCEPTED_RECORD_FIELD_MISSING")
     if (body["feature_key"], body["feature_version"]) != (feature_key.key(), feature_key.feature_version): raise Refusal(feature_key.key(), code="ACCEPTED_RECORD_IDENTITY_MISMATCH")

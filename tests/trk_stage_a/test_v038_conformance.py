@@ -60,9 +60,9 @@ def test_forensic_classification_three_ways():
 
 def test_one_final_outcome_per_identity_retries_reuse_and_never_reevaluate():
     s, calls = V.FinalResolutionStore(), []
-    def ev(): calls.append(1); return object()
+    def ev(): calls.append(1); return {"o": 1}
     a = s.resolve("r1", IDN, ev); b = s.resolve("r2", IDN, ev); c = s.resolve("r1", IDN, ev)
-    assert a is b is c and len(calls) == 1 and s.evaluations == 1
+    assert a == b == c and a is not b and len(calls) == 1 and s.evaluations == 1      # R35: equal, DETACHED copies (the former `is` assertion encoded aliasing)
     other = V.FinalResolutionIdentity("FW", "man1", "EURUSD", "w2")
     assert s.resolve("r3", other, ev) is not a and s.evaluations == 2               # distinct window evaluates separately
     with pytest.raises(Refusal): s.resolve("r1", other, ev)                           # request id cannot hop identities
@@ -90,12 +90,12 @@ def test_concurrent_callers_get_one_evaluation_and_one_object():
     s, calls, outs = V.FinalResolutionStore(), [], []
     gate = threading.Barrier(16)
     def ev():
-        calls.append(1); time.sleep(0.01); return object()
+        calls.append(1); time.sleep(0.01); return {"o": 1}
     def worker(i):
         gate.wait(); outs.append(s.resolve("r%d" % i, IDN, ev))
     ts = [threading.Thread(target=worker, args=(i,)) for i in range(16)]
     [t.start() for t in ts]; [t.join() for t in ts]
-    assert len(calls) == 1 and s.evaluations == 1 and len({id(o) for o in outs}) == 1 and len(outs) == 16
+    assert len(calls) == 1 and s.evaluations == 1 and all(o == outs[0] for o in outs) and len({id(o) for o in outs}) == 16 and len(outs) == 16
 
 def test_reentrant_call_for_same_identity_is_refused_not_double_evaluated():
     s = V.FinalResolutionStore(); calls = []
@@ -171,8 +171,8 @@ def test_second_thread_with_same_request_other_identity_is_refused_while_first_i
 
 def test_second_thread_same_identity_inside_evaluator_waits_and_gets_stored_outcome():
     s = V.FinalResolutionStore(); entered, release, outs = threading.Event(), threading.Event(), []
-    def ev(): entered.set(); assert release.wait(5); return object()
+    def ev(): entered.set(); assert release.wait(5); return {"o": 1}
     t1 = threading.Thread(target=lambda: outs.append(s.resolve("r1", A_ID, ev))); t1.start(); assert entered.wait(5)
     t2 = threading.Thread(target=lambda: outs.append(s.resolve("r2", A_ID, ev))); t2.start(); time.sleep(0.05)
     release.set(); t1.join(5); t2.join(5)
-    assert s.evaluations == 1 and len(outs) == 2 and outs[0] is outs[1]
+    assert s.evaluations == 1 and len(outs) == 2 and outs[0] == outs[1] and outs[0] is not outs[1]

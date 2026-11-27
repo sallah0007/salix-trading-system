@@ -4,6 +4,7 @@ STATUS: field-level conformance objects + pure rules for NON_DELIVERY_RESOLUTION
 OMISSIONS, RESOLUTION_VISIBILITY_WATERMARK, final-resolution identity, settlement delay and forensic classification.
 NOT built here, because no source gives bytes: FINAL_RESOLUTION_HASH / PACKAGE_HASH canonical encoding (open item D13).
 This is NOT a connection to a real Gateway; the resolver in contracts.py remains a simulation."""
+import copy
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 from ..errors import Refusal
@@ -116,7 +117,7 @@ class FinalResolutionStore:
                 raise Refusal(request_id, code="REQUEST_ID_REBOUND_TO_OTHER_IDENTITY")
             if identity in self._by_identity:
                 self._req_ids.setdefault(rk, identity)
-                return self._by_identity[identity]          # never fish for a different result
+                return copy.deepcopy(self._by_identity[identity])          # never fish for a different result; a detached copy, so a caller mutation cannot rewrite the final outcome
             if identity in self._inflight:
                 raise Refusal(identity, code="REENTRANT_RESOLUTION")
             reserved_here = bound is None
@@ -127,8 +128,8 @@ class FinalResolutionStore:
                 out = evaluate()
                 if out is None:
                     raise Refusal(identity, code="EVALUATOR_RETURNED_NO_OUTCOME")
-                self._by_identity[identity] = out
-                return out
+                self._by_identity[identity] = copy.deepcopy(out)      # R35: the evaluator's object is NOT aliased into the immutable final store
+                return copy.deepcopy(self._by_identity[identity])
             except BaseException:
                 if reserved_here:
                     self._req_ids.pop(rk, None)     # failure policy: a failed call leaves no binding it created
@@ -136,7 +137,7 @@ class FinalResolutionStore:
             finally:
                 self._inflight.discard(identity)
     def outcome_for(self, identity: FinalResolutionIdentity):
-        with self._lock: return self._by_identity.get(identity)
+        with self._lock: o = self._by_identity.get(identity); return None if o is None else copy.deepcopy(o)
     def identity_of(self, consumer_id: str, request_id: str):
         with self._lock: return self._req_ids.get((consumer_id, request_id))
     def late_dependency_mutates(self, identity: FinalResolutionIdentity):

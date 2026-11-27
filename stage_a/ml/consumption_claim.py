@@ -41,23 +41,39 @@ class ClaimLedger:
 
 CONTRIBUTOR_LATER_REVOKED, DERIVED_FROM_REVOKED = "CONTRIBUTOR_LATER_REVOKED", "DERIVED_FROM_REVOKED_GENERATION_ID"
 def revocation_report(manifest_id, derived_from: dict, is_revoked) -> dict:
-    """Walk `derived_from` {manifest_id: [contributor manifest ids]} (ML-owned lineage, supplied). is_revoked(mid)->True/False/None (None = unknown). Result status: CLEAN only if every reachable ancestor resolved and none is revoked;
-    AFFECTED with the revoked ancestors and their reason codes; UNKNOWN if any ancestor is unresolved/unknown (fail closed). A cycle or a lineage entry that is not a list refuses."""
+    """Walk `derived_from` {manifest_id: [contributor manifest ids]} (ML-owned lineage, supplied). is_revoked(mid) MUST return exactly True, False or None (None = unknown); ANY other result (a truthy/falsy non-bool, a string, a dict, 1, 0) is a contract
+    violation and REFUSES (`REVOCATION_CALLBACK_RESULT_INVALID`): it can never be read as CLEAN. Status: CLEAN only if every reachable ancestor resolved and none is revoked; AFFECTED with the revoked ancestors; UNKNOWN if any ancestor is unresolved or unknown
+    (fail closed). PATH FACTS are preserved and ORDER-INDEPENDENT: for each revoked ancestor `affected[mid]` carries `direct` (it is a listed contributor of the root) and `transitive` (it is reachable through at least one intermediate generation), so a shared ancestor that is both reports both;
+    the source names two codes but does NOT state a priority or a direct/transitive split, so `codes` lists every code whose AUTHOR-READING condition holds and NO single winner is chosen. A cycle or a non-list lineage entry refuses."""
     if not isinstance(derived_from, dict) or not callable(is_revoked) or not _s(manifest_id): raise Refusal("inputs", code="REVOCATION_INPUT_INVALID")
-    seen, affected, unknown = set(), {}, set(); stack = [(manifest_id, 0, ())]
-    def walk(mid, depth, path):
-        if mid in path: raise Refusal(mid, code="LINEAGE_CYCLE")
-        if mid in seen: return
-        seen.add(mid)
-        if mid != manifest_id:
-            r = is_revoked(mid)
-            if r is None: unknown.add(mid)
-            elif r is True: affected[mid] = CONTRIBUTOR_LATER_REVOKED if depth == 1 else DERIVED_FROM_REVOKED
-        if mid not in derived_from:
-            unknown.add(mid); return                  # a node absent from the lineage map is unresolved, including the root
+    state = {}; order = []; unknown = set()
+    def entries(mid):
         ps = derived_from[mid]
-        if not isinstance(ps, (list, tuple)): raise Refusal(mid, code="LINEAGE_ENTRY_MALFORMED")
-        for p in ps: walk(p, depth + 1, path + (mid,))
-    walk(manifest_id, 0, ())
+        if not isinstance(ps, (list, tuple)) or not all(_s(p) for p in ps): raise Refusal(mid, code="LINEAGE_ENTRY_MALFORMED")
+        return ps
+    def visit(mid):
+        if state.get(mid) == 1: raise Refusal(mid, code="LINEAGE_CYCLE")
+        if state.get(mid) == 2: return
+        state[mid] = 1
+        if mid in derived_from:
+            for p in entries(mid): visit(p)
+        state[mid] = 2; order.append(mid)
+    visit(manifest_id)
+    if manifest_id not in derived_from: unknown.add(manifest_id)                       # the root itself has no lineage entry: unresolved
+    direct = set(entries(manifest_id)) if manifest_id in derived_from else set()
+    deep = set(); stack = [q for p in direct if p in derived_from for q in entries(p)]
+    while stack:
+        q = stack.pop()
+        if q in deep: continue
+        deep.add(q); stack.extend(entries(q) if q in derived_from else [])
+    affected = {}
+    for mid in sorted(set(order) - {manifest_id}):
+        if mid not in derived_from: unknown.add(mid)
+        r = is_revoked(mid)
+        if r is None: unknown.add(mid)
+        elif r is True:
+            codes = tuple(sorted(({CONTRIBUTOR_LATER_REVOKED} if mid in direct else set()) | ({DERIVED_FROM_REVOKED} if mid in deep else set())))
+            affected[mid] = {"direct": mid in direct, "transitive": mid in deep, "codes": codes}
+        elif r is not False: raise Refusal(mid, code="REVOCATION_CALLBACK_RESULT_INVALID")
     status = "AFFECTED" if affected else ("UNKNOWN" if unknown else "CLEAN")
-    return {"manifest_id": manifest_id, "status": status, "affected": dict(sorted(affected.items())), "unresolved": tuple(sorted(unknown)), "reason_code_split": "AUTHOR_READING", "qualified": False}
+    return {"manifest_id": manifest_id, "status": status, "affected": dict(sorted(affected.items())), "unresolved": tuple(sorted(unknown)), "reason_code_split": "AUTHOR_READING_NO_PRIORITY", "qualified": False}

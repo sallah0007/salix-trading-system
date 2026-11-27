@@ -15,6 +15,7 @@ class VersionState:
     accepted_body: dict
     publishable_seq: Optional[int] = None
     withdrawn_seq: Optional[int] = None
+    legacy_binding_absent: bool = False     # True: accepted before R34, no materialization_hash in the committed record (maintenance HOLD; nothing fabricated)
 
 def replay(namespace: str, records: List) -> Dict[str, VersionState]:
     try:
@@ -24,7 +25,7 @@ def replay(namespace: str, records: List) -> Dict[str, VersionState]:
     out: Dict[str, VersionState] = {}
     for r in records:
         body = r.body()
-        T.validate_body(r.kind, body)
+        T.validate_body(r.kind, body, legacy_read=True)      # R35: committed pre-R34 accepted bodies stay readable (legacy_binding_absent); new writes still validate strictly
         if body["feature_key"] != "%s/%s" % (namespace, body["feature_version"]):
             raise Refusal("record %d key %s not in namespace %s" % (r.seq, body["feature_key"], namespace),
                           code="CROSS_NAMESPACE_RECORD")
@@ -32,7 +33,7 @@ def replay(namespace: str, records: List) -> Dict[str, VersionState]:
         prior = out[v].status if v in out else None
         T.check_transition(prior, r.kind)
         if r.kind == T.CANONICAL_ACCEPTED:
-            out[v] = VersionState(v, T.CANONICAL_ACCEPTED, r.seq, r.record_hash, body)
+            out[v] = VersionState(v, T.CANONICAL_ACCEPTED, r.seq, r.record_hash, body, legacy_binding_absent=T.body_generation(r.kind, body) != "CURRENT")
         elif r.kind == T.PUBLISHABLE:
             st = out[v]
             if body["accepted_seq"] != st.accepted_seq or body["accepted_hash"] != st.accepted_hash:

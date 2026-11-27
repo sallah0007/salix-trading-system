@@ -21,10 +21,18 @@ _REQUIRED = {
     WITHDRAWN: ("feature_key", "feature_version", "reason"),
 }
 
-def validate_body(kind: str, body: dict):
+# R35: R34 added `materialization_hash` to CANONICAL_ACCEPTED. Accepted journals written before R34 lack it and MUST stay readable: they are classified LEGACY (the accepted-materialization binding is ABSENT, never
+# fabricated, never back-filled into a committed record) and are HELD for maintenance by the verifier. NEW writes (default) still require the field; only READING a committed record accepts the legacy shape.
+LEGACY_ACCEPTED_OMITS = ("materialization_hash",)
+def body_generation(kind: str, body: dict) -> str:
+    """CURRENT, or LEGACY_NO_MATERIALIZATION_BINDING for a committed CANONICAL_ACCEPTED body that is exactly the pre-R34 shape. Anything else is validated normally by the caller."""
+    return "LEGACY_NO_MATERIALIZATION_BINDING" if kind == CANONICAL_ACCEPTED and isinstance(body, dict) and "materialization_hash" not in body else "CURRENT"
+
+def validate_body(kind: str, body: dict, *, legacy_read: bool = False):
     if kind not in KINDS:
         raise Refusal(kind, code="UNKNOWN_TRANSITION_KIND")
     req = _REQUIRED[kind]
+    if legacy_read and kind == CANONICAL_ACCEPTED and body_generation(kind, body) != "CURRENT": req = tuple(k for k in req if k not in LEGACY_ACCEPTED_OMITS)
     missing = [k for k in req if k not in body or body[k] in (None, "")]
     if missing:
         raise Refusal("%s missing %s" % (kind, missing), code="TRANSITION_BODY_INCOMPLETE")
