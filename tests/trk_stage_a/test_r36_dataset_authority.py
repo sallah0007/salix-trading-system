@@ -26,6 +26,7 @@ class Request(unittest.TestCase):
         self.assertEqual(code(r.auth.request_binding, "w", ds("D2"), b1, request_id="req1", **kw), "DATASET_LINK_IMMUTABLE"); self.assertEqual(r.reg.binding_index(), {"B1": ["D1"]})          # another manifest cannot take B1
         fw = r.issue("req3", "B3", consumer="FW"); self.assertEqual(code(r.auth.request_binding, "w", ds("D3"), fw, request_id="req3", **kw), "DATASET_REQUEST_NOT_ISSUED_FOR_ML_BINDING")
         forged = G.Binding(b1.request_id, b1.entry, b1.delivered_feature_hash, b1.fence); self.assertEqual(code(r.auth.request_binding, "w", ds("D1"), forged, request_id="req1", **kw), "DATASET_BINDING_OUTCOME_NOT_GATEWAY_ISSUED")
+        b5 = r.issue("req5", "B5"); f5 = G.Binding(b5.request_id, b5.entry, b5.delivered_feature_hash, b5.fence); self.assertEqual(code(r.auth.request_binding, "w", ds("D5"), f5, request_id="req5", **kw), "DATASET_BINDING_OUTCOME_NOT_GATEWAY_ISSUED"); self.assertIsNone(r.reg.manifest("D5")); self.assertNotIn("B5", r.reg.binding_index())     # refused BEFORE any write
         self.assertEqual(code(DA.DatasetAuthority(DM.DatasetRegistry()).request_binding, "w", ds("D1"), b1, request_id="req1", **kw), "ML_PRINCIPAL_GRANTS_UNBOUND_HELD"); self.assertEqual(code(r.auth.request_binding, "x", ds("D1"), b1, request_id="req1", **kw), "ML_CALLER_NOT_GRANTED")
 class Union(unittest.TestCase):
     def rig(self):
