@@ -40,3 +40,7 @@ Proposed mapping delta (for Manager recording in Drive): add the repo-only Track
 - fw/return_lineage.py: `fw/return_lineage.py` (return classes Evidence/Request/Lineage; FW-derived predictive input needs lineage+rebind). Payload fields remain undefined (mapping A04 bindings null).
 - ml/fw_augmented_rebind.py: `AugmentedInput` now also requires FW generation identity and research exposure refs (Build Plan 13.2).
 - health/blast_radius.py: `consumer_use` applies 13.1/14A/OB2 (undetermined + required -> refuse; proven independent -> allow; undetermined + non-required: no source rule, named).
+
+## R14 update (PROPOSAL; Codex-reproduced causal-time gap, withdrawn R13 claim)
+`context/news_hub_v2.py`: `event_consumable` now gates on every stamp (REVISION_AVAILABLE_AT, PUBLICLY_AVAILABLE_AT, SALIX_RECEIVED_AT, AVAILABLE_ASOF, ACTUAL_AVAILABLE_ASOF, per-value CONSENSUS/PREVIOUS stamps) and validates the record itself; `resolve_context` validates the daily record via `check_daily_record`. Malformed/missing stamps and cutoff raise. Revision selection requires a caller-supplied governed rule (only `HIGHEST_REVISION_SEQ` implemented); default is MULTIPLE_CANDIDATES.
+Named gaps (not invented): governed revision-selection rule ref/version; GOVERNED_DAY/GOVERNED_SCOPE-to-cutoff binding; SCHEDULE_VINTAGE availability evidence; relation of CONTEXT_REQUIREMENT_CLASS in a daily record to the consumer's requirement; SUPERSEDES_REF value format; formula for general AVAILABLE_ASOF (only the derived fail-closed floor max(PUBLIC, RECEIPT) is applied, labelled DERIVATION).

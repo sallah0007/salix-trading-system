@@ -58,10 +58,14 @@ class Resolver(unittest.TestCase):
         r = N.resolve_context("REQUIRED", daily(), [e], 20); self.assertEqual((r["events"], r["withheld"]), ([], [("E1", "ACTUAL_NOT_YET_AVAILABLE")]))
         self.assertEqual(len(N.resolve_context("REQUIRED", daily(), [e], 30)["events"]), 1)
         self.assertEqual(N.resolve_context("REQUIRED", daily(), [ev(rev_at=99)], 20)["withheld"], [("E1", "REVISION_NOT_YET_AVAILABLE")])
-    def test_highest_available_revision_wins_and_later_one_is_not_backfilled(self):
-        r1, r2 = ev(seq=1, rev_at=10, h="a"), ev(seq=2, rev_at=40, h="b")
-        self.assertEqual(N.resolve_context("REQUIRED", daily(), [r2, r1], 20)["events"][0]["FACTUAL_PAYLOAD_HASH"], "a")
-        self.assertEqual(N.resolve_context("REQUIRED", daily(), [r1, r2], 50)["events"][0]["FACTUAL_PAYLOAD_HASH"], "b")
+    def test_highest_available_revision_wins_only_under_an_explicit_rule(self):
+        r1, r2 = ev(seq=1, rev_at=10, h="a"), ev(seq=2, rev_at=40, h="b"); R = "HIGHEST_REVISION_SEQ"
+        self.assertEqual(N.resolve_context("REQUIRED", daily(), [r2, r1], 20, R)["events"][0]["FACTUAL_PAYLOAD_HASH"], "a")
+        self.assertEqual(N.resolve_context("REQUIRED", daily(), [r1, r2], 50, R)["events"][0]["FACTUAL_PAYLOAD_HASH"], "b")
+        d = N.resolve_context("REQUIRED", daily(), [r1, r2], 50, R); self.assertEqual(d["selection_rule"], R)
+        n = N.resolve_context("REQUIRED", daily(), [r1, r2], 50)                          # no governed rule => REQUIRE_EXPLICIT_SELECTION, never a silent pick
+        self.assertEqual((n["events"], n["multiple_candidates"], n["selection_rule"]), ([], ["E1"], None))
+        self.assertEqual(code(N.resolve_context, "REQUIRED", daily(), [r1], 50, "BEST_PERFORMER"), "UNKNOWN_REVISION_RULE")
     def test_same_revision_different_payload_is_multiple_candidates(self):
         r = N.resolve_context("REQUIRED", daily(), [ev(h="a"), ev(h="b")], 20); self.assertEqual((r["multiple_candidates"], r["events"]), (["E1"], []))
     def test_deterministic_under_input_order(self):
