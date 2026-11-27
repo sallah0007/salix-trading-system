@@ -50,3 +50,8 @@ Code: `stage_a/binding/`, `stage_a/coordination/provider_contract.py`; edits to 
 
 ## 8. R10 additions
 `stage_a/composer/request_record.py`; replica role lookup in `stage_a/security/principals.py`; CI `.github/workflows/type1-tests.yml` + `requirements-ci.txt`; corrected `docs/proposals/FW_descriptor_bindings.md`; return `coder_returns/TRK-STAGE-A-TRACKER-R10.md` (supersedes R09 statements on R7 status and FW direction).
+
+## 9. R11 additions
+- Code: `composer/expression/{evaluator,opcodes,schema}.py`, `tracker/{quant_intake_adapter,quant_certification}.py`, `tracker/verification/independent_traversal.py`, `tracker/materialization/stateful_materializer.py`, `gateway/v038.py` (BOTH).
+- Tests: `test_r11_arithmetic.py`, `test_r11_intake_request.py`, `test_r11_both.py`; sweeps `mutation_sweep_r11.py` (16), `mutation_sweep_r11b.py` (14).
+- Docs: `docs/proposals/{E03_responsibility_map,STATUS_EVENT_OWNERSHIP,A02_trace_and_inputs}.md`, `coder_returns/TRK-STAGE-A-TRACKER-R11.md`.
