@@ -21,8 +21,12 @@ def read_after_write_probe(store, key: str) -> bool:
     got = store.get(key)
     return got is not None and got[0] == data
 
+CLAIMED_FIELDS_ONLY_NOT_AUTHENTICATED = True
+
 def require_provider_proof(evidence: dict) -> None:
-    """Refuse unless evidence names a provider and carries a passing result for every required class. Evidence content is NOT verified here."""
+    """CLAIMED-FIELD CHECK ONLY. Refuses unless the supplied dict names a provider and claims PASS for every required class. It does NOT
+    authenticate the evidence, bind it to a run/commit/provider build, or prove conformance; returning normally is NOT provider acceptance.
+    Reachable consumers in this repository: none (grep of stage_a/ and tests/ finds only its own tests). PROVIDER_ACCEPTED stays NO."""
     if not isinstance(evidence, dict) or not evidence.get("provider_id"):
         raise Refusal("provider_id", code="PROVIDER_NOT_NAMED")
     results = evidence.get("results", {})

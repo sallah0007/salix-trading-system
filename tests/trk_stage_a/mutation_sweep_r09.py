@@ -12,7 +12,7 @@ M = [
  ("stage_a/security/principals.py", "if not isinstance(rec, dict):", "if False:"),
  ("stage_a/security/principals.py", "if type(v) is not str or not v.strip():", "if v is None:"),
  ("stage_a/security/principals.py", "if set(rec) - set(GRANT_EVIDENCE_FIELDS):", "if False:"),
- ("stage_a/security/principals.py", '    capabilities(rec["role"])', "    pass"),
+ ("stage_a/security/principals.py", 'if scope == "E06": capabilities(rec["role"])', 'if scope == "E06": pass'),
  ("stage_a/health/envelope.py", 'if "ML_LOCAL_STATE" in e:', "if False:"),
  ("stage_a/health/envelope.py", "    if independent_local_evidence:\n        causes.append", "    if independent_local_evidence and not upstream_unhealthy:\n        causes.append"),
  ("stage_a/coordination/provider_contract.py", 'if not isinstance(evidence, dict) or not evidence.get("provider_id"):', "if False:"),

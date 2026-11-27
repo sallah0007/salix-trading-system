@@ -38,6 +38,7 @@ python3 -B tests/trk_stage_a/mutation_sweep_boundaries.py
 python3 -B tests/trk_stage_a/mutation_sweep_r05_r06.py   # R05/R06 manual mutants, now scripted
 python3 -B tests/trk_stage_a/mutation_sweep_r08.py       # R08 mutants (14)
 python3 -B tests/trk_stage_a/mutation_sweep_r09.py       # R09 mutants (17)
+python3 -B tests/trk_stage_a/mutation_sweep_r10.py       # R10 mutants (19)
 ```
 Each sweep restores the mutated file in a `finally` block; run on a clean tree.
 
@@ -46,3 +47,6 @@ Private governing-source exports and Drive text copies (Governance, Connected Co
 
 ## 7. R09 additions
 Code: `stage_a/binding/`, `stage_a/coordination/provider_contract.py`; edits to `stage_a/fw/descriptor_crosswalk.py`, `stage_a/health/envelope.py`, `stage_a/security/principals.py`. Proposals (not authority): `docs/proposals/*.md`. Return: `coder_returns/TRK-STAGE-A-TRACKER-R09.md`.
+
+## 8. R10 additions
+`stage_a/composer/request_record.py`; replica role lookup in `stage_a/security/principals.py`; CI `.github/workflows/type1-tests.yml` + `requirements-ci.txt`; corrected `docs/proposals/FW_descriptor_bindings.md`; return `coder_returns/TRK-STAGE-A-TRACKER-R10.md` (supersedes R09 statements on R7 status and FW direction).

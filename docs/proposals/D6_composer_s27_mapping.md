@@ -4,7 +4,9 @@ STATUS: PROPOSAL for Manager / Composer source-owner review. NOT runtime authori
 
 Governed field/type: the §27 list names fields only; types are NOT specified in the sources read, so the 'proposed attribute' column is a Tracker-side PROPOSAL. Byte layouts: D13 (pending).
 
-The single missing admission for every row: a seven-field producer binding (scope, interface_id, version, content_hash, source_authority, acceptance_record, validity/supersession) for the Composer BUILD_OUTPUT_PACKAGE interface, accepted in the governed record by the Manager. Proposed record for it is at the end.
+Minimum admission for every row (NOT sufficient by itself): a seven-field producer binding (scope, interface_id, version, content_hash, source_authority, acceptance_record, validity/supersession) for the Composer BUILD_OUTPUT_PACKAGE interface, accepted in the governed record by the Manager. Proposed record for it is at the end. A seven-field shape/acceptance reference does NOT supply: the actual field definitions, types and values (the §27 list names fields only); source applicability; correctness evidence; the byte layouts (D13); the clock domain for BUILT_AT (E4); or any producer's real payload. Those residuals remain with the Composer source owner.
+
+Temporal/lineage column: Coder PROPOSALS unless a source is cited in the row; none is a verified source rule, and none is adopted by this document.
 
 | # | §27 field | Producer | Consumer | Proposed Tracker attribute / derivation | Temporal / lineage rule | Tracker-side validation implementable now |
 |---|---|---|---|---|---|---|

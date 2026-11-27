@@ -2,10 +2,10 @@
 import subprocess, sys, pathlib, os
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 M = [
- ("stage_a/security/principals.py", "if principal in R7_PROPOSED_NOT_OPERATIVE:", "if False:"),
+ ("stage_a/security/principals.py", "if principal in R7_REPLICA_ONLY:", "if False:"),
  ("stage_a/security/principals.py", "if principal not in E06:", "if False:"),
  ("stage_a/security/principals.py", "if capability not in capabilities(principal):", "if False:"),
- ("stage_a/security/principals.py", "        if a in held and b in held:", "        if False:"),
+ ("stage_a/security/principals.py", "    for a, b in PROHIBITED_MERGES:\n        if a in held and b in held:", "    for a, b in PROHIBITED_MERGES:\n        if False:"),
  ("stage_a/security/principals.py", "    for p in held: capabilities(p)", "    pass"),
  ("stage_a/composer/request_classification.py", "if classification == A.FAILED_REQUESTED_BUILD:", "if False:"),
  ("stage_a/health/envelope.py", "if any(c and s != \"HEALTHY\" for s, c in members):", "if False:"),
