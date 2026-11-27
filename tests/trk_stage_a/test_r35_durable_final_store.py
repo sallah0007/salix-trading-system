@@ -32,4 +32,16 @@ class Restart(unittest.TestCase):
         raw = InMemoryObjectStore(); g = gw(raw); g.resolve_window("req1", W1, _entry(), I, I, 3, 10, _health())
         raw._d = {k: v for k, v in raw._d.items() if "/id/" not in k}; self.assertEqual(code(gw(raw).final_store.recover), "INTEGRITY_FAILURE")
         self.assertEqual(code(D.decode, {"$t": "os.system", "f": {}}), "FINAL_OUTCOME_CODEC_UNKNOWN_TAG"); self.assertEqual(code(D.decode, {"$t": "Ref", "f": {"ref_type": "x"}}), "FINAL_OUTCOME_CODEC_FIELDS_MISMATCH"); self.assertEqual(code(D.encode, object()), "FINAL_OUTCOME_CODEC_TYPE_NOT_ALLOWED")
+class PersistedRecordsAreNeverOverwritten(unittest.TestCase):
+    """R35 sweep: a fresh process that did NOT recover must still fail closed on a differing stored pin / outcome (put_if_absent loser compares bytes)."""
+    def test_unrecovered_store_cannot_replace_a_stored_pin(self):
+        raw = InMemoryObjectStore(); a = D.DurableFinalResolutionStore(raw); a.set_pin(W1, ["a"]); b = D.DurableFinalResolutionStore(raw)
+        self.assertEqual(code(b.set_pin, W1, ["b"]), "INTEGRITY_FAILURE"); self.assertIsNone(b.pin_of(W1)); self.assertIsNone(code(b.set_pin, W1, ["a"]))        # the failed attempt left no in-memory pin
+    def test_unrecovered_store_cannot_store_a_different_outcome_for_the_identity(self):
+        raw = InMemoryObjectStore(); gw(raw, 5).resolve_window("req1", W1, _entry(), I, I, 3, 10, _health()); g2 = gw(raw, 20)             # no recover(): the world moved on, evaluation would now DELIVER
+        self.assertEqual(code(g2.resolve_window, "req2", W1, _entry(), I, I, 3, 10, _health()), "INTEGRITY_FAILURE")
+        self.assertIsNone(g2.final_store.outcome_for(W1)); self.assertIsNone(g2.final_store.identity_of("FW", "req2"))                    # memory never keeps an outcome / request binding the durable store rejected
+    def test_a_pin_record_stored_under_the_wrong_key_fails_recovery(self):
+        raw = InMemoryObjectStore(); a = D.DurableFinalResolutionStore(raw); a.set_pin(W1, ["a"]); k = list(raw.list_prefix("final-resolution/pin/"))[0]
+        raw._d["final-resolution/pin/" + "0" * 64] = raw._d.pop(k); self.assertEqual(code(D.DurableFinalResolutionStore(raw).recover), "INTEGRITY_FAILURE")
 if __name__ == "__main__": unittest.main()

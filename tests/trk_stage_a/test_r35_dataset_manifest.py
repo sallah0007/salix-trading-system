@@ -41,4 +41,9 @@ class ReverseLink(unittest.TestCase):
         r = reg(); r.register("w", ds()); r.link_binding("w", "B1", "D1"); g = _gw(); b = g.resolve("r1", _entry(), I, I, 3, 10, _health()); self.assertIsInstance(b, G.Binding)
         h = r.bind_time_health("B1", b); self.assertEqual((h["dataset_manifest_id"], h["health_resolution_ref"], h["verified"]), ("D1", b.entry.bound_health_resolution_ref, False))
         g.set_watermark(1); nd = _gw().resolve("r2", _entry(), I, I, 3, 200, _health()); self.assertIsNone(r.bind_time_health("B1", nd)); self.assertIsNone(r.bind_time_health("B-unlinked", b))
+class RevocationTimeSemantics(unittest.TestCase):
+    def test_revocation_is_effective_from_its_own_timestamp_and_the_ledger_cannot_go_backwards(self):
+        r = reg(); r.register("w", ds()); r.register("w", ds("D2")); r.revoke("w", "D1", 5, "x", "A")
+        self.assertIs(r.is_revoked("D1", 4), False); self.assertIs(r.is_revoked("D1", 5), True); self.assertIs(r.is_revoked("D1", 6), True)
+        self.assertEqual(code(r.revoke, "w", "D2", 4, "later-discovered", "A"), "ML_LIFECYCLE_TS_REGRESSED"); self.assertIs(r.is_revoked("D2"), False)
 if __name__ == "__main__": unittest.main()

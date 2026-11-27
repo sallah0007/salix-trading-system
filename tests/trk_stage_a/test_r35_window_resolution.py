@@ -40,4 +40,10 @@ class WindowLevelResolution(unittest.TestCase):
         from .test_boundaries import NONE_
         self.assertTrue(MLR.build_row("r", R("gen"), [e], [b2], g, "ORIGINAL_AS_OBSERVED", NONE_, lambda o: NONE_, tables=g.t).included)
         a.record_return("E1", "req2", "EVIDENCE"); self.assertEqual(a.returns_for(W1)[0].resolution_identity, W1)
+class StoreHandlesAreDetached(unittest.TestCase):
+    def test_outcomes_listing_is_a_detached_copy_and_a_pin_cannot_be_replaced(self):
+        st = FinalResolutionStore(); i = FI("FW", "B1", "XAUUSD", "W1"); st.resolve("r1", i, lambda: {"o": [1]})
+        for _, o in st.outcomes(): o["o"].append(2)
+        self.assertEqual(st.outcomes()[0][1], {"o": [1]})
+        st.set_pin(i, ["p"]); self.assertEqual(code(st.set_pin, i, ["q"]), "RESOLUTION_IDENTITY_PARAMETERS_DIFFER"); self.assertIsNone(code(st.set_pin, i, ["p"]))
 if __name__ == "__main__": unittest.main()

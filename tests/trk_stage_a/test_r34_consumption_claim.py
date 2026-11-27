@@ -42,4 +42,8 @@ class Revocation(unittest.TestCase):
         r.append_lifecycle("M1", "REVOKED", 11, "bad", "A")
         rev = lambda m: (None if r.manifest_of(m) is None else r.read_class(m)["class"] == "FORENSIC_ONLY")
         self.assertEqual(CC.revocation_report("M2", {"M2": ["M1"], "M1": []}, rev)["affected"], {"M1": {"direct": True, "transitive": False, "codes": (CC.CONTRIBUTOR_LATER_REVOKED,)}})
+class RootLineage(unittest.TestCase):
+    def test_a_root_with_no_lineage_entry_is_unknown_never_clean(self):          # R35 sweep: the walk of an unlisted root visits nothing, so only the explicit check keeps it from CLEAN
+        r = CC.revocation_report("M", {}, lambda m: False); self.assertEqual((r["status"], r["unresolved"]), ("UNKNOWN", ("M",)))
+        r = CC.revocation_report("M", {"M": []}, lambda m: False); self.assertEqual((r["status"], r["unresolved"]), ("CLEAN", ()))
 if __name__ == "__main__": unittest.main()

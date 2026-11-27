@@ -41,21 +41,35 @@ class DurableFinalResolutionStore(V.FinalResolutionStore):
     def __init__(self, store):
         super().__init__(); self._o = store
     def set_pin(self, identity, pin):
-        super().set_pin(identity, pin); pb = _dump({"identity": encode(identity), "pin": pin}); k = _pin_key(identity)
-        if not self._o.put_if_absent(k, pb):
-            got = self._o.get(k)
-            if got is None or got[0] != pb: raise IntegrityFailure("pin differs from the stored one")
+        pb = _dump({"identity": encode(identity), "pin": pin}); k = _pin_key(identity)
+        with self._lock:
+            had = identity in self._pins
+            super().set_pin(identity, pin)
+            try:
+                if not self._o.put_if_absent(k, pb):
+                    got = self._o.get(k)
+                    if got is None or got[0] != pb: raise IntegrityFailure("pin differs from the stored one")
+            except BaseException:
+                if not had: self._pins.pop(identity, None)          # R35 sweep: a failed durable check leaves no in-memory pin the store does not hold
+                raise
     def resolve(self, request_id, identity, evaluate):
-        out = super().resolve(request_id, identity, evaluate)
-        rec = _dump({"identity": encode(identity), "outcome": encode(out)}); k = _ident_key(identity)
-        if not self._o.put_if_absent(k, rec):
-            got = self._o.get(k)
-            if got is None or got[0] != rec: raise IntegrityFailure("final resolution record differs from the stored one")
-        rb = _dump({"consumer_id": identity.consumer_id, "request_id": request_id, "identity_key": k}); rk = _req_key(identity.consumer_id, request_id)
-        if not self._o.put_if_absent(rk, rb):
-            got = self._o.get(rk)
-            if got is None or got[0] != rb: raise IntegrityFailure("request binding differs from the stored one")
-        return out
+        with self._lock:
+            had_id = identity in self._by_identity; had_rq = (identity.consumer_id, request_id) in self._req_ids
+            out = super().resolve(request_id, identity, evaluate)
+            try:
+                rec = _dump({"identity": encode(identity), "outcome": encode(out)}); k = _ident_key(identity)
+                if not self._o.put_if_absent(k, rec):
+                    got = self._o.get(k)
+                    if got is None or got[0] != rec: raise IntegrityFailure("final resolution record differs from the stored one")
+                rb = _dump({"consumer_id": identity.consumer_id, "request_id": request_id, "identity_key": k}); rk = _req_key(identity.consumer_id, request_id)
+                if not self._o.put_if_absent(rk, rb):
+                    got = self._o.get(rk)
+                    if got is None or got[0] != rb: raise IntegrityFailure("request binding differs from the stored one")
+            except BaseException:
+                if not had_id: self._by_identity.pop(identity, None)          # R35 sweep: memory never holds a final outcome the durable store does not
+                if not had_rq: self._req_ids.pop((identity.consumer_id, request_id), None)
+                raise
+            return out
     def recover(self):
         """Rebuild the in-memory maps from the object store (restart). Does not evaluate anything."""
         with self._lock:
