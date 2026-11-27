@@ -61,6 +61,32 @@ rebase. Never carry old scope onto a new base.
 Governance permission and technical capability are separate concerns. A
 credential appearing in your environment expands nothing.
 
+### 2A. OWNER DELEGATION — THIS REPOSITORY ONLY (standing, given by the Owner in person)
+
+The Owner (Sallah, final authority of the project) has expressly delegated to
+the Coder, for **this repository only** (`sallah0007/salix-trading-system`,
+Trading SALIX), the authority to author and complete the Tracker component
+end to end without a separate per-task commission: create branches, commit,
+open PRs, **merge PRs into this repository**, and edit any file in it,
+including this one. This overrides the commission and merge restrictions in
+section 2 for this repository. The Owner has said the delegation does not need
+to be repeated.
+
+What the delegation does **not** change:
+- It applies to this repository only, never to another repository.
+- Google Drive stays READ-ONLY for the Coder; Drive writes remain Manager-only.
+- A merge is a code event, not a governance event. It does not clear, close or
+  advance any gate, hold, acceptance or stage, and no one may cite a merge, a
+  passing test or this delegation as such. Governance state changes only by the
+  Manager recording it in Drive.
+- No private governing-source text may be committed here (the repository may be
+  public). Cite sources by ID and range, never by copy.
+- Section 1, section 3 (lenses), section 4 (attack your own work), section 5
+  (evidence floor) and section 9 (if in doubt) still apply. Tests must be able
+  to fail; prove it.
+- Work that depends on an unresolved design or source question is built only to
+  the extent the open decision allows, and each open decision is named in the PR.
+
 ---
 
 ## 3. THE SEVEN REVIEW LENSES — MANDATORY
