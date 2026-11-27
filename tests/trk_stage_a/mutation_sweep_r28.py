@@ -87,6 +87,11 @@ M = [
  (BG, 'if not isinstance(order_id, str) or not order_id: raise', 'if False: raise'),
  (BG, 'if o is None or o.get("issuer") != "TRACKER": raise', 'if False: raise'),
  (BG, 'if build_request.get(k) != o["bindings"][k]: raise', 'if False: raise'),
+ (TC, 'elif not (isinstance(mv, str) and mv): raise Refusal("model_version", code="REVIEW_MODEL_VERSION_REQUIRED")', 'elif False: pass'),
+ (TC, 'if mv is not None: raise Refusal("human with model", code="REVIEW_MODEL_VERSION_NOT_APPLICABLE_TO_HUMAN")', 'pass'),
+ (TC, 'if not set(c["evidence_refs"]) <= set(t["permitted_evidence_refs"]): raise', 'if False: raise'),
+ (TC, 'or not self._strs(task["permitted_evidence_refs"]) or not task["permitted_evidence_refs"]:', ':'),
+ (TC, 'if cur in ups and d not in dependents: dependents.add(d); stack.append(d)', 'if cur in ups and d not in dependents: dependents.add(d)'),
 ]
 T = ["tests/trk_stage_a/test_r25_defects.py", "tests/trk_stage_a/test_r26_evidence_truth.py", "tests/trk_stage_a/test_r27_binding.py", "tests/trk_stage_a/test_boundaries.py", "tests/trk_stage_a/test_r24_core.py", "tests/trk_stage_a/test_r25_scheduler.py", "tests/trk_stage_a/test_r28_closure.py", "tests/trk_stage_a/test_r28_h3.py", "tests/trk_stage_a/test_r29_generation_lifecycle.py", "tests/trk_stage_a/test_r29_intake_order.py", "tests/trk_stage_a/test_r11_both.py", "tests/trk_stage_a/test_v038_conformance.py"]
 def run():
