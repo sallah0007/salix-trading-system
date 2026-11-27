@@ -54,7 +54,7 @@ def package(manifest=_DEFAULT, *, request_id="REQ-1", attempt_id="ATT-1", order_
               creation_reason_ref="decision:approved-definition", authority_ref="owner:era1-intake",
               creation_evidence_ref="evidence:definition-review", era_id="ERA_1",
               request_record=copy.deepcopy(REQUEST_RECORD),
-              resource_ceiling_ref="CEILREF-TEST", resource_ceilings=dict(CEILINGS), capability_declaration=declaration_for(m))
+              resource_ceiling_ref="CEILREF-TEST", resource_ceilings=dict(CEILINGS), capability_declaration=declaration_for(m), build_output=build_output_for(m, order_id, request_id))
     kw.update(over)
     return BuildPackage(**kw)
 
@@ -63,6 +63,11 @@ CEILINGS = {"MAX_OPCODE_COUNT_PER_PROGRAM": 64, "MAX_BRANCH_COUNT": 0, "MAX_VECT
 def declaration_for(m, ref="CEILREF-TEST"):
     ops = sorted({n["op"] for n in m["nodes"]}) if isinstance(m, dict) and isinstance(m.get("nodes"), list) else []
     return {"PROGRAM_REF": "PROG-1", "PROGRAM_CAPABILITY_CLASS": "SCALAR_RECURRENCE", "OPCODE_SET_USED": ops, "RESOURCE_CEILING_REF": ref}
+def build_output_for(m, order_id="ORD-1", request_id="REQ-1"):
+    bo = {"ORDER_ID": order_id, "CREATION_REQUEST_ID": request_id, "REQUEST_SCHEMA_VERSION": "1", "BUILDER_BUILD_ID": "BUILD-TEST"}
+    if isinstance(m, dict) and m.get("fit_refs"):
+        bo.update(UPSTREAM_MODEL_ID="MODEL-TEST", UPSTREAM_GENERATION_ID="GEN-TEST", GENERATION_AUTHORITY_CLASS="CLASS-TEST")
+    return bo
 REQUEST_RECORD = {"REQUEST_SCHEMA_VERSION": "1", "REQUESTER_ID": "fixture-requester", "REQUESTER_TYPE": "MANAGER",
                   "REQUEST_CLASS": "GOVERNED_INTAKE_REQUEST", "TARGET_CONSUMER": "FORWARD_WALK",
                   "REQUEST_CONTEXT": "FW_MANIFEST_NEED", "PURPOSE_STATEMENT": "fixture purpose"}
