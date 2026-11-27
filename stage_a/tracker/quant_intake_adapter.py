@@ -17,13 +17,14 @@ from ..composer.expression.hashing import manifest_hash, graph_hash, program_has
 from ..composer.expression.capability import check_declared
 from ..composer.expression.fit_generation import check_fit_refs
 from ..composer.request_record import check_request_record
+from .build_output_check import check_build_output
 from ..composer.expression.ceilings import check_ceilings, check_capability_declaration
 
 VERIFIER_ID = "SALIX_STAGE_A_TRACKER_INTAKE_V1"
 POLICY = {"ID": "SALIX_STAGE_A_INTAKE_POLICY", "VERSION": "1"}
 POLICY["HASH"] = domain_hash("SALIX_STAGE_A_INTAKE_POLICY_V1", canonical_bytes(
     {"dimensions": ["SCHEMA", "HASH_BINDING", "CAPABILITY", "FIT_ANCESTRY", "SCOPE_BINDING", "IDENTITY_CONTENT_KEY",
-                    "LOOKUP_COMPLETENESS", "DUPLICATE", "CONSTRUCTION_AUTHORITY", "REQUEST_RECORD", "RESOURCE_CEILING", "CAPABILITY_DECLARATION"]}))
+                    "LOOKUP_COMPLETENESS", "DUPLICATE", "CONSTRUCTION_AUTHORITY", "REQUEST_RECORD", "RESOURCE_CEILING", "CAPABILITY_DECLARATION", "BUILD_OUTPUT_CONTRACT"]}))
 
 REQUIRED_IDENTITY_FIELDS = ("scope", "lifecycle_state", "is_current", "declared_normalization", "causal_time_semantics",
                             "completion_semantics", "availability_class", "price_basis", "data_vintage_mode",
@@ -59,6 +60,7 @@ class BuildPackage:
     resource_ceiling_ref: Optional[str] = None        # RESOURCE_CEILING_REF (governed artifact id); never defaulted
     resource_ceilings: Optional[dict] = None          # the seven ceilings as resolved from that artifact (CLAIMED values)
     capability_declaration: Optional[dict] = None     # PROGRAM_CAPABILITY_DECLARATIONS entry for this program
+    build_output: Optional[dict] = None               # Composer V9 s27 BUILD_OUTPUT_PACKAGE evidence (supplied, immutable)
     request_record: Optional[dict] = None          # Composer s7A APPEND request record; REQUIRED for a requested quant build
 
     def content_hash(self) -> str:
@@ -69,6 +71,7 @@ class BuildPackage:
              "scope": [self.expected_instrument, self.expected_timeframe],
              "quant": self.quant_feature_requested}
         if self.request_record is not None: d["request_record"] = self.request_record
+        if self.build_output is not None: d["build_output"] = self.build_output
         if self.resource_ceiling_ref is not None: d["resource_ceiling_ref"] = self.resource_ceiling_ref
         if self.resource_ceilings is not None: d["resource_ceilings"] = self.resource_ceilings
         if self.capability_declaration is not None: d["capability_declaration"] = self.capability_declaration
@@ -168,6 +171,11 @@ def admit(pkg: BuildPackage, *, accepted_fit_generations: dict) -> Admission:
         check_declared(m)
     except Refusal as e:
         fail("CAPABILITY", e.code)
+    try:
+        check_build_output(pkg.build_output, order_id=pkg.order_id, creation_request_id=pkg.creation_request_id or pkg.request_id,
+                           learned_derived=bool(m.data["fit_refs"]))
+    except Refusal as e:
+        fail("BUILD_OUTPUT_CONTRACT", e.code)
     try:
         check_capability_declaration(pkg.capability_declaration, m, pkg.resource_ceiling_ref)
     except Refusal as e:
