@@ -24,6 +24,7 @@ class Route(unittest.TestCase):
         for name, b in bad.items():
             rig, out = run(self.pkg(producer_binding=copy.deepcopy(b)), AUTH()); self.assertFalse(getattr(out, "accepted", None) is not None and out.accepted.kind == "CANONICAL_ACCEPTED", name); self.assertEqual(out.admission.classification, FAILED_REQUESTED_BUILD, name)
             self.assertTrue(any(d == "PRODUCER_BINDING" for d, _ in out.admission.failed), name)
+            if name == "missing": self.assertIn(("PRODUCER_BINDING", "PRODUCER_BINDING_MISSING_UNSATISFIED"), out.admission.failed)
         rig, out = run(self.pkg(producer_binding=rec(interface_id="FW_BINDING")), AUTH()); self.assertIn(("PRODUCER_BINDING", "PRODUCER_BINDING_FOREIGN_INTERFACE"), out.admission.failed)         # admitted elsewhere, still not THIS interface
     def test_without_a_supplied_authority_the_duty_is_labelled_unverified_not_invented_and_the_build_is_not_failed_for_an_unreadable_source(self):
         a = admit(self.pkg(), accepted_fit_generations={}, conformance=SIM_CONF); self.assertEqual(a.classification, QUANT_FEATURE); self.assertIn(("COMPOSER_PRODUCER_BINDING_ADMISSION", "NOT_VERIFIED_NO_AUTHORITY_SUPPLIED"), a.unverified)

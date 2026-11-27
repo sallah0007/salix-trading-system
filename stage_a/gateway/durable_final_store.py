@@ -91,7 +91,7 @@ class DurableFinalResolutionStore(V.FinalResolutionStore):
             except FinalResolutionWriteNotCommitted as e:
                 raise (e.__cause__ or e)               # the identity IS committed: keep the identity, the outcome AND the in-memory request RESERVATION (a different-window rebind of this request id stays refused); the binding record is re-attempted on the same-identity retry
             except Refusal:
-                self._held.add(identity); raise          # the binding write is of unknown commit state and unreadable: hold
+                raise          # binding write of unknown commit state and unreadable: the identity is ALREADY committed (no second decision is possible), the reservation is kept, and the same-identity retry re-attempts the binding (put_if_absent + byte compare)
             return out
     def recover(self):
         """Rebuild the in-memory maps from the object store (restart). Does not evaluate anything. TRANSACTIONAL: everything is read and validated into LOCAL maps first; only a fully validated recovery replaces the live maps and releases holds. A failed recovery changes nothing and keeps every hold.

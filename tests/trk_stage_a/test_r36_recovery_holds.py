@@ -30,6 +30,19 @@ class RecoverIsTransactional(unittest.TestCase):
         k = list(raw.list_prefix("final-resolution/id/"))[0]; good = raw._d[k]; raw._d[k] = (good[0].replace(b"WINDOW-1", b"WINDOW-X"), 1)
         self.assertEqual(code(g.final_store.recover), "INTEGRITY_FAILURE"); self.assertEqual(code(g.resolve_window, "R2", W, e, I, I, 3, 10, _health()), "FINAL_RESOLUTION_RECOVERY_REQUIRED"); raw._d[k] = good
         self.assertEqual(g.final_store.recover(), 1)
+class RecoverUnreadableAndBindingHold(unittest.TestCase):
+    def test_a_listed_record_that_reads_back_absent_is_an_integrity_failure_not_a_type_error(self):
+        raw = Flaky(); g = gw(raw); g.resolve_window("R1", W, _entry(), I, I, 3, 10, _health()); k = list(raw.list_prefix("final-resolution/id/"))[0]
+        class Gone(Flaky):
+            def get(self, key): return None if key == k else super().get(key)
+        d2 = Gone(); d2._d = dict(raw._d); self.assertEqual(code(gw(d2).final_store.recover), "INTEGRITY_FAILURE")
+    def test_an_unknown_commit_binding_write_with_no_read_back_keeps_the_committed_identity_and_the_retry_reattempts_the_binding(self):
+        raw = Flaky(); g = gw(raw); raw.fail("final-resolution/req/", "after_noread"); e = _entry()
+        self.assertEqual(code(g.resolve_window, "R1", W, e, I, I, 3, 10, _health()), "FINAL_RESOLUTION_RECOVERY_REQUIRED"); self.assertEqual(g.final_store.identity_of("FW", "R1"), W)            # reservation kept
+        self.assertEqual(code(g.resolve_window, "R2", W, e, I, I, 3, 10, _health()), "FINAL_RESOLUTION_RECOVERY_REQUIRED")                       # store still unreadable: nothing is published
+        raw.dead = False; self.assertEqual(code(g.resolve_window, "R1", W2, e, I, I, 3, 10, _health()), "REQUEST_ID_REBOUND_TO_OTHER_IDENTITY"); g.final_store.recover()      # the second (unreadable) attempt held the identity: recover lifts it
+        self.assertEqual(code(g.resolve_window, "R1", W2, e, I, I, 3, 10, _health()), "REQUEST_ID_REBOUND_TO_OTHER_IDENTITY"); self.assertEqual(g.final_store.identity_of("FW", "R1"), W)       # still the original association after recover
+        b = g.resolve_window("R1", W, e, I, I, 3, 10, _health()); self.assertIsInstance(b, G.Binding); self.assertEqual(g.final_store.evaluations, 1); self.assertEqual(len(list(raw.list_prefix("final-resolution/req/"))), 1)
 class RequestReservation(unittest.TestCase):
     def fault(self):
         raw = Flaky(); g = gw(raw); raw.fail("final-resolution/req/", "before"); e = _entry()
@@ -68,7 +81,7 @@ class FiniteSeries(unittest.TestCase):
             n, raw, p, why = orig(j, st, fk)
             if p is None: return n, raw, p, why
             p = dict(p); p["nodes"] = [x for x in p["nodes"] if x["op"] == "input"][:1]; p["output"] = p["nodes"][0]["id"]; return {p["nodes"][0]["name"]}, raw, p, why
-        SI._as_found = reduced; self.addCleanup(setattr, SI, "_as_found", orig); self.name = None
+        SI._as_found = reduced; self.addCleanup(setattr, SI, "_as_found", orig); self._orig = SI.reference_evaluate; self.addCleanup(setattr, SI, "reference_evaluate", self._orig); self.name = None
     def v(self, ser, exp=None):
         names = self.SI._as_found(self.j, self.rig.store, self.fk)[0]; n = next(iter(names))
         return self.SI.verify_source_values(journal=self.j, store=self.rig.store, feature_key=self.fk, bindings={n: {"ref": "SRC", "hash": self.H(ser)}}, fetch=lambda ref: ser, series_hash=self.H, expected_output=exp)
@@ -80,6 +93,12 @@ class FiniteSeries(unittest.TestCase):
     def test_signed_zero_is_canonicalised_to_positive_zero_and_subnormals_are_preserved(self):
         r = self.v([-0.0, 0.0]); self.assertEqual((r["overall"], r["recomputed"]), ("VERIFIED_RECOMPUTED", ["0" * 16, "0" * 16]))
         sub = 5e-324; r = self.v([sub, -sub, 2.2250738585072014e-308]); self.assertEqual(r["overall"], "VERIFIED_RECOMPUTED"); self.assertEqual(r["recomputed"], [struct.pack(">d", x).hex() for x in (sub, -sub, 2.2250738585072014e-308)])
+    def test_a_noncanonical_recomputed_output_is_refused_even_if_the_evaluator_misbehaves(self):
+        for bad in (-0.0, float("nan"), float("inf")):
+            self.SI.reference_evaluate = lambda p, series, b=bad: [b]
+            try: r = self.v([1.0, 2.0])
+            finally: self.SI.reference_evaluate = self._orig
+            self.assertEqual((r["overall"], r["reason"]), ("FAIL", "RECOMPUTED_OUTPUT_NOT_CANONICAL_FINITE"), bad)
     def test_the_reference_evaluator_itself_refuses_a_nonfinite_input_and_the_lag_and_operator_paths_are_covered(self):
         from stage_a.tracker.verification.independent_traversal import reference_evaluate, RefEvalError
         for p in ({"nodes": [{"id": "a", "op": "input", "name": "x"}], "output": "a"}, {"nodes": [{"id": "a", "op": "input", "name": "x"}, {"id": "b", "op": "lag", "args": ["a"], "n": 1}], "output": "b"}, {"nodes": [{"id": "a", "op": "input", "name": "x"}, {"id": "b", "op": "neg", "args": ["a"]}], "output": "b"}):
