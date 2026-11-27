@@ -1,0 +1,195 @@
+"""HEAD and transition records, and the E-09 key layout.
+
+Frozen HEAD contents (Build Plan §29A E-01): "each governed authority namespace
+has one mutable HEAD object containing epoch, sequence, accepted transition hash
+and previous-head hash".
+
+Frozen keys (Build Plan §29A E-09):
+    stage-a/v1/coordination/{namespace_id}/HEAD
+    stage-a/v1/coordination/{namespace_id}/epochs/{epoch}/transitions/
+        {sequence_020d}-{transition_hash}.bin
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, replace
+from typing import NamedTuple, Optional
+
+from .canonical import canonical_bytes, hash_payload, sha256_hex
+
+HEAD_RECORD_KIND = "SALIX_E01_HEAD_V1"
+TRANSITION_RECORD_KIND = "SALIX_E01_TRANSITION_V1"
+
+# The genesis HEAD has no predecessor. A literal sentinel is used so that
+# "no previous head" is an explicit declared value and never an absent field.
+NO_PREVIOUS_HEAD = "GENESIS"
+NO_PREVIOUS_TRANSITION = "GENESIS"
+
+
+@dataclass(frozen=True)
+class HeadRecord:
+    namespace_id: str
+    epoch: int
+    sequence: int
+    accepted_transition_hash: str
+    previous_head_hash: str
+    accepted_at_ns: int
+    kind: str = HEAD_RECORD_KIND
+
+    def to_bytes(self) -> bytes:
+        return canonical_bytes(self.as_payload())
+
+    def as_payload(self) -> dict:
+        return {
+            "kind": self.kind,
+            "namespace_id": self.namespace_id,
+            "epoch": self.epoch,
+            "sequence": self.sequence,
+            "accepted_transition_hash": self.accepted_transition_hash,
+            "previous_head_hash": self.previous_head_hash,
+            "accepted_at_ns": self.accepted_at_ns,
+        }
+
+    def head_hash(self) -> str:
+        """Content hash of this HEAD, used as the successor's previous_head_hash.
+
+        This is the SEMANTIC chain link. It is deliberately independent of the
+        provider's ETag/version, which is the STORAGE precondition. The live
+        Sydney finding is precisely that the storage precondition alone does not
+        enforce the semantic chain.
+        """
+        return sha256_hex(self.to_bytes())
+
+    @staticmethod
+    def from_bytes(data: bytes) -> "HeadRecord":
+        import json
+        payload = json.loads(data.decode("utf-8"))
+        if payload.get("kind") != HEAD_RECORD_KIND:
+            raise ValueError("HEAD_RECORD_KIND_INVALID:" + str(payload.get("kind")))
+        return HeadRecord(
+            namespace_id=payload["namespace_id"],
+            epoch=int(payload["epoch"]),
+            sequence=int(payload["sequence"]),
+            accepted_transition_hash=payload["accepted_transition_hash"],
+            previous_head_hash=payload["previous_head_hash"],
+            accepted_at_ns=int(payload["accepted_at_ns"]),
+        )
+
+
+@dataclass(frozen=True)
+class TransitionRecord:
+    namespace_id: str
+    epoch: int
+    sequence: int
+    previous_head_hash: str
+    previous_transition_hash: str
+    payload_hash: str
+    accepted_at_ns: int
+    transition_kind: str = "GOVERNED_TRANSITION"
+    kind: str = TRANSITION_RECORD_KIND
+
+    def as_payload(self) -> dict:
+        return {
+            "kind": self.kind,
+            "namespace_id": self.namespace_id,
+            "epoch": self.epoch,
+            "sequence": self.sequence,
+            "previous_head_hash": self.previous_head_hash,
+            "previous_transition_hash": self.previous_transition_hash,
+            "payload_hash": self.payload_hash,
+            "accepted_at_ns": self.accepted_at_ns,
+            "transition_kind": self.transition_kind,
+        }
+
+    def to_bytes(self) -> bytes:
+        return canonical_bytes(self.as_payload())
+
+    def transition_hash(self) -> str:
+        return hash_payload(self.as_payload())
+
+    def with_accepted_at(self, accepted_at_ns: int) -> "TransitionRecord":
+        """E01-M1: a retry needs a FRESH accepted_at, which yields a fresh hash
+        and therefore a fresh immutable key. The old object is never reused."""
+        return replace(self, accepted_at_ns=accepted_at_ns)
+
+
+def head_key(prefix: str, namespace_id: str) -> str:
+    return f"{prefix}/stage-a/v1/coordination/{namespace_id}/HEAD"
+
+
+def transition_key(prefix: str, namespace_id: str, epoch: int, sequence: int,
+                   transition_hash: str) -> str:
+    return (f"{prefix}/stage-a/v1/coordination/{namespace_id}/epochs/{epoch}"
+            f"/transitions/{sequence:020d}-{transition_hash}.bin")
+
+
+def transition_scan_prefix(prefix: str, namespace_id: str,
+                           epoch: Optional[int] = None) -> str:
+    base = f"{prefix}/stage-a/v1/coordination/{namespace_id}/epochs/"
+    return base if epoch is None else f"{base}{epoch}/transitions/"
+
+
+def probe_key(prefix: str, run_id: str, label: str) -> str:
+    """Run-scoped key for read-after-write probes (DC-038 F).
+
+    Probes are deliberately OUTSIDE the coordination namespace: a probe must
+    never be written to an authoritative HEAD or transition key, even in an
+    isolated bucket.
+    """
+    return f"{prefix}/stage-a/v1/conformance-probes/{run_id}/{label}.bin"
+
+
+def is_authority_key(key: str) -> bool:
+    """True for any coordination HEAD or transition key."""
+    return "/stage-a/v1/coordination/" in key
+
+
+class TransitionKeyParts(NamedTuple):
+    epoch: int
+    sequence: int
+    transition_hash: str
+
+
+# The canonical transition key, anchored end to end (DC-039 / R2-L1):
+#   {prefix}/stage-a/v1/coordination/{namespace}/epochs/{epoch}
+#       /transitions/{sequence:020d}-{sha256}.bin
+_TRANSITION_KEY = re.compile(
+    r"^(?P<prefix>.+)/stage-a/v1/coordination/(?P<namespace>[^/]+)"
+    r"/epochs/(?P<epoch>\d+)/transitions/"
+    r"(?P<sequence>\d{20})-(?P<hash>[0-9a-f]{64})\.bin$")
+
+
+def parse_transition_key(key: str, *, prefix: str,
+                         namespace_id: str) -> Optional[TransitionKeyParts]:
+    """Decode a transition key, or None when it is not canonical.
+
+    The key is IDENTITY, not decoration: epoch and sequence in the path must
+    later be proven equal to the decoded record's own fields. Returning None
+    means "not a canonical key", which callers must treat as fail-closed —
+    never as "skip this object".
+    """
+    match = _TRANSITION_KEY.match(key)
+    if match is None:
+        return None
+    if match.group("prefix") != prefix or match.group("namespace") != namespace_id:
+        return None
+    epoch_text = match.group("epoch")
+    if epoch_text != str(int(epoch_text)):      # no padded/alternate spellings
+        return None
+    return TransitionKeyParts(int(epoch_text), int(match.group("sequence")),
+                              match.group("hash"))
+
+
+def sequence_from_transition_key(key: str) -> Optional[int]:
+    """Parse the 020d sequence prefix from a transition key basename.
+
+    Returns None when the basename does not carry one, so callers can decide.
+    Scanners must NOT silently drop such an object: an unparseable key is
+    exactly what a tampered or foreign object looks like, and the rebuilder
+    must see it to fail closed.
+    """
+    basename = key.rsplit("/", 1)[-1]
+    head = basename.split("-", 1)[0]
+    if head.isdigit():
+        return int(head)
+    return None

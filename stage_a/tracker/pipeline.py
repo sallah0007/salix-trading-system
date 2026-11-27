@@ -47,6 +47,11 @@ class Outcome:
     failures: list = field(default_factory=list)
 
     @property
+    def limits(self):
+        """Duties the Tracker could not determine for this outcome (class-to-structure capability compatibility; full s28 conformance). Acceptance does not certify them."""
+        return tuple(getattr(self.admission, "unverified", ())) + (("S28_FULL_CONFORMANCE", "NOT_ASSESSED_BOUNDARY"),)
+
+    @property
     def accepted_ok(self):
         return self.accepted is not None
 

@@ -79,11 +79,22 @@ class ConformanceEvidence:
         if not _present(self.evidence_ref):
             raise Refusal("evidence_ref", code="CONFORMANCE_EVIDENCE_WITHOUT_REF")
 
-def check_conformance(bo, evidence) -> None:
-    """Connects check_outcome_access to the intake. FORBIDDEN with no Tracker verification evidence (or an undetermined one) is HELD (refused) - the package cannot vouch for itself.
-    A package that declares nothing about outcome access is not newly refused here (s27 lists the field 'where applicable'): that residual is named in the closeout."""
+def check_conformance(bo, evidence, order_declaration) -> None:
+    """Connects check_outcome_access to the intake, BOUND TO THE ORDER (Composer V9 s7A ORDER_READY): the declaration comes from the governed order record, never from the package.
+    The returned BUILD_OUTPUT_PACKAGE must carry the same declaration (missing => refused; different => conflict). FORBIDDEN additionally needs Tracker-originated
+    verification evidence (none/undetermined => HELD). PERMITTED_UNDER_DECLARED_FITTING_CONTRACT is HELD: no source-defined reference to the declared fitting contract exists
+    to verify, so the Tracker cannot certify it (named input). Nothing is defaulted to FORBIDDEN."""
     if not isinstance(bo, dict):
         return                                                      # already refused by check_build_output
+    if order_declaration not in ("FORBIDDEN", "PERMITTED_UNDER_DECLARED_FITTING_CONTRACT"):
+        raise Refusal(repr(order_declaration), code="ORDER_OUTCOME_ACCESS_DECLARATION_UNKNOWN")
+    d = bo.get("OUTCOME_INFORMATION_ACCESS")
+    if d is None:
+        raise Refusal("OUTCOME_INFORMATION_ACCESS", code="BUILD_OUTPUT_OUTCOME_ACCESS_DECLARATION_MISSING")
+    if d != order_declaration:
+        raise Refusal("%r != order %r" % (d, order_declaration), code="OUTCOME_ACCESS_DECLARATION_CONFLICT")
     if evidence is not None and not isinstance(evidence, ConformanceEvidence):
         raise Refusal(type(evidence).__name__, code="CONFORMANCE_EVIDENCE_MALFORMED")
-    check_outcome_access(bo.get("OUTCOME_INFORMATION_ACCESS"), None if evidence is None else evidence.outcome_access_consulted)
+    if order_declaration != "FORBIDDEN":
+        raise Refusal(order_declaration, code="PERMITTED_FITTING_CONTRACT_NOT_VERIFIABLE")
+    check_outcome_access("FORBIDDEN", None if evidence is None else evidence.outcome_access_consulted)

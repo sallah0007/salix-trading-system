@@ -14,11 +14,11 @@ M = [(ML, '    for anc in ancestry(m, graph):\n        if anc.kind == "FW":', ' 
      (ML, '            if v is None:\n                raise Refusal(n, code="AUGMENTED_FIELD_MISSING")', '            if False:\n                raise Refusal(n, code="AUGMENTED_FIELD_MISSING")'),
      (ML, "            if not isinstance(v, Ref):", "            if False:"), (ML, "        if not isinstance(self.gateway_rebind, Binding) or", "        if False or"),
      (ML, '    if not isinstance(aug, AugmentedInput):\n        raise Refusal("rebind"', '    if False:\n        raise Refusal("rebind"'),
-     (BO, '    check_outcome_access(bo.get("OUTCOME_INFORMATION_ACCESS"), None if evidence is None else evidence.outcome_access_consulted)', "    pass"),
+     (BO, '    check_outcome_access("FORBIDDEN", None if evidence is None else evidence.outcome_access_consulted)', "    pass"),
      (BO, "        if consulted_by_verification is None:", "        if False:"), (BO, "        if consulted_by_verification is True:", "        if False:"),
      (BO, "    if evidence is not None and not isinstance(evidence, ConformanceEvidence):", "    if False:"),
      (BO, "        if not _present(self.evidence_ref):", "        if False:"), (BO, "        if self.outcome_access_consulted is not None and not isinstance(self.outcome_access_consulted, bool):", "        if False:"),
-     (QI, "        check_conformance(pkg.build_output, conformance)", "        pass"), (QI, '        fail("BUILD_CONFORMANCE", e.code)', "        pass"),
+     (QI, "        check_conformance(pkg.build_output, conformance, (pkg.request_record or {}).get(\"OUTCOME_INFORMATION_ACCESS\"))", "        pass"), (QI, '        fail("BUILD_CONFORMANCE", e.code)', "        pass"),
      (PL, "conformance=None if self._conformance_source is None else self._conformance_source(pkg))", "conformance=None)")]
 T = ["tests/trk_stage_a/test_r16_ml_ancestry.py", "tests/trk_stage_a/test_r12_ml_augmented.py", "tests/trk_stage_a/test_r16_conformance_wiring.py", "tests/trk_stage_a/test_boundaries.py", "tests/trk_stage_a/test_r13_build_output.py"]
 def run():

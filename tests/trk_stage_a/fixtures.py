@@ -64,16 +64,19 @@ def declaration_for(m, ref="CEILREF-TEST"):
     ops = sorted({n["op"] for n in m["nodes"]}) if isinstance(m, dict) and isinstance(m.get("nodes"), list) else []
     return {"PROGRAM_REF": "PROG-1", "PROGRAM_CAPABILITY_CLASS": "SCALAR_RECURRENCE", "OPCODE_SET_USED": ops, "RESOURCE_CEILING_REF": ref}
 def build_output_for(m, order_id="ORD-1", request_id="REQ-1"):
-    bo = {"ORDER_ID": order_id, "CREATION_REQUEST_ID": request_id, "REQUEST_SCHEMA_VERSION": "1", "BUILDER_BUILD_ID": "BUILD-TEST"}
+    bo = {"ORDER_ID": order_id, "CREATION_REQUEST_ID": request_id, "REQUEST_SCHEMA_VERSION": "1", "BUILDER_BUILD_ID": "BUILD-TEST", "OUTCOME_INFORMATION_ACCESS": "FORBIDDEN"}
     if isinstance(m, dict) and m.get("fit_refs"):
         bo.update(UPSTREAM_MODEL_ID="MODEL-TEST", UPSTREAM_GENERATION_ID="GEN-TEST", GENERATION_AUTHORITY_CLASS="CLASS-TEST")
     return bo
 REQUEST_RECORD = {"REQUEST_SCHEMA_VERSION": "1", "REQUESTER_ID": "fixture-requester", "REQUESTER_TYPE": "MANAGER",
                   "REQUEST_CLASS": "GOVERNED_INTAKE_REQUEST", "TARGET_CONSUMER": "FORWARD_WALK",
-                  "REQUEST_CONTEXT": "FW_MANIFEST_NEED", "PURPOSE_STATEMENT": "fixture purpose"}
+                  "REQUEST_CONTEXT": "FW_MANIFEST_NEED", "PURPOSE_STATEMENT": "fixture purpose", "OUTCOME_INFORMATION_ACCESS": "FORBIDDEN"}
+
+from stage_a.tracker.build_output_check import ConformanceEvidence
+SIM_CONF = ConformanceEvidence(False, "SIMULATED:test-fixture (no real Tracker verification path exists)")
 
 class Rig:
-    def __init__(self, store=None, fits=None, baseline=None, conformance_source=None):
+    def __init__(self, store=None, fits=None, baseline=None, conformance_source=lambda pkg: SIM_CONF):
         self.store = store or InMemoryObjectStore()
         self.claims_journal = ObjectStoreJournal(self.store, "claims", "claims-writer")
         self.claims_journal.acquire_epoch()
@@ -85,7 +88,7 @@ class Rig:
                                     events=self.events, accepted_fit_generations=self.fits, baseline=baseline, conformance_source=conformance_source)
 
     def issue(self, pkg, issuer="MANAGER", binding="SRC-BINDING-1"):
-        adm = admit(pkg, accepted_fit_generations=self.fits)
+        adm = admit(pkg, accepted_fit_generations=self.fits, conformance=SIM_CONF)
         assert adm.subject_key, adm.failed
         self.claims.issue_order(ConstructionOrder(pkg.order_id, adm.subject_key, binding, issuer))
         return adm
