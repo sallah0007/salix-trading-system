@@ -35,4 +35,19 @@ class WriterFinalizer(unittest.TestCase):
              "J3_BIND_TIME_HEALTH": {"EVIDENCE_REF": "e"}, "J4_GENERATION_COMPONENTS": {"manifest_id": "M1", "manifest_hash": m.manifest_hash, "components": dict(m.components)}, "J5_LIFECYCLE_LEDGER": {"manifest_id": "M1", "manifest_hash": m.manifest_hash, "epoch": r.epoch},
              "J6_RESEARCH_FAMILY_EXPOSURE": {"family_ref": "fam", "ledger_ref": "l", "ledger_version": "1", "ledger_hash": "lh", "consulted_available_asof": 5}}
         self.assertFalse(SJ.check_six_joins(j, r, fence=10).qualified)
+class ExactReceiptsAndIdempotentRetry(unittest.TestCase):
+    def mk(self):
+        r = GL.GenerationRegistry(); return r, WF.GenerationAuthority(r, GR, "SRC-GRANT-1")
+    def test_a_direct_append_with_the_same_granted_name_is_not_a_recorded_finalize_but_repeat_facade_finalizes_are(self):
+        r, a = self.mk(); a.write_manifest("w1", man("M1")); a.finalize("f1", "M1", 10, "facade"); self.assertEqual(a.correlate("M1")["status"], "VERIFIED_AGAINST_REGISTRY")
+        r.append_lifecycle("M1", "COMPLETE_CERTIFIED", 11, "DIRECT NOT THROUGH FACADE", "f1")                       # SAME granted caller, around the facade
+        self.assertEqual(a.correlate("M1")["status"], "MISMATCH:LEDGER_ENTRY_NOT_FROM_A_RECORDED_GRANTED_FINALIZE")
+        r2, a2 = self.mk(); a2.write_manifest("w1", man("M2")); a2.finalize("f1", "M2", 10, "one"); a2.finalize("f1", "M2", 11, "two")   # genuine repeated legitimate finalizations
+        self.assertEqual(a2.correlate("M2")["status"], "VERIFIED_AGAINST_REGISTRY")
+    def test_identical_write_retry_is_idempotent_and_foreign_or_altered_retries_are_refused(self):
+        r, a = self.mk(); m = man("M1"); a.write_manifest("w1", m); a.write_manifest("w1", m); a.finalize("f1", "M1", 10, "c")
+        self.assertEqual(a.correlate("M1")["status"], "VERIFIED_AGAINST_REGISTRY")
+        a_ = WF.GenerationAuthority(GL.GenerationRegistry(), {"MANIFEST_WRITER": {"w1", "w2"}, "FINALIZER": {"f1"}}, "S"); a_.write_manifest("w1", m)
+        self.assertEqual(code(a_.write_manifest, "w2", m), "ML_MANIFEST_ALREADY_WRITTEN_BY_OTHER_CALLER")
+
 if __name__ == "__main__": unittest.main()

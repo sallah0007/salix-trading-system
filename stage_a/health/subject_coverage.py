@@ -29,7 +29,7 @@ def coverage(core, subject: str, version: str, now: int, *, gateway_snapshot=Non
         elif k == "RECORDING_VERIFICATION":
             r = core.recording_health(subject, version, now); local.append((k, r.state if r.state in STATES else "UNKNOWN", r.evidence_class))      # a qualified core reports HELD -> not HEALTHY
         elif k == "GATEWAY_BINDING_NON_DELIVERY" and gateway_snapshot is not None:
-            if not core.confirm_snapshot(gateway_snapshot) or gateway_snapshot.subject != subject or not core.snapshot_current_at_use(gateway_snapshot, now): local.append((k, "UNKNOWN", "SNAPSHOT_NOT_CONFIRMED_FOR_SUBJECT_OR_NOT_CURRENT_AT_USE"))
+            if not core.confirm_snapshot(gateway_snapshot) or gateway_snapshot.subject != subject or gateway_snapshot.version != version or not core.snapshot_current_at_use(gateway_snapshot, now): local.append((k, "UNKNOWN", "SNAPSHOT_NOT_CONFIRMED_FOR_SUBJECT_VERSION_OR_NOT_CURRENT_AT_USE"))
             else: local.append((k, "HEALTHY" if gateway_snapshot.acceptable else "NOT_HEALTHY", gateway_snapshot.evidence_class))
         else: local.append((k, "UNKNOWN", NO_SOURCE))
     sts = [s for _, s, _ in local]

@@ -29,4 +29,10 @@ class SubjectCoverage(unittest.TestCase):
         up = SC.coverage(c, "DOWN", "1", 12); self.assertEqual(dict((k, s) for k, s, _ in up.local)["RECORDING_VERIFICATION"], "HEALTHY")             # the dependent's LOCAL reading is its own, not the upstream's
         c.quarantine(KEY, "DEFECT"); r2 = SC.coverage(c, KEY, "1", 12, gateway_snapshot=snap); self.assertEqual(dict((k, s) for k, s, _ in r2.local)["GATEWAY_BINDING_NON_DELIVERY"], "UNKNOWN")      # stale/unconfirmed snapshot is not evidence
         self.assertEqual(dict((k, s) for k, s, _ in SC.coverage(c, "DOWN", "1", 12, gateway_snapshot=snap).local)["GATEWAY_BINDING_NON_DELIVERY"], "UNKNOWN")                 # snapshot for another subject
+class RequestedVersion(unittest.TestCase):
+    def test_a_snapshot_for_version_1_is_not_evidence_for_version_999(self):
+        c = core(); b = G.HealthBinding(I, "1", I, I); ver(c, KEY, version="1", at=10, age=50); c.associate_subject(KEY, b, "a"); snap = c.gateway_health(KEY, "1", 12, R("hl"), 11, binding=b)
+        g = lambda v: dict((k, s) for k, s, _ in SC.coverage(c, KEY, v, 12, gateway_snapshot=snap).local)["GATEWAY_BINDING_NON_DELIVERY"]
+        self.assertEqual((g("1"), g("999")), ("HEALTHY", "UNKNOWN"))
+
 if __name__ == "__main__": unittest.main()
