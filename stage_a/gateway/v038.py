@@ -98,7 +98,7 @@ class FinalResolutionStore:
 
     BOUNDED CONTRACT (until a qualified provider supplies atomicity, D10): single PROCESS only. Within one process the
     check/evaluate/store sequence is serialised by one lock, a re-entrant call for an identity already being evaluated is refused
-    (it would otherwise recurse or double-evaluate), an evaluator that raises stores nothing (the identity stays unresolved and a
+    (it would otherwise recurse or double-evaluate), the request id is RESERVED for the identity before evaluation (nested or concurrent calls with the same request id and another identity are refused; a failed call releases only a reservation it created), an evaluator that raises stores nothing (the identity stays unresolved and a
     later call may evaluate again), and an evaluator that returns None is refused (None cannot be told apart from 'no outcome').
     Nothing here protects against two processes or a restart: the map is in memory. That is an unresolved provider decision."""
     def __init__(self):
@@ -110,7 +110,7 @@ class FinalResolutionStore:
         self.evaluations = 0
     def resolve(self, request_id: str, identity: FinalResolutionIdentity, evaluate):
         with self._lock:
-            bound = self._req_ids.get(request_id)
+            bound = self._req_ids.get(request_id)               # includes reservations held by in-flight evaluations
             if bound is not None and bound != identity:
                 raise Refusal(request_id, code="REQUEST_ID_REBOUND_TO_OTHER_IDENTITY")
             if identity in self._by_identity:
@@ -118,6 +118,8 @@ class FinalResolutionStore:
                 return self._by_identity[identity]          # never fish for a different result
             if identity in self._inflight:
                 raise Refusal(identity, code="REENTRANT_RESOLUTION")
+            reserved_here = bound is None
+            self._req_ids[request_id] = identity            # reserve BEFORE evaluating: nested calls cannot rebind it
             self._inflight.add(identity)
             try:
                 self.evaluations += 1
@@ -125,8 +127,11 @@ class FinalResolutionStore:
                 if out is None:
                     raise Refusal(identity, code="EVALUATOR_RETURNED_NO_OUTCOME")
                 self._by_identity[identity] = out
-                self._req_ids[request_id] = identity
                 return out
+            except BaseException:
+                if reserved_here:
+                    self._req_ids.pop(request_id, None)     # failure policy: a failed call leaves no binding it created
+                raise
             finally:
                 self._inflight.discard(identity)
     def late_dependency_mutates(self, identity: FinalResolutionIdentity):
