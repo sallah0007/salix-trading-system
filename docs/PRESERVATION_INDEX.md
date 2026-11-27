@@ -64,3 +64,6 @@ Code: `tracker/{build_output_check,lifecycle_status_event}.py`, `context/news_hu
 
 ## 12. R14 additions
 `context/news_hub_v2.py` (causal gate, validated daily record, revision rule), `tests/trk_stage_a/test_r14_event_causality.py`, `mutation_sweep_r14.py` (26 mutants), r13 sweep updated (37). Return `coder_returns/TRK-STAGE-A-TRACKER-R14.md`.
+
+## 13. R15 additions
+`docs/closeout/TRK-STAGE-A-TRACKER-COMBINED-CLOSEOUT-R15.md` (row-by-row evidence or exact gap; working draft), `tests/trk_stage_a/integration_reach.py` + `test_r15_integration_ledger.py` (import-graph reachability, journal->status-fact gap), news_hub_v2 typed verdict + `consumer_events`, `test_r14_event_causality.py` (+5), `mutation_sweep_r14.py` (31).

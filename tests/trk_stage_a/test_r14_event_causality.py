@@ -62,6 +62,26 @@ class RevisionRule(unittest.TestCase):
         self.assertEqual((r["events"], r["multiple_candidates"]), ([], ["E1"]))
     def test_identical_payload_duplicates_collapse_without_a_rule(self):
         r = N.resolve_context("REQUIRED", daily(), [ev(h="a"), ev(h="a")], 100); self.assertEqual((len(r["events"]), r["multiple_candidates"]), (1, []))
+class SafeConsumerHandling(unittest.TestCase):
+    R = "HIGHEST_REVISION_SEQ"
+    def two(self): return [ev(seq=1, rev_at=10, h="a"), ev(seq=2, rev_at=40, h="b")]
+    def test_ambiguity_is_never_the_usable_verdict(self):
+        r = N.resolve_context("REQUIRED", daily(), self.two(), 100)
+        self.assertEqual((r["verdict"], r["multiple_candidates"]), ("MULTIPLE_CANDIDATES", ["E1"]))
+        self.assertEqual(code(N.consumer_events, r), "CONTEXT_NOT_CONSUMER_RELIANCE_SAFE")
+    def test_caller_string_selection_is_non_authoritative_and_not_relied_on(self):
+        r = N.resolve_context("REQUIRED", daily(), self.two(), 100, self.R)
+        self.assertEqual((r["verdict"], r["selection_rule_verified"], len(r["events"])), ("NON_AUTHORITATIVE_SELECTION", False, 1))
+        self.assertEqual(code(N.consumer_events, r), "CONTEXT_NOT_CONSUMER_RELIANCE_SAFE")
+    def test_plain_usable_is_consumable_and_declares_structural_only_admission(self):
+        r = N.resolve_context("REQUIRED", daily(), [ev()], 100)
+        self.assertEqual((r["verdict"], r["admission"], r["selection_rule_verified"]), ("USABLE", N.ADMISSION_STATE, False))
+        self.assertEqual(len(N.consumer_events(r)), 1)
+        self.assertTrue(N.ADMISSION_STATE.startswith("STRUCTURAL_ONLY"))
+    def test_rule_string_with_no_ambiguity_stays_usable(self):
+        self.assertEqual(N.resolve_context("REQUIRED", daily(), [ev()], 100, self.R)["verdict"], "USABLE")
+    def test_consumer_events_refuses_malformed_input(self):
+        for bad in (None, "USABLE", {}, {"verdict": "usable"}): self.assertEqual(code(N.consumer_events, bad), "CONTEXT_NOT_CONSUMER_RELIANCE_SAFE")
 class DirectConsumable(unittest.TestCase):
     def test_event_consumable_rejects_malformed_cutoff_itself(self):
         for bad in ("100", None, True): self.assertEqual(code(N.event_consumable, ev(), bad), "CUTOFF_MALFORMED")

@@ -17,6 +17,9 @@ M = [(NH, '    if ev["PUBLICLY_AVAILABLE_AT"] > cutoff:', "    if False:"), (NH,
      (NH, '    if daily_record["EVENT_PRESENCE_STATE"] == "NO_EVENT_RECORDED" and used:', "    if False:"),
      (NH, '    if not isinstance(rec, dict):\n        raise Refusal("event record not a mapping"', '    if False:\n        raise Refusal("event record not a mapping"'),
      (NH, '    if not isinstance(rec, dict):\n        raise Refusal("daily record not a mapping"', '    if False:\n        raise Refusal("daily record not a mapping"'),
+     (NH, '        verdict = "NON_AUTHORITATIVE_SELECTION"', '        verdict = "USABLE"'), (NH, '        verdict = "MULTIPLE_CANDIDATES"', '        verdict = "USABLE"'),
+     (NH, '    if not isinstance(result, dict) or result.get("verdict") != "USABLE":', "    if False:"), (NH, "            rule_selected = True", "            pass"),
+     (NH, '"selection_rule_verified": False,\n            "admission"', '"selection_rule_verified": True,\n            "admission"'),
      (NH, "        if len(distinct) == 1:", "        if False:"), (NH, "    if daily_record is None:", "    if False:"), (NH, "    if not daily_record_joinable(", "    if False and not daily_record_joinable(")]
 T = ["tests/trk_stage_a/test_r13_context_resolver.py", "tests/trk_stage_a/test_r14_event_causality.py"]
 def run():
