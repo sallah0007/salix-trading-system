@@ -53,11 +53,18 @@ class DatasetRegistry:
         self._links[manifest_or_dataset_binding_id] = mid
     def binding_index(self): return {b: [m] for b, m in sorted(self._links.items())}            # shape check_six_joins(binding_to_manifest=...) takes
     def manifest_index(self): return {i: e[1].manifest_hash for i, e in sorted(self._m.items())}   # shape check_six_joins(dataset_manifests=...) takes
-    def bind_time_health(self, manifest_or_dataset_binding_id, outcome):
-        """Through the binding to the bind-time Health Resolution: ONLY from an actual Gateway Binding outcome whose stored window identity names this binding id; a non-delivery or another binding yields None (nothing is inferred)."""
+    def bind_time_health(self, manifest_or_dataset_binding_id, outcome, *, gateway, final_store, request_id):
+        """Through the binding to the bind-time Health Resolution, ONLY for an outcome the SAME Gateway and the SAME final store actually issued for THIS binding (R36; R35 checked only `isinstance(Binding)` and the local link):
+        (1) the dataset link for the binding id exists; (2) `final_store.identity_of("ML", request_id)` names an identity whose manifest_or_dataset_binding_id is this binding id (ML consumer, consumer-local request id);
+        (3) the final store's stored outcome for that identity equals the presented outcome; (4) `gateway.outcome(outcome.request_id, "ML") is outcome` (the confirmed, consumer-local issued object). A non-Binding or an unlinked binding id yields None
+        (nothing inferred); any provenance mismatch REFUSES. `verified` stays False: the Health Resolution ref/time are the Gateway entry's own fields, not a verification of Health. No forward CONSUMER_BINDING field and no hash layout is invented."""
         from ..gateway.contracts import Binding
         if not isinstance(outcome, Binding) or manifest_or_dataset_binding_id not in self._links: return None
-        return {"binding_id": manifest_or_dataset_binding_id, "dataset_manifest_id": self._links[manifest_or_dataset_binding_id], "health_resolution_ref": outcome.entry.bound_health_resolution_ref, "health_resolved_at": outcome.entry.bound_health_resolved_at, "request_id": outcome.request_id, "verified": False}
+        ident = final_store.identity_of("ML", request_id)
+        if ident is None or ident.consumer_id != "ML" or ident.manifest_or_dataset_binding_id != manifest_or_dataset_binding_id: raise Refusal(request_id, code="DATASET_BINDING_REQUEST_NOT_ISSUED_FOR_BINDING")
+        if final_store.outcome_for(ident) != outcome: raise Refusal(request_id, code="DATASET_BINDING_OUTCOME_NOT_THE_STORED_FINAL_OUTCOME")
+        if gateway.outcome(outcome.request_id, "ML") is not outcome: raise Refusal(outcome.request_id, code="DATASET_BINDING_OUTCOME_NOT_GATEWAY_ISSUED")
+        return {"binding_id": manifest_or_dataset_binding_id, "dataset_manifest_id": self._links[manifest_or_dataset_binding_id], "health_resolution_ref": outcome.entry.bound_health_resolution_ref, "health_resolved_at": outcome.entry.bound_health_resolved_at, "request_id": outcome.request_id, "window_identity": ident, "issuance_checked": True, "verified": False}
 
 def revoked_ancestry_gate(candidate_id, derived_from: dict, datasets: DatasetRegistry, generations=None):
     """ML Core 31.C: the ancestry graph spans learned-artifact AND dataset/source lineage. `derived_from` maps a node id to its ancestor node ids (datasets and generations alike). A node is revoked if the dataset registry says so, else (for a generation id) the generation

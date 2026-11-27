@@ -26,9 +26,30 @@ class Adapters(unittest.TestCase):
 class CoverageUsesObservations(unittest.TestCase):
     def test_an_observation_is_an_evidence_source_but_never_a_verdict_without_a_policy(self):
         c = core(); ver(c, KEY, version="1", at=10, age=50); c.record_reverify_pass("p1", 10, 3, [["A", "STALE", "VERIFIED", "PASS", "PINNED_NEW"]])
-        o = AD.from_reverify_pass(c, "p1"); r = SC.coverage(c, KEY, "1", 11, observations={"SCHEDULER_RESOURCE_STATE": o}); d = {k: (s, src) for k, s, src in r.local}
-        self.assertEqual(d["SCHEDULER_RESOURCE_STATE"][0], "UNKNOWN"); self.assertTrue(d["SCHEDULER_RESOURCE_STATE"][1].startswith("ADAPTER_FACTS:reverify_pass:p1:NO_POLICY_SUPPLIED"))
-        r2 = SC.coverage(c, KEY, "1", 11, observations={"SCHEDULER_RESOURCE_STATE": o}, policies={"SCHEDULER_RESOURCE_STATE": lambda f: "HEALTHY" if f["skipped"] == 0 else "NOT_HEALTHY"}); self.assertEqual(dict((k, s) for k, s, _ in r2.local)["SCHEDULER_RESOURCE_STATE"], "HEALTHY")
+        o = AD.from_reverify_pass(c, "p1")
+        r = SC.coverage(c, KEY, "1", 11, observations={"SCHEDULER_RESOURCE_STATE": o}, policies={"SCHEDULER_RESOURCE_STATE": lambda f: "HEALTHY"}); d = {k: (s, src) for k, s, src in r.local}
+        self.assertEqual(d["SCHEDULER_RESOURCE_STATE"][0], "UNKNOWN"); self.assertTrue(d["SCHEDULER_RESOURCE_STATE"][1].endswith("SCOPE_NOT_SUBJECT:GLOBAL:REVERIFY_PASS"))              # R36: global scheduler statistics are NEVER attributed to a feature, even with a permissive policy
+        self.assertEqual(r.extra, (("SCHEDULER_RESOURCE_STATE@GLOBAL:REVERIFY_PASS", "HEALTHY", "CALLER_POLICY_UNADMITTED"),)); self.assertEqual(AD.state_for(o), ("UNKNOWN", "NO_POLICY_SUPPLIED"))
         self.assertEqual(code(SC.coverage, c, KEY, "1", 11, observations={"MATERIALIZATION_ROW": o}), "HEALTH_OBSERVATION_INVALID")                       # kind must match the slot it fills
-        st = FinalResolutionStore(); r3 = SC.coverage(c, KEY, "1", 11, observations={"FW_RETURNS": AD.from_fw_association(FwAssociation(st))}); self.assertEqual(r3.extra, (("FW_RETURNS", "UNKNOWN", "NO_POLICY_SUPPLIED"),)); self.assertEqual(r3.local_aggregate, "UNKNOWN")
+        st = FinalResolutionStore(); r3 = SC.coverage(c, KEY, "1", 11, observations={"FW_RETURNS": AD.from_fw_association(FwAssociation(st))}); self.assertEqual(r3.extra, (("FW_RETURNS@GLOBAL:FW_ASSOCIATION", "UNKNOWN", "NO_POLICY_SUPPLIED"),)); self.assertEqual(r3.local_aggregate, "UNKNOWN")
+class SubjectScope(unittest.TestCase):
+    """R36 root repro: a genuine pipeline verifier result for A was applied to UNRELATED/v999 and read HEALTHY."""
+    def setUp(self):
+        from . import test_r33_composed as TC
+        t = TC.AcceptedRecordVerification(); self.rig, self.fk, self.j, self.body = t.accepted(); self.c, self.res, _ = t.ver(self.rig, self.fk, self.j); self.A = self.fk.key()
+        self.obs = AD.from_verification_result(self.res, "accepted:" + self.A); self.pol = {"MATERIALIZATION_ROW": lambda f: "HEALTHY" if f["status"] == "PASS" and f["self_consistent"] else "NOT_HEALTHY"}
+    def m(self, subject, version, **k): return dict((x, (st, src)) for x, st, src in SC.coverage(self.c, subject, version, 11, observations={"MATERIALIZATION_ROW": self.obs}, policies=self.pol, **k).local)["MATERIALIZATION_ROW"]
+    def test_the_same_observation_is_healthy_only_for_its_own_subject_and_version(self):
+        self.assertEqual(self.m(self.A, "1")[0], "HEALTHY")
+        self.assertEqual(self.m("XAUUSD/H4/UNRELATED/1", "1")[0], "UNKNOWN"); self.assertIn("OBSERVATION_NOT_FOR_REQUESTED_SUBJECT_OR_VERSION", self.m("XAUUSD/H4/UNRELATED/999", "999")[1])
+        self.assertEqual(self.m(self.A, "999")[0], "UNKNOWN")
+    def test_an_altered_record_hash_or_unbound_observation_is_never_applied(self):
+        h = dict(self.obs.subject)["record_manifest_hash"]; self.assertEqual(self.m(self.A, "1", expected_subject_fields={"record_manifest_hash": h})[0], "HEALTHY")
+        r = self.m(self.A, "1", expected_subject_fields={"record_manifest_hash": "0" * 64}); self.assertEqual(r[0], "UNKNOWN"); self.assertIn("RECORD_FIELD_DIFFERS:record_manifest_hash", r[1])
+        import dataclasses
+        for bad in (dataclasses.replace(self.obs, subject=None), dataclasses.replace(self.obs, scope="UNSCOPED"), dataclasses.replace(self.obs, subject=(("expect_scope_key", self.A),), scope="GLOBAL:X")):
+            self.obs = bad; self.assertEqual(self.m(self.A, "1")[0], "UNKNOWN")
+    def test_an_unrelated_subject_with_its_own_real_observation_is_unaffected(self):
+        other = AD.HealthObservation("MATERIALIZATION_ROW", dict(self.obs.facts), "other", subject=(("expect_scope_key", "XAUUSD/H4/OTHER/1"), ("record_manifest_hash", "a" * 64)), scope="SUBJECT")
+        r = dict((k, s) for k, s, _ in SC.coverage(self.c, "XAUUSD/H4/OTHER/1", "1", 11, observations={"MATERIALIZATION_ROW": other}, policies=self.pol).local); self.assertEqual(r["MATERIALIZATION_ROW"], "HEALTHY")
 if __name__ == "__main__": unittest.main()
