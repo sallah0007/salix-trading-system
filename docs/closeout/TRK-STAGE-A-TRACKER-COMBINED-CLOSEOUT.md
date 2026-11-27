@@ -278,36 +278,125 @@ Rule: these are source-owned dispositions named by owning FUNCTION, not appointm
 | Q03 (TARGET_BINDING, SERVE_AUTHORITY) | Manager with the owning artifact/source authority | MLCore 20, 94-119, 268-271, 288-319; ConnectedContractV038 214-222 | Foreign-origin exact target/domain binding and SERVE authority unresolved: no restore/reactivate/promote path for foreign targets | none | Owning authority specifies target resolution and the SERVE return contract |
 Other tracked rows in the same file (read, not expanded): D16 strict FW any-feature-view PIT hold; D20 ML eight-gate mapping proposal NOT accepted as eight-neutral; D21 science values unselected. The proposed R06 delta/readback and the Activity export are PROPOSALS/INPUTS, not accepted source/history or terminal issuance.
 
-## 12. Evidence attribution and git state (R34 view; R33 text retained)
+## 12. Evidence attribution and git state (R35 view; R34/R33 text retained)
+R35 INDEPENDENT (root, from the R35 assignment): PR57 tested `a19582e9994124a8dea604c00c47c5a8c60061c1`, CI checkout `31eb3965b71c68b84ba8d4fcd416887c3f91cfc7`, merged `92650e60d7f92be75518a170235a97ea1c91a7d5`, all trees `4edfe770f94f8ada399058f111f2ebbd3a6dde2f`, run 46079098316 (1348 passed); root passed three targeted groups at `72b0f5ca`. My mutant counts are AUTHOR-RUN. R35 branch evidence (this PR's own CI and tree comparison) is recorded in the PR description after CI, not here.
 R34 INDEPENDENT (root, from the R34 assignment): remote checkpoint `8f7cfa01c06f7fb3fed94f4b27d1dd2e43290755`, `878ac84` runtime groups passed (explicit J1 resolver; accepted-record reverify incl. altered bytes left unrepaired); the 1332 local passes were author-reported; root reproduced three public-API defects at `8f7cfa0` (finalize correlation by caller name; non-idempotent identical write retry; Health coverage ignoring the requested version), fixed in R34 with tests proven to fail on broken variants. AUTHOR (this Coder): suite counts and mutant counts above are author-run. PR/CI/tree equality for R34: see the final return (not asserted here before they exist).
 Producer, observer and verifier are kept exact. INDEPENDENT (root, from the R33 assignment, not re-observed by the Coder): PR54 tested `32a37e36473fe276b26cf0b61e68fbe1f72a8bb4`, CI checkout `98a10d223ce3d3d6b1daab0eae9415106872c1e8`, merged `56c99a53365c1fffd939d097bc1be823d22cd2dd`, all trees `ca6c552044ddba46f5afbc3fea0ca990d910eff2`, run 46068190351. PR55 (R32): tested `0a0da1d2256e28a9cb79f82ed2ef1ae73729c6d2`, ACTUAL CI checkout `536d9188364a729e4e2940f1e3c29efe40db7b79` (fetched by root through the GitHub commit API despite the removed merge-ref), merged `cc4bc59782dc87db99a62bc21dbf26c22360f55d`; all three trees equal `b94bdf1870cd6c725856a46383a9e05c843ee2d6`; CI run 46069482727, jobs on 3.12/3.13, 1305 passed each. Root independently passed two targeted R32 repair groups (detached order/verified-order copies with altered-build refusal; separate base/resolved hashes with watermark drift, detached read, frozen restart). Root did NOT rerun the full suite or any mutants; the 125-mutant sweep was R31 coverage, NOT R32 coverage. AUTHOR-RUN (native output, not independently reviewed): all R33 targeted tests and mutants recorded in the R33 PR record. Git state uses only successful read-only observations; no global 'unpushed 0'; `stage-a/tracker/full-pass-r15` and `stage-a/tracker/repair-r16` preserved. Nothing here is a gate or acceptance claim.
 
-## 13. R34 current work register (supersedes the R33 section 13, which is kept verbatim in the history file)
-R34 corrections to my own earlier work: (1) R33 reverse J1 used two independent membership checks (a manifest known but not THIS binding's passed): replaced by an explicit supplied relation; (2) the R33 composed test claimed Core re-verified the accepted feature but probed a supplied manifest: now the persisted accepted record is verified as found; (3) R34 checkpoint `GenerationAuthority.correlate` trusted caller names, the facade duplicated WRITE on retry, `coverage` ignored the requested version: all fixed (root-reproduced); (4) a test assertion I added was lost by my own shell edit and only the R34 mutation sweep exposed it: restored.
+## 13. R35 current work register (supersedes the R34 section 13, kept verbatim in the history file)
+Corrections to my own earlier work (R35): (A) pre-R34 accepted bodies were unreadable by replay: now readable as `legacy_binding_absent` with `ACCEPTED_RECORD_LEGACY_MAINTENANCE_HOLD` on reverification, new writes stay strict; (B) the final-resolution store aliased the evaluator's outcome object and old tests had encoded the aliasing (`is`): outcomes are now detached copies and those tests assert equality plus detachment; (C) there was no window-level path (`resolve_window`) and no durable/restartable final store; (D) `is_revoked` accepted truthy values and codes depended on traversal depth: exact True/False/None contract, order-independent path facts, no single reason-code winner. R35 SWEEP FINDING (author-run mutation of my own new code): the durable store changed in-memory state BEFORE its durable comparison, so an `IntegrityFailure` left a pin/outcome/request binding in memory that the store did not hold; fixed with rollback and a test that fails on the old order.
 
-Built in R34 (candidate/simulation; none qualified, none a gate; author-run mutants in `mutation_sweep_r34.py`):
-- reverse J1 relation; accepted materialization record persistence + `reverify_accepted` + AcceptedBinding; composed path ClaimService order -> build gate -> `TrackerPipeline.run` -> accepted-record verification -> Core health -> ONE Gateway path (required unknown ancestry denied, unrelated baseline delivered, carried-upstream denial leaves LOCAL_STATE) -> exact FW `receive_verified` and ML `build_row` of the same stored outcome
-- `ml/writer_finalizer` (exact receipts, idempotent identical retry, principal slot HELD), `ml/consumption_claim` (Addendum s5 family-ledger binding; s7 era equality and revocation propagation)
-- `fw/association.FwAssociation` over the one `FinalResolutionStore` (new read accessors `outcome_for`, `identity_of`): a request is associated only if the store bound (FW, request_id) to that identity and holds its outcome; returns are class-checked (EVIDENCE/REQUEST/LINEAGE), immutable per return_id, LINEAGE needs a lineage ref, later returns never rewrite the outcome; the RETURN PAYLOAD fields are HELD `FW_RETURN_PAYLOAD_FIELDS_UNBOUND` (no source defines them; A04 payload bindings null)
-- `binding/producer_admission.admit`: seven-field record admitted only by exact field equality with a SUPPLIED authority lookup keyed by (scope, interface_id, version); no parse of validity/supersession; never qualified; distinct from Composer 27/28 package conformance (`tracker/build_output_check`, which was already built and is not evidence for admission)
-- `health/subject_coverage` (Build Plan 14 / 14A)
+Built in R35 (candidate/simulation; none qualified, none a gate; author-run mutants in `mutation_sweep_r35.py`: 37 mutants, 1 named equivalent `elif canon != out` - defensive branch unreachable through the public API because the store is only written by the same `evaluate`; R33 sweep 40 mutants / 4 named equivalents and R34 sweep re-run: R34 `w[0][3] != m.manifest_hash` remains the named equivalent and two R34 revocation anchors are NOT APPLICABLE because that function was rewritten in R35 and its mutants moved to the R35 sweep):
+- `stage_a/gateway/durable_final_store` + `SimulatedGateway.resolve_window`: window-level resolution over the ONE `FinalResolutionStore`; parameter pin per identity (survives restart); stored outcome adopted after restart; request-id keyed `resolve` unchanged
+- `stage_a/health/adapters`: facts-only evidence adapters (kinds: five `from_*`), B0 slots held, supplied policy labelled CALLER_POLICY_UNADMITTED; wired into `subject_coverage` (source `ADAPTER_FACTS:<ref>:<label>`)
+- `stage_a/ml/dataset_manifest`: DatasetProvenanceManifest, DatasetRegistry (grants slot HELD), revocation ledger, `link_binding`, `binding_index`/`manifest_index` in the shape `check_six_joins` takes, `bind_time_health`, `revoked_ancestry_gate` (BLOCKED / BLOCKED_UNKNOWN / CLEAR; a held-back-test fresh model on a revoked dataset is blocked with no weight ancestor in common)
+- `stage_a/tracker/source_inputs.verify_accepted_source_inputs`: accepted source-input refs vs supplied resolver; with no resolver HELD_UNVERIFIED, `stream_verified` always False
+- Typed Annex XV/XVI acceptance tests (`test_r35_annex_xv.py`), written after reading the Annex in full (derivation class: INDEPENDENTLY_DERIVED for the clause text read; the tests are author-run)
 
-Source corrections applied (root, R34): the numbered Annex XII-XV clauses are in the frozen Typed Annex 13PE_pli3ZlFjjPdhHtWtLyyH2XdAv8XGA4FN0KGcIlA (690 paras; XII 490-513, XIII 514-536, XIV 537-561, XV 562-601), NOT in the Connected Contract (2694 paras; H1 229-267, H3 286-306), and Build Plan current paras 1452-1462 / 1592-1671 / 1981-2016. I re-read ML Integration Addendum s5-s7 from Drive in R34; I did NOT re-open the Typed Annex XII-XV paragraphs or Build Plan 14A-29A E03-E10 in R34 beyond what R26-R33 recorded, so those rows keep their earlier audit state (INSUFFICIENT_EVIDENCE of a fresh R34 clause audit).
+NOT built in R35 (named, not hidden): ML dataset/feature-matrix manifest WRITER caller, request and union/lineage callers, and the exact issued-request/generation correlations (the registry, reverse link and gate exist; the callers do not); Health adapters for FIT_GENERATION, QUANT_MANIFEST_PROFILE and REPLAY_BACKLOG (no evidence source in the repo) and for MasterHealthV3 133-134 (News/Context deliveries, ML_FW_AUGMENTED, durable coordination/read-path revocation); owning lifecycle / planes / recovery; Composer 27/28 package conformance through a real route with seven-field admission (R34 pieces unchanged); Tracker FW10/H3 owner request/return; the canonical-journal status projection to Gateway decoder interface (a supplied-mapping interface is authorable; the real mapping and status-origin principal stay held); the health unknown-ancestry + unrelated-baseline positive extended to the dataset path. These are open ENGINEERING, not external.
 
-ROW RE-AUDIT STATUS (honest): rows whose code or test changed in R34 (TR-07, TR-13, TR-14, B14, B18-adjacent Health coverage, B23) are updated above; every other TR/B/D/A07 row retains its R33 disposition and was NOT re-audited clause-by-clause in R34. This is a finding, not a completion: the full per-row re-audit requested in R34 is NOT done.
+ROW AUDIT STATUS (honest; see section 14): section 14 holds (a) the TR-01..15 Build Plan s27 DoD evaluation actually performed in R35 and (b) a MECHANICAL presence table for the 57 E03 rows (path/alias symbol exists, last commit, number of test files naming the module) which is PRESENCE/IMPORT evidence and is NOT a clause audit. D1-D18/D12', B01-B24 and A07-1..4 were NOT re-opened clause-by-clause against their sources in R35 and keep their R33/R34 dispositions; that is a finding, not a completion. Build Plan 11-14A, 27, 29A E03-E10 and Parent clauses were applied only where cited in this section and section 14; B01-B24 (frozen Tracker DOCX) were not re-read.
 
-Still NOT built / still held (engineering named apart from genuinely external inputs):
-| Item | Class | Exact missing input / what remains | Logical source-owner ROLE | Consequence | Recommended decision |
+Source corrections carried: the numbered Annex XII-XV clauses are in the frozen Typed Annex 13PE_pli3ZlFjjPdhHtWtLyyH2XdAv8XGA4FN0KGcIlA (XII 490-513, XIII 514-536, XIV 537-561, XV 562-601), NOT in the Connected Contract (H1 229-267, H3 286-306, closure 616ff); Build Plan current paras 1452-1462 / 1592-1671 (subject list 1660-1668, 14A 1670-1671) / 1981-2016 (E03 map 2017ff). MasterHealthV3 1paXK6vPORaZ4QtQo3Vv3f49h7w2oHVt1-McSC2g6Bkk (B0 43-85, evidence/scopes 94-116, silence/LOCAL vs OPERATIONAL/CARRIED 125-126, new Stage A subjects 133-134) was read for the adapters; ML Integration Addendum 1_QAOZNOy4bW3Qd-2u5FtE3dAe3aq7fiaNsoFUmN-I1M s5-s7 re-read from Drive. No governing text is copied here.
+
+Held / external (exact missing input, source-owner ROLE, consequence, recommendation):
+| Item | Class | Exact missing input | Logical source-owner ROLE | Consequence | Recommended decision |
 |---|---|---|---|---|---|
-| Status projection decoder + Gateway binding | EXTERNAL INPUT (mapping) then ENGINEERING | record->StatusFact mapping and status-origin principal; no PUBLISHABLE=CURRENT, no guessed ids; `StatusProjection` takes a supplied decode_fact | Tracker status-projection owner | Real Gateway cannot read chain status; simulation only | Role issues the mapping row; Coder builds the binding tests |
-| ML dataset-manifest / request / union writer caller | ENGINEERING (open) | `GenerationAuthority` covers CERTIFIED_GENERATION_MANIFEST only; the dataset/feature-matrix provenance manifest writer, request and union/lineage callers are not built; principal grants external | Coder (generic); ML Core owner (principals, instances) | no ML row accepted for delivery | Next pass |
-| Health subject adapters/evidence bindings | ENGINEERING (open) + EXTERNAL (profile, thresholds, appointment) | quant manifest/profile, fit generation, materialization row, scheduler/resource state, replay backlog have no evidence adapters | Health/Registry owner | coverage reports NO_EVIDENCE_SOURCE; aggregate never HEALTHY without all kinds | Adapters need source rows for each evidence record |
-| H3 per-field real instances | EXTERNAL INPUT | real payload/schema/version/hash/profile per field; SEGMENT_REF and KNOWABLE_AT derivations | Tracker payload function / FW boundary adapter | Descriptor `complete=False`; return payloads HELD | Role supplies the field mapping |
-| Accepted source-value/history stream verification | ENGINEERING + EXTERNAL | generic verification over accepted source-input refs under the existing schema is authorable and NOT yet built; real provider proof is unbound | Coder / provider owner | Core health from the accepted record is PROBE-valued evidence | Next pass |
-| Composer 27/28 real producer and DutyEvidence | EXTERNAL | real Composer producer; `S28_*` duties stay MANDATORY_UNVERIFIED_DUTIES | Composer owner | conformance simulated | Composer owner commissions the producer |
-| Full owning lifecycle / plane / recovery | ENGINEERING + EXTERNAL | subject->MV/status-kind mapping for the owning-lifecycle transition (B13) is external; plane/recovery behaviour beyond the in-memory journal is not rebuilt in R34 | DecisionContext / subject-authority owner | owning chain not transitioned by the Tracker | Role supplies the mapping |
-| TrustAnchor source and CANDIDATE_IDENTITY->subject mapping | EXTERNAL INPUT | governed anchor source and mapping | Order-authority source owner (D2) | orders issued only against UNADMITTED inputs | Owner/Manager decision D2 |
-| MISSED vs QUARANTINED for unverified reconstruction | EXTERNAL (governed taxonomy) | held as `HELD_MISSED_OR_QUARANTINED`; no selection | ML Core owner via the governed taxonomy | candidate held | None from Coder |
-| Seven-field authority source; L2 slot values; TIME_NORMALISATION_ID table | EXTERNAL | authority lookup (Manager-only Drive record), governed slot values with source_ref, time table | Producer-binding owner; Health/Registry L2 owner; Blueprint/Contract owner | admission/triggered pass refuse without them | Source rows |
+| Status projection mapping + status-origin principal | EXTERNAL | record->StatusFact mapping and the principal; no PUBLISHABLE=CURRENT, no invented 128-bit ids | Tracker status-projection owner | Real Gateway cannot read chain status | Role issues the mapping row; Coder then builds the binding tests |
+| ML principal grants and dataset instances | EXTERNAL | grants for dataset writers; real dataset/feature-matrix manifests | ML Core owner | registry stays `ML_PRINCIPAL_GRANTS_UNBOUND_HELD`; no ML row accepted for delivery | Owner supplies grants |
+| Health B0 slots | EXTERNAL | profile, policy, critical set, reason-code registry, producer id/signature, thresholds | Health/Registry owner | adapters give facts only; states are UNKNOWN or CALLER_POLICY_UNADMITTED, never governed HEALTHY | Source rows |
+| H3 per-field real instances | EXTERNAL | payload/schema/version/hash/profile per field; SEGMENT_REF and KNOWABLE_AT derivations | Tracker payload function / FW boundary adapter | Descriptor `complete=False`; return payloads HELD | Role supplies field mapping |
+| Source-value/history provider proof | EXTERNAL | real provider proof for the stream | Provider owner | `stream_verified` stays False | Provider qualification (D5) |
+| Composer producer and DutyEvidence | EXTERNAL | real producer | Composer owner | conformance simulated | Composer owner commissions |
+| Owning-lifecycle subject->MV/status-kind mapping (B13) | EXTERNAL | mapping | DecisionContext / subject-authority owner | owning chain not transitioned | Role supplies mapping |
+| TrustAnchor source and CANDIDATE_IDENTITY->subject mapping | EXTERNAL | governed anchor source | Order-authority source owner (D2) | orders only against UNADMITTED inputs | Owner/Manager decision |
+| MISSED vs QUARANTINED for unverified reconstruction | EXTERNAL | governed taxonomy | ML Core owner | held as `HELD_MISSED_OR_QUARANTINED` | None from Coder |
+| Seven-field authority source; L2 slot values; TIME_NORMALISATION_ID table | EXTERNAL | authority lookup, slot values, time table | Producer-binding owner; Health/Registry L2 owner; Blueprint/Contract owner | admission refuses without them | Source rows |
+| Durable store codec/keys (D13), cross-journal atomicity (D10) | EXTERNAL | admitted byte encodings, qualified provider | S / provider owner | final store is single-process and its codec and keys are candidate | D10/D13 decisions |
 
-Unchanged: UNRESOLVED 65 no-current-ref and 35 cited-not-awarded; NL-0187 PROPOSED (visibility only); integrity hashes are not semantic awards; no A07 semantic award, no 41-unit/100-qualifier award, no Drive governing change. A02 Class B HOLD, A07/COVERAGE OPEN, P12/N2 UNSATISFIED, QC34 ALERT(HOLD), A08 READY_TO_CODE NO and Stage A HOLD stand; Sallah signs later and nothing is pre-awarded. The Full Tracker is NOT complete.
+Unchanged: UNRESOLVED 65 no-current-ref and 35 cited-not-awarded; NL-0187 PROPOSED (visibility only); integrity hashes are not semantic awards; no A07 semantic award, no 41-unit/100-qualifier award, no Drive governing change. A02 Class B HOLD, A07/COVERAGE OPEN, A07/P12/N2 UNSATISFIED, QC34 ALERT(HOLD), A08 READY_TO_CODE NO and Stage A HOLD stand; a merge, CI run or passing test clears none of them; Sallah signs later and nothing is pre-awarded. The Full Tracker is NOT closed.
+
+## 14. R35 row audit (what was actually done, and what was not)
+### 14.1 TR-01..TR-15: Build Plan s27 DoD evaluated in R35 (s27 text re-read from the staged Build Plan; derivation class INDEPENDENTLY_DERIVED for what I grepped/ran this pass, author-run)
+| Row | s27 DoD | R35 check performed | Result | Residual / finding |
+|---|---|---|---|---|
+| TR-01 | zero runtime model-name branches | grep of `stage_a` for equality/membership against model-name literals (garch, arima, lstm, ewma, rsi, sma, ema, momentum, mom3) | no hit | grep bounded to that list; a test named for the DoD exists only in test_expression/test_r25_defects (not re-read in R35) |
+| TR-02 | no second registry/order/currentness path | grep of class names `*Registry`/`*Currentness` | three registries: `GenerationRegistry`, `DatasetRegistry` (R35), `TimeframeRegistry`; none is a feature-identity, order or currentness registry | `DatasetRegistry` is a NEW caller-side index (candidate, no authority); Manager should record that it is not an identity registry |
+| TR-03 | permutation invariant; duplicates rejected | not re-run in R35 | NOT RE-EVALUATED | R33/R34 disposition stands |
+| TR-04 | exact frozen MANIFEST_HASH coverage | not re-run in R35 | NOT RE-EVALUATED | as above |
+| TR-05 | no identity/certification/delivery authority in Composer | grep of imports in `stage_a/composer` | only `tracker.quant_intake_adapter` (route names in `request_classification`); no gateway/identity/certification/delivery import | structural-import evidence only; behavioural Q19 not re-run |
+| TR-06 | failed requested build never becomes baseline-only/NONE | not re-run | NOT RE-EVALUATED | D8 predicate unread |
+| TR-07 | no direct private connector | grep of imports in `fw`, `ml`, `gateway` for connector/network modules | no hit | import evidence only; delivery is still SIMULATED |
+| TR-08 | profile evaluator evidence only | adapters give facts, policy labelled unadmitted (tests) | consistent | B0 slots HELD |
+| TR-09 | exact opcode equality + capability firewall | not re-run | NOT RE-EVALUATED | |
+| TR-10 | half-open fence preserved; technical latest never authority | checked file named by s27 | `gateway/dependency_resolution.py` named by s27 does NOT exist; the function is SIMULATED in `gateway/contracts` | s27 path absent in repo: Manager mapping needed |
+| TR-11 | one winner/fail closed; rebuild proof; stale epoch fenced | not re-run; mutation sweeps R21/R23/R33 reference fencing | NOT RE-EVALUATED | |
+| TR-12 | declared edge only; independent context route | not re-run | NOT RE-EVALUATED | |
+| TR-13 | separate manifests/results/lineage | R35 detach of stored outcomes + FW association tests | consistent | payload fields HELD |
+| TR-14 | no hidden FW ancestry laundering | R35 revoked-ancestry gate + six-joins reverse link tests | consistent | callers for dataset/request/union not built |
+| TR-15 | no mutable XAUUSD state reaches EURUSD | listed cross-instrument tests (test_foundations, test_boundaries, test_r24_core and others) | key qualification tested for keys, observation keys, admission, gateway | FINDING: `DatasetRegistry` and `GenerationRegistry` are keyed by manifest id only (instrument is a data field, `instrument_scope`); the DOCX s7A default cross-instrument DENY is still not enforced as a policy |
+
+### 14.2 E03 rows: MECHANICAL presence table (NOT a clause audit; generated by `tools/r35_row_evidence.py`; reproducible by the Manager)
+Rows whose repo location reads `none` or ALIAS have no file at the E03 path by design (build_executor, refit_executor, causal_gate, non_delivery, settlement, health_snapshot, standalone_ancestry, fw_augmented_rebind, expectation): the alias symbols were confirmed to exist by grep (`event_consumable`, `as_of_visible`, `NonDeliveryResolutionV038`, `to_v038`, `FinalResolutionStore`, `HealthSnapshot`, `check_generation`, `check_fw_augmented`, `ancestry`, `derive_silence`).
+| # | E-03 path | repo path(s) | exists | last commit | test files naming module | closeout STATE |
+|---|---|---|---|---|---|---|
+| 1 | stage_a/authority.py | stage_a/authority.py | Y | 5fbe576 | 34 | INVOKED |
+| 2 | stage_a/identifiers.py | stage_a/identifiers.py | Y | 5fbe576 | 10 | INVOKED |
+| 3 | stage_a/errors.py | stage_a/errors.py | Y | 5fbe576 | 71 | INVOKED |
+| 4 | stage_a/clocks.py | stage_a/clocks.py | Y | 5fbe576 | 4 | INVOKED |
+| 5 | stage_a/currentness.py | stage_a/currentness.py | Y | 5fbe576 | 6 | REFERENCE_ONLY |
+| 6 | stage_a/replay.py | stage_a/replay.py | Y | 64ed20d | 18 | INVOKED |
+| 7 | stage_a/observability.py | stage_a/observability.py | Y | 5fbe576 | 4 | REFERENCE_ONLY |
+| 8 | composer/request_classification.py | stage_a/composer/request_classification.py | Y | 1ed98e9 | 3 | INVOKED |
+| 9 | composer/governed_order_adapter.py | stage_a/composer/build_gate.py, stage_a/composer/order_authority.py | YY | 56c99a5,56c99a5 | 4 | INVOKED_IN_TESTS (not `pipeline.run`; th |
+| 10 | composer/build_executor.py | stage_a/composer/build_executor.py | N | - | 1 | LATER |
+| 11 | composer/refit_executor.py | stage_a/composer/refit_executor.py | N | - | 1 | LATER |
+| 12 | composer/build_output.py | stage_a/tracker/build_output_check.py | Y | 7e50658 | 9 | INVOKED |
+| 13 | expression/manifest.py | stage_a/composer/expression/manifest.py | Y | 1655a94 | 36 | INVOKED |
+| 14 | expression/schema.py | stage_a/composer/expression/schema.py | Y | 1655a94 | 16 | INVOKED |
+| 15 | expression/canonical_encoding.py | stage_a/composer/expression/canonical_encoding.py | Y | 5fbe576 | 8 | INVOKED |
+| 16 | expression/hashing.py | stage_a/composer/expression/hashing.py | Y | 5fbe576 | 8 | INVOKED |
+| 17 | expression/opcodes.py | stage_a/composer/expression/opcodes.py | Y | a3ac165 | 5 | INVOKED |
+| 18 | expression/capability.py | stage_a/composer/expression/capability.py | Y | 5fbe576 | 7 | INVOKED |
+| 19 | expression/evaluator.py | stage_a/composer/expression/evaluator.py | Y | a3ac165 | 10 | INVOKED (via materializer) |
+| 20 | expression/fit_generation.py | stage_a/composer/expression/fit_generation.py | Y | 5fbe576 | 3 | INVOKED |
+| 21 | expression/artifacts.py | stage_a/composer/expression/artifacts.py | Y | 5fbe576 | 5 | INVOKED |
+| 22 | tracker/quant_intake_adapter.py | stage_a/tracker/quant_intake_adapter.py | Y | fa48ddb | 24 | INVOKED |
+| 23 | tracker/quant_certification.py | stage_a/tracker/quant_certification.py | Y | a3ac165 | 5 | INVOKED |
+| 24 | tracker/publication.py | stage_a/tracker/publication.py | Y | fa48ddb | 8 | REFERENCE_ONLY |
+| 25 | materialization/stateful_materializer.py | stage_a/tracker/materialization/stateful_materializer.py | Y | a3ac165 | 9 | INVOKED |
+| 26 | verification/stateful_verifier.py | stage_a/tracker/verification/stateful_verifier.py | Y | 185d1d4 | 8 | INVOKED |
+| 27 | verification/verification_result.py | stage_a/tracker/verification/verification_result.py | Y | 185d1d4 | 10 | INVOKED |
+| 28 | context/event_identity.py | stage_a/context/decision_context.py | Y | c353a05 | 3 | REFERENCE_ONLY |
+| 29 | context/coverage.py | stage_a/context/news_hub_v2.py | Y | cc4bc59 | 10 | REFERENCE_ONLY |
+| 30 | context/applicability.py | stage_a/context/news_hub_v2.py | Y | cc4bc59 | 10 | REFERENCE_ONLY |
+| 31 | context/resolver.py | stage_a/context/news_hub_v2.py | Y | cc4bc59 | 10 | REFERENCE_ONLY |
+| 32 | context/causal_gate.py | stage_a/context/causal_gate.py | N | - | 1 | REFERENCE_ONLY |
+| 33 | gateway/dependency_resolution.py | stage_a/gateway/contracts.py | Y | 8c50c4b | 21 | REFERENCE_ONLY (SIMULATED) |
+| 34 | gateway/binding.py | stage_a/gateway/binding.py | Y | 28fe2ac | 37 | REFERENCE_ONLY (SIMULATED consumer) |
+| 35 | gateway/non_delivery.py | stage_a/gateway/non_delivery.py | N | - | 1 | REFERENCE_ONLY |
+| 36 | gateway/settlement.py | stage_a/gateway/settlement.py | N | - | 3 | REFERENCE_ONLY |
+| 37 | gateway/health_snapshot.py | stage_a/gateway/health_snapshot.py | N | - | 1 | REFERENCE_ONLY |
+| 38 | fw/request_adapter.py | stage_a/fw/receiver.py | Y | 185d1d4 | 24 | REFERENCE_ONLY |
+| 39 | fw/input_binding.py | stage_a/fw/lanes.py | Y | 7e50658 | 8 | REFERENCE_ONLY |
+| 40 | fw/return_lineage.py | stage_a/fw/return_lineage.py | Y | d4a595b | 4 | REFERENCE_ONLY |
+| 41 | ml/dataset_binding.py | stage_a/ml/receiver.py | Y | 185d1d4 | 24 | REFERENCE_ONLY |
+| 42 | ml/standalone_ancestry.py | stage_a/ml/standalone_ancestry.py | N | - | 1 | REFERENCE_ONLY |
+| 43 | ml/fw_augmented_rebind.py | stage_a/ml/fw_augmented_rebind.py | N | - | 1 | REFERENCE_ONLY |
+| 44 | ml/generation_lineage.py | stage_a/ml/generation_lifecycle.py, stage_a/ml/receiver.py | YY | bb964cf,185d1d4 | 24 | REFERENCE_ONLY |
+| 45 | health/b0_adapter.py | stage_a/health/envelope.py | Y | 2ea044e | 11 | REFERENCE_ONLY |
+| 46 | health/quant_evidence.py | stage_a/health/evidence.py | Y | 33672f6 | 40 | REFERENCE_ONLY |
+| 47 | health/blast_radius.py | stage_a/health/blast_radius.py | Y | 3638883 | 9 | REFERENCE_ONLY |
+| 48 | health/expectation.py | stage_a/health/expectation.py | N | - | 2 | NOT_BUILT |
+| 49 | coordination/interface.py | stage_a/coordination/interface.py | Y | 5fbe576 | 1 | INVOKED |
+| 50 | coordination/transition_record.py | stage_a/coordination/transition_record.py | Y | 64ed20d | 9 | INVOKED |
+| 51 | coordination/object_store_journal.py | stage_a/coordination/object_store_journal.py | Y | fcb0bd6 | 16 | INVOKED |
+| 52 | coordination/fencing.py | stage_a/coordination/fencing.py | Y | 5fbe576 | 5 | INVOKED |
+| 53 | coordination/recovery.py | stage_a/coordination/recovery.py | Y | 5fbe576 | 8 | INVOKED |
+| 54 | coordination/scheduler.py | stage_a/coordination/scheduler.py | Y | 33672f6 | 8 | REFERENCE_ONLY |
+| 55 | storage/object_store.py | stage_a/storage/object_store.py | Y | 5fbe576 | 18 | INVOKED (in-memory) |
+| 56 | storage/postgres_read_model.py | stage_a/storage/postgres_read_model.py | Y | fa48ddb | 5 | REFERENCE_ONLY |
+| 57 | storage/keys.py | stage_a/storage/keys.py | Y | 92650e6 | 14 | INVOKED |
+
+### 14.3 Rows NOT audited in R35
+D1-D18/D12', B01-B24, A07-1..4 and the 41 units / 100 qualifiers: not re-opened against their sources in R35 (B01-B24 need the frozen Tracker DOCX re-read; D rows need Manager-recorded decisions). Nothing here claims they were. Preserved next action: re-open the DOCX and registry text, then fill clause -> current callpath -> commit -> meaningful test per row.
