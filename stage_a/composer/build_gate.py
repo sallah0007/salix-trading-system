@@ -3,9 +3,9 @@
 scope/causal boundary/temporal contract/vintage/availability/allowed/forbidden inputs); an omitted or contradicting field is refused. Candidate gate: it starts no build; the order is then consumed by TrackerPipeline through ClaimService.reserve."""
 from ..errors import Refusal
 from tracker_component.claims import Refusal as ClaimRefusal
-from .intake import CONSUMER_LOCAL_ORDER_FIELDS
+from .order_authority import local_family
 
-BUILD_BOUND = ("CANDIDATE_IDENTITY", "EXPECTED_DELIVERY_CONTRACT", "OUTCOME_INFORMATION_ACCESS", "RESEARCH_FAMILY_REFERENCE") + CONSUMER_LOCAL_ORDER_FIELDS
+BUILD_BOUND = ("CANDIDATE_IDENTITY", "EXPECTED_DELIVERY_CONTRACT", "OUTCOME_INFORMATION_ACCESS", "RESEARCH_FAMILY_REFERENCE")
 
 def accept_build_start(claims, order_id, build_request: dict) -> dict:
     if not isinstance(order_id, str) or not order_id: raise Refusal(type(order_id).__name__, code="COMPOSER_BUILD_NEEDS_TRACKER_ORDER_ID")       # an order OBJECT is not an order
@@ -21,4 +21,10 @@ def accept_build_start(claims, order_id, build_request: dict) -> dict:
             continue
         if k not in build_request: raise Refusal(k, code="COMPOSER_BUILD_OMITS_ORDER_CONSTRAINT")
         if build_request[k] != cons[k]: raise Refusal(k, code="COMPOSER_BUILD_DIFFERS_FROM_ORDER")
+    stored = sorted(k for k in cons if local_family(k))                    # the actual APPLICABLE local contract, in whatever plain / FW_LOCAL: / ML_LOCAL: shape it was stored
+    for k in stored:
+        if k not in build_request: raise Refusal(k, code="COMPOSER_BUILD_OMITS_ORDER_CONSTRAINT")
+        if build_request[k] != cons[k]: raise Refusal(k, code="COMPOSER_BUILD_DIFFERS_FROM_ORDER")
+    extra = sorted(k for k in build_request if local_family(k) and k not in cons)
+    if extra: raise Refusal(",".join(extra), code="COMPOSER_BUILD_DIFFERS_FROM_ORDER")          # a local constraint (or another consumer's) the order never bound
     return o

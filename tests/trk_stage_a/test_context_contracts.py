@@ -4,14 +4,14 @@ from stage_a.errors import Refusal
 from stage_a.context import news_hub_v2 as N, decision_context as D
 
 def test_actual_availability_is_max_and_fails_closed():
-    assert N.actual_available_asof(False, None, None, 10) is None
-    assert N.actual_available_asof(True, 5, 8, 10) == 8
-    assert N.actual_available_asof(True, 9, 3, 10) == 9
-    assert N.actual_available_asof(True, 5, 9, 10) == 9                         # strictly before the fence
-    with pytest.raises(Refusal): N.actual_available_asof(True, 5, 10, 10)       # equality EXCLUDED (frozen Blueprint s28 NEWS-02: half-open fence)
+    assert N.actual_available_asof(False, None, None, 10, cutoff_kind="SNAPSHOT_FENCE") is None
+    assert N.actual_available_asof(True, 5, 8, 10, cutoff_kind="SNAPSHOT_FENCE") == 8
+    assert N.actual_available_asof(True, 9, 3, 10, cutoff_kind="SNAPSHOT_FENCE") == 9
+    assert N.actual_available_asof(True, 5, 9, 10, cutoff_kind="SNAPSHOT_FENCE") == 9                         # strictly before the fence
+    with pytest.raises(Refusal): N.actual_available_asof(True, 5, 10, 10, cutoff_kind="SNAPSHOT_FENCE")       # equality EXCLUDED (frozen Blueprint s28 NEWS-02: half-open fence)
     for a, b in ((None, 5), (5, None)):
-        with pytest.raises(Refusal): N.actual_available_asof(True, a, b, 10)
-    with pytest.raises(Refusal): N.actual_available_asof(True, 5, 11, 10)
+        with pytest.raises(Refusal): N.actual_available_asof(True, a, b, 10, cutoff_kind="SNAPSHOT_FENCE")
+    with pytest.raises(Refusal): N.actual_available_asof(True, 5, 11, 10, cutoff_kind="SNAPSHOT_FENCE")
 
 def test_legality_lines():
     ok = lambda *a, **k: N.check_dimensions(*a, **k)

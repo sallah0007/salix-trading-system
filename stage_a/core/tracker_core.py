@@ -57,7 +57,7 @@ class TrackerCore:
 
     # ---- replay: pure function of the journal up to a given sequence ---------------------------
     def _replay(self, upto=None):
-        st = dict(obs={}, cands={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={}, reviews={}, tasks={}, authev={}, xform={}, assoc={}, snapiss={}, anc={})
+        st = dict(obs={}, cands={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={}, reviews={}, tasks={}, authev={}, xform={}, assoc={}, snapiss={}, anc={}, passes={})
         for r in self._j.read_from(0):
             if upto is not None and r.seq > upto: break
             b = json.loads(r.body_json); k = r.kind
@@ -94,6 +94,7 @@ class TrackerCore:
             elif k == "AUTH_EVIDENCE": st["authev"][_scope_key(b["subject"], b["version"], b["instrument"], b["timeframe"], b["battery"], b["vintage"], list(b["dependencies"]))] = b      # keyed by the FULL claim scope: one version/scope never clears another
             elif k == "TRANSFORM_VERDICT": st["xform"][_scope_key(b["subject"], b["version"], b["kind"], b["transform_version"], b["lineage_ref"])] = b
             elif k == "SUBJECT_ASSOC": st["assoc"].setdefault(b["subject"], []).append(b["binding"])
+            elif k == "REVERIFY_PASS": st["passes"][b["pass_id"]] = b
             elif k == "ANCESTRY_COMPLETE": st["anc"][b["subject"]] = b
             elif k == "SNAPSHOT_ISSUED": st["snapiss"][b["snapshot_id"]] = b
             elif k == "REVIEW_TASK": st["tasks"][b["task_origin"]] = b
@@ -431,6 +432,20 @@ class TrackerCore:
         l1, l2, dg = verifier(subject, version)
         self.record_verification(subject, version, l2_requirement, l2, l1, now, max_age, getattr(verifier, "__name__", "verifier"), dg, definition_ref)
 
+    def record_reverify_pass(self, pass_id: str, now: int, max_items: int, items: list):
+        """Durable record of ONE bounded re-verification pass: every item (VERIFIED / UNBOUND / REFUSED / KEY_MISMATCH / SKIPPED_BOUND_EXCEEDED) with its detail, so work that was NOT done stays visible after restart and is never
+        mistaken for health (health is only the verifier's recorded result). Idempotent for identical content; the same pass id with different content is refused. Candidate mechanics: not a daemon, no cadence/burst/resource policy is defined."""
+        if not (isinstance(pass_id, str) and pass_id and _int(now) and _int(max_items) and max_items >= 1 and isinstance(items, list)): raise Refusal("pass", code="REVERIFY_PASS_INVALID")
+        body = {"pass_id": pass_id, "at": now, "max_items": max_items, "items": [list(i) for i in items]}
+        def d(st):
+            old = st["passes"].get(pass_id)
+            if old is not None:
+                if {k: old[k] for k in body} == _s(body): return None, None
+                raise Refusal(pass_id, code="REVERIFY_PASS_ID_REUSED")
+            return None, ("REVERIFY_PASS", body)
+        self._commit(d)
+    def reverify_pass(self, pass_id: str):
+        p = self._replay()["passes"].get(pass_id); return None if p is None else dict(p)
     def request_reverification(self, subject: str, trigger: str):
         if trigger not in ("STALE", "ABSENT", "EPOCH_ADVANCED", "QUARANTINE_CLEARED", "SCHEDULED"): raise Refusal(trigger, code="UNKNOWN_REVERIFY_TRIGGER")
         self._commit(lambda st: (None, ("REVERIFY_REQUESTED", {"key": subject, "trigger": trigger})))
@@ -482,6 +497,32 @@ class TrackerCore:
         r = TF.resolve_snapshot(self._timeframes, query_asof, streams)
         self._commit(lambda st: (None, ("SNAPSHOT_RESOLVED", {"query_asof": query_asof, "state": r.state, "entries": [[e.timeframe, e.selection.state, e.selection.parent_id, e.vintage, e.watermark, e.state, list(e.reasons)] for e in r.entries]})))
         return r
+    def resolve_sealed_snapshot(self, instrument: str, query_asof: int, fence: int, member_keys: list, parents_by_tf: dict, watermarks_by_tf: dict, mixed_policy_id=None) -> dict:
+        """ONE bounded callpath: seal (store-backed members, half-open fence, mixed-vintage default-deny) -> per-timeframe selection ONLY among SEALED members -> per-timeframe vintage read from the sealed records -> resolve over the bound
+        timeframe registry. `parents_by_tf` = {timeframe: [(member_key, complete_bool)]}: the caller names candidate parents and their completeness (segmentation proof is `time_family.parent_complete`, supplied) but AVAILABILITY and VINTAGE come
+        from the sealed observation records, never from the caller; a parent excluded by the fence or absent from the seal cannot be selected. `watermarks_by_tf` are SUPPLIED per-timeframe currentness watermarks (no store source exists; unadmitted).
+        A non-SEALED kind (mixed view / held policy) is returned UNRESOLVED_HELD with no selection. The result journals the sealed hash it bound. Candidate mechanics: no calendar, freshness policy or threshold is invented."""
+        from . import time_family as TF
+        if self._timeframes is None: raise Refusal("registry", code="TIMEFRAME_REGISTRY_UNBOUND")
+        if not isinstance(parents_by_tf, dict) or not parents_by_tf or not isinstance(watermarks_by_tf, dict): raise Refusal("streams", code="SNAPSHOT_STREAMS_INVALID")
+        kind, h = self.seal(instrument, query_asof, fence, member_keys, mixed_policy_id)
+        if kind != "SEALED" or h is None: return {"state": "UNRESOLVED_HELD", "reason": kind, "snapshot_hash": h, "resolution": None}
+        st = self._replay(); members = {m["key"]: m for m in st["snaps"][h]["members"]}
+        if not self.verify_snapshot(h, instrument, query_asof, fence, member_keys): raise IntegrityFailure("sealed snapshot does not re-derive")
+        streams = {}
+        for tf, cands in sorted(parents_by_tf.items()):
+            self._timeframes.require(tf)
+            vint = sorted({m["vintage"] for m in members.values() if m["timeframe"] == tf})
+            plist = []
+            for key, complete in cands:
+                m = members.get(key)
+                if m is None: raise Refusal(key, code="PARENT_NOT_IN_SEALED_SNAPSHOT")                 # excluded by the half-open fence, unknown, or not a member
+                if m["timeframe"] != tf: raise Refusal(key, code="PARENT_TIMEFRAME_MISMATCH")
+                plist.append((key, m["available_asof"], complete))
+            streams[tf] = TF.StreamView(tuple(plist), vint[0] if vint else None, watermarks_by_tf.get(tf))       # a SEALED snapshot is single-vintage (mixed => held above), so >1 is unreachable; none => VINTAGE_NOT_RESOLVED
+        r = TF.resolve_snapshot(self._timeframes, query_asof, streams)
+        self._commit(lambda st2: (None, ("SNAPSHOT_RESOLVED", {"query_asof": query_asof, "snapshot_hash": h, "state": r.state, "entries": [[e.timeframe, e.selection.state, e.selection.parent_id, e.vintage, e.watermark, e.state, list(e.reasons)] for e in r.entries]})))
+        return {"state": r.state, "reason": "", "snapshot_hash": h, "resolution": r}
     @staticmethod
     def _proof_blocks(st, subject, version, now, require_authority=False, require_transform=False):
         """Reasons from journaled evidence-truth / transform verdicts that bind EXACTLY (subject, version). Freshness is checked at USE time. Absence of a verdict blocks only when the caller declares the proof REQUIRED

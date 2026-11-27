@@ -62,7 +62,7 @@ class GenerationRegistry:
             if state not in STATES or not _i(ts) or not _s(reason) or not _s(authority): raise Refusal(str(state), code="ML_LIFECYCLE_ENTRY_MALFORMED")
             if self._ledger and ts < self._ledger[-1].ts: raise Refusal("ts", code="ML_LIFECYCLE_TS_REGRESSED")
             prev = self._latest(manifest_id)
-            if prev is not None and prev.state in ("REVOKED", "SUPERSEDED") and state != prev.state:
+            if prev is not None and prev.state in ("REVOKED", "SUPERSEDED") and state != prev.state and not (prev.state == "SUPERSEDED" and state == "REVOKED"):      # SUPERSEDED -> REVOKED is risk-REDUCING (historical-readable -> forensic-only), not restoration
                 raise Refusal("%s -> %s" % (prev.state, state), code="ML_LIFECYCLE_RESTORATION_HELD")   # source: a REVOKED generation is not serving-eligible; revival/restore policy (and for SUPERSEDED) is NOT source-defined => HELD, never accepted. No prior-state table is invented: only these two exits are held, all else is recorded as given.
             e = LifecycleEntry(manifest_id, m.manifest_hash, state, ts, reason, authority, len(self._ledger) + 1)     # monotonic epoch = append position
             self._ledger.append(e); return e
@@ -76,6 +76,12 @@ class GenerationRegistry:
         with self._lock:
             m = self._manifests.get(manifest_id); l = self._latest(manifest_id, as_of_ts)
             return m is not None and l is not None and l.manifest_hash == m.manifest_hash and l.state == "COMPLETE_CERTIFIED"
+    def read_class(self, manifest_id, as_of_ts=None) -> dict:
+        """Source-known read distinction (current MLCore): SUPERSEDED = historical-readable, never new-serving; REVOKED = forensic-only. `later_revoked` is the append-only trust annotation (the ledger now says REVOKED though the as-of state was not). No other transition semantics are claimed."""
+        with self._lock:
+            l = self._latest(manifest_id, as_of_ts); now = self._latest(manifest_id)
+            cls = {"COMPLETE_CERTIFIED": "SERVING_ELIGIBLE", "SUPERSEDED": "HISTORICAL_READABLE", "REVOKED": "FORENSIC_ONLY"}.get(l.state if l else None, "NOT_READABLE")
+            return {"class": cls, "state_as_of": l.state if l else None, "later_revoked": bool(now and now.state == "REVOKED" and (l is None or l.state != "REVOKED"))}
     @property
     def epoch(self): return len(self._ledger)
     def ledger(self): return tuple(self._ledger)

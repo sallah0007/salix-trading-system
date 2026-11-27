@@ -9,17 +9,26 @@ SRC = ("AVAILABLE", "UNAVAILABLE", "NOT_EVALUATED")
 COV = ("COMPLETE", "PARTIAL", "DELAYED", "UNKNOWN", "NOT_EVALUATED")
 PRES = ("EVENTS_PRESENT", "NO_EVENT_RECORDED", "UNKNOWN", "NOT_EVALUATED")
 
+CUTOFF_KINDS = ("DECISION_CUTOFF", "SNAPSHOT_FENCE")
+def _past(stamp: int, cutoff: int, cutoff_kind) -> bool:
+    """True when `stamp` is NOT consumable at `cutoff`. NewsHub V2 states ACTUAL / revised values are consumable only when their availability is <= DECISION CUTOFF (equality consumable). The Tracker snapshot fence is separately HALF-OPEN
+    (available_asof < SNAPSHOT_FENCE_TS; equality excluded). The source states NO relation between a consumer's decision cutoff and a Tracker snapshot fence, so none is assumed: the caller MUST declare which comparator applies."""
+    if cutoff_kind == "DECISION_CUTOFF": return stamp > cutoff
+    if cutoff_kind == "SNAPSHOT_FENCE": return stamp >= cutoff
+    raise Refusal(str(cutoff_kind), code="CUTOFF_KIND_UNDECLARED")
+
 def actual_available_asof(actual_present: bool, publicly_available_at: Optional[int], salix_received_at: Optional[int],
-                          decision_cutoff: int) -> Optional[int]:
-    """ACTUAL_AVAILABLE_ASOF = max(public, SALIX receipt). Missing either while ACTUAL present => fail closed. Consumable only
-    STRICTLY BEFORE the applicable Tracker snapshot fence / decision fence (equality excluded). R21 (D14 reconciliation): the Matrix-current frozen Stage A Blueprint s28 clause (NEWS-02/03, 1xf9Lv0q... para 393 and s29.1) says the frozen half-open fence governs and that retained News Hub wording `<= decision cutoff` is SUBORDINATE and awaits a governed successor. The cutoff passed here is therefore treated AS the fence ('SNAPSHOT_FENCE_TS / decision fence' in that clause). Still OPEN: the exact field relationship between a consumer's decision cutoff and the Tracker snapshot fence where they could differ (not stated in any source read); until recorded, callers must pass the fence."""
+                          decision_cutoff: int, cutoff_kind=None) -> Optional[int]:
+    """ACTUAL_AVAILABLE_ASOF = max(ACTUAL_PUBLICLY_AVAILABLE_AT, ACTUAL_SALIX_RECEIVED_AT) (NewsHub V2 p146). Missing either while ACTUAL is present => fail closed. The source applies the governed TIME_NORMALISATION_ID BEFORE the max: no normalisation
+    table exists here, so the inputs are taken as ALREADY normalised (unadmitted; nothing here proves it). Consumable per the declared `cutoff_kind`: DECISION_CUTOFF (source: <= cutoff) or SNAPSHOT_FENCE (Tracker half-open: strictly before). The source
+    states no relation between a decision cutoff and a snapshot fence; none is assumed or invented, and an undeclared kind is refused. (Supersedes the R21 note that treated the cutoff AS the fence.)"""
     if not actual_present:
         return None
     if publicly_available_at is None or salix_received_at is None:
         raise Refusal("ACTUAL present without both availability timestamps", code="ACTUAL_NOT_CAUSALLY_CONSUMABLE")
     asof = max(publicly_available_at, salix_received_at)
-    if asof >= decision_cutoff:
-        raise Refusal("ACTUAL not strictly before the fence", code="ACTUAL_AFTER_CUTOFF")
+    if _past(asof, decision_cutoff, cutoff_kind):
+        raise Refusal("ACTUAL not consumable at the cutoff", code="ACTUAL_AFTER_CUTOFF")
     return asof
 
 def check_dimensions(req, src, cov, pres, coverage_basis=None, optional_degraded_policy_ref=None,
@@ -138,7 +147,7 @@ def check_daily_record(rec: dict) -> None:
                      rec["COVERAGE_BASIS"], rec.get("OPTIONAL_DEGRADED_POLICY_REF"), rec.get("PRIOR_COVERAGE_OBJECT_REF") is not None,
                      rec.get("PRIOR_COVERAGE_ISSUED_AT"), rec["ISSUED_AT"])
 
-def event_consumable(ev: dict, cutoff: int):
+def event_consumable(ev: dict, cutoff: int, cutoff_kind=None):
     """(consumable: bool, reason). Consumable at a decision cutoff only when EVERY causal stamp is a verified integer STRICTLY < cutoff (half-open fence, equality excluded; NEWS-02/03 frozen clause): REVISION_AVAILABLE_AT (sec 9.0 revision rule),
     PUBLICLY_AVAILABLE_AT and SALIX_RECEIVED_AT (sec 9.0 keeps them distinct and forbids backfilling a publicly-earlier fact into an earlier SALIX state, so SALIX receipt must
     also be <= cutoff), the general AVAILABLE_ASOF, and ACTUAL_AVAILABLE_ASOF when ACTUAL is present. DERIVATION (fail-closed, NOT a source formula): AVAILABLE_ASOF earlier
@@ -146,33 +155,34 @@ def event_consumable(ev: dict, cutoff: int):
     if not _is_ts(cutoff):
         raise Refusal("decision cutoff", code="CUTOFF_MALFORMED")
     check_event_record(ev)                                                              # never rely on the caller having validated
-    if ev["REVISION_AVAILABLE_AT"] >= cutoff:
+    if _past(ev["REVISION_AVAILABLE_AT"], cutoff, cutoff_kind):
         return False, "REVISION_NOT_YET_AVAILABLE"
-    if ev["PUBLICLY_AVAILABLE_AT"] >= cutoff:
+    if _past(ev["PUBLICLY_AVAILABLE_AT"], cutoff, cutoff_kind):
         return False, "PUBLICLY_NOT_YET_AVAILABLE"
-    if ev["SALIX_RECEIVED_AT"] >= cutoff:
+    if _past(ev["SALIX_RECEIVED_AT"], cutoff, cutoff_kind):
         return False, "SALIX_NOT_YET_RECEIVED"
-    if ev["AVAILABLE_ASOF"] >= cutoff:
+    if _past(ev["AVAILABLE_ASOF"], cutoff, cutoff_kind):
         return False, "AVAILABLE_ASOF_AFTER_CUTOFF"
     if ev["AVAILABLE_ASOF"] < max(ev["PUBLICLY_AVAILABLE_AT"], ev["SALIX_RECEIVED_AT"]):
         return False, "AVAILABLE_ASOF_BEFORE_PUBLIC_OR_RECEIPT"
-    if _has(ev, ("ACTUAL_VALUE", "ACTUAL")) and ev["ACTUAL_AVAILABLE_ASOF"] >= cutoff:
+    if _has(ev, ("ACTUAL_VALUE", "ACTUAL")) and _past(ev["ACTUAL_AVAILABLE_ASOF"], cutoff, cutoff_kind):
         return False, "ACTUAL_NOT_YET_AVAILABLE"
     for a, b, stamp in VALUE_STAMPS:
         if _has(ev, (a, b)):
             if ev.get(stamp) is None:
                 return False, stamp + "_MISSING_VALUE_UNVERIFIED"
-            if ev[stamp] >= cutoff:
+            if _past(ev[stamp], cutoff, cutoff_kind):
                 return False, stamp + "_AFTER_CUTOFF"
     return True, ""
 
-def resolve_context(requirement: str, daily_record, event_records, decision_cutoff: int, governed_revision_rule: Optional[str] = None) -> dict:
+def resolve_context(requirement: str, daily_record, event_records, decision_cutoff: int, governed_revision_rule: Optional[str] = None, cutoff_kind=None) -> dict:
     """Deterministic view of context at a decision cutoff. Never infers a quiet day: a missing or not-yet-issued daily record is UNKNOWN, and for REQUIRED it refuses.
     The supplied daily record and every event record are VALIDATED here (check_daily_record / event_consumable -> check_event_record), not trusted to the caller.
     Revisions: News Hub V2 gives no revision-selection rule; the frozen Tracker architecture (sec 7A, raw DOCX 15mPi14mG5MAOerZTnhbWfWXwcOIpzWsA) says that when several causally
     valid, non-equivalent candidates exist and NO GOVERNED deterministic rule authorizes one, the resolver returns MULTIPLE_CANDIDATES / REQUIRE_EXPLICIT_SELECTION. So by default
     (governed_revision_rule=None) distinct payloads for one event id => multiple_candidates; only a caller-supplied rule NAME that this module implements ('HIGHEST_REVISION_SEQ') selects, and then the verdict is NON_AUTHORITATIVE_SELECTION (never USABLE): the rule's governed
     ref/version is a named gap, so a caller string is not proof of governed selection (selection_rule_verified is always False here). Consumers must use consumer_events()."""
+    if cutoff_kind not in CUTOFF_KINDS: raise Refusal(str(cutoff_kind), code="CUTOFF_KIND_UNDECLARED")        # declared up front: never depends on whether an event happens to be present
     if requirement not in REQ:
         raise Refusal(str(requirement), code="BAD_CONTEXT_DIMENSION")
     if not _is_ts(decision_cutoff):
@@ -202,7 +212,7 @@ def resolve_context(requirement: str, daily_record, event_records, decision_cuto
     for eid in sorted(by_id, key=str):
         avail = []
         for ev in by_id[eid]:
-            ok, why = event_consumable(ev, decision_cutoff)
+            ok, why = event_consumable(ev, decision_cutoff, cutoff_kind)
             if ok:
                 avail.append(ev)
             else:

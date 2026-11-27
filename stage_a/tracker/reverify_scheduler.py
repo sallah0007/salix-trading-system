@@ -14,7 +14,7 @@ class PassItem:
     detail: str = ""        # verifier status (PASS/FAIL/INSUFFICIENT_EVIDENCE) or refusal code
     evidence: str = ""      # PINNED_NEW | PINNED_EXISTING (VERIFIED items only)
 
-def run_reverification_pass(core, bindings: dict, subjects, *, now: int, max_age: int, max_items: int = 16):
+def run_reverification_pass(core, bindings: dict, subjects, *, now: int, max_age: int, max_items: int = 16, pass_id: str = None):
     """bindings: {feature_key: (manifest, declared_hashes, store)}. Returns [PassItem]. Only subjects that Core itself reports due are touched (unrelated healthy baselines are left unchanged)."""
     if not isinstance(max_items, int) or isinstance(max_items, bool) or max_items < 1: raise Refusal("max_items", code="SCHEDULER_BOUND_INVALID")
     out = []
@@ -30,4 +30,5 @@ def run_reverification_pass(core, bindings: dict, subjects, *, now: int, max_age
             res, pin = reverify_pinned(core, manifest=manifest, declared=declared, store=store, now=now, max_age=max_age)      # verifies the EXISTING pinned record; builds+pins once only if none exists
             out.append(PassItem(subject, trigger, "VERIFIED", res.status, pin))
         except Refusal as e: out.append(PassItem(subject, trigger, "REFUSED", getattr(e, "code", "") or str(e)))
+    if pass_id is not None: core.record_reverify_pass(pass_id, now, max_items, [[i.subject, i.trigger, i.outcome, i.detail, i.evidence] for i in out])      # optional durable record of what was and was NOT done
     return out
