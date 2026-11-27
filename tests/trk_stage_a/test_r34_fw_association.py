@@ -29,3 +29,13 @@ class Assoc(unittest.TestCase):
         self.assertTrue(a.has_lineage_return(ID, "LIN-1")); self.assertFalse(a.has_lineage_return(ID, "LIN-2")); self.assertFalse(a.has_lineage_return(OTHER, "LIN-1"))
         self.assertEqual([r.return_id for r in a.returns_for(ID)], ["L1", "E2"]); self.assertEqual(s.outcome_for(ID), "OUT1")
 if __name__ == "__main__": unittest.main()
+
+class FinalOutcomeImmutability(unittest.TestCase):
+    def H1(self): return {"PACKAGE_HASH": "original", "OMISSIONS": [{"reason": "original"}]}
+    def test_public_reads_and_the_evaluators_object_cannot_rewrite_the_stored_final_outcome(self):
+        s = FinalResolutionStore(); a = FwAssociation(s); mine = self.H1(); first = s.resolve("R1", ID, lambda: mine)
+        mine["OMISSIONS"][0]["reason"] = "EVALUATOR_MUTATED"; first["OMISSIONS"][0]["reason"] = "RESOLVE_RETURN_MUTATED"                     # evaluator-owned object and the resolve() return
+        got = a.associate_request("R1", ID); self.assertEqual(got, self.H1()); got["OMISSIONS"][0]["reason"] = "ASSOC_READ_MUTATED"; got["PACKAGE_HASH"] = "x"
+        s.outcome_for(ID)["OMISSIONS"].append("y")
+        retry = s.resolve("R2", ID, lambda: {"never": 1}); self.assertEqual(retry, self.H1()); retry["OMISSIONS"][0]["reason"] = "RETRY_RETURN_MUTATED"; self.assertEqual(s.resolve("R3", ID, lambda: {"never": 1}), self.H1()); self.assertEqual(s.evaluations, 1)                       # genuine same-identity retry returns the ORIGINAL
+        a.record_return("L1", "R1", "LINEAGE", lineage_ref="LIN-1"); self.assertEqual(s.outcome_for(ID), self.H1())                        # a later return preserves the outcome

@@ -72,6 +72,8 @@ class SimulatedGateway:
         self.allow_uncommitted_status = allow_uncommitted_status
         self.health_source = health_source                    # object with confirm_snapshot(snapshot)->bool (the Core that issued the snapshot); no source => Core snapshots are NOT confirmable and are denied
         self.allow_shape_only_health = allow_shape_only_health  # LEGACY shape-only harness switch: a plain HealthSnapshot proves nothing about any subject. Default False: denied.
+        self.final_store = None                                 # R35: optional v038.FinalResolutionStore; `resolve_window` is the ONLY path that uses it
+        self._window_outcome: Dict[object, object] = {}
         self.rows: Dict[tuple, list] = {}
         self._outcomes: Dict[str, object] = {}
         self._later_lineage: Dict[str, list] = {}
@@ -137,6 +139,28 @@ class SimulatedGateway:
             return nd("HEALTH_NOT_RESOLVED_BEFORE_FENCE")
         d = B.build_delivered_entry(row, st.status, health.resolution_ref, health.resolved_at)
         return self._store(request_id, Binding(request_id, d, O.delivered_hash(self.t, d), fence))
+
+    def resolve_window(self, request_id: str, identity, entry: DependencyEntry, instrument_id: bytes, timeframe_id: bytes, step_index: int, fence: int, health,
+                       require_current: bool = True, data_vintage_mode: Optional[str] = None, observed_at: Optional[int] = None):
+        """Window-level resolution (Contract V0.38 FINAL RESOLUTION IDENTITY, current 52-56): a NEW REQUEST_ID for the SAME final resolution identity reuses the stored outcome and is never re-evaluated. REQUEST_ID alone is not the identity.
+        The identity (consumer_id, binding id, scope, window/fence id) is SUPPLIED and its string encoding is not defined by any source read, so it is not derived here; instead the FIRST evaluation pins the exact evaluation parameters to the identity
+        and a later call that names the same identity with DIFFERENT parameters (dependency, version, instrument, timeframe, step, fence, vintage mode, observation time) is refused rather than silently answered with another window's outcome.
+        Candidate/simulation only: the store is the single-process FinalResolutionStore (D10); `resolve` (request-id keyed) is unchanged and does NOT use the final store."""
+        if self.final_store is None: raise Refusal("no final store", code="GATEWAY_FINAL_RESOLUTION_STORE_NOT_CONFIGURED")
+        if not isinstance(request_id, str) or not request_id: raise Refusal("request_id", code="GATEWAY_REQUEST_ID_INVALID")
+        params = [x.hex() if isinstance(x, bytes) else x for x in (entry.feature_id, entry.feature_version, entry.requirement_class, entry.expected_projection, instrument_id, timeframe_id, step_index, fence, require_current, data_vintage_mode, observed_at)]
+        prior = self.final_store.pin_of(identity)
+        if prior is not None and prior != params: raise Refusal(request_id, code="RESOLUTION_IDENTITY_PARAMETERS_DIFFER")
+        if request_id in self._outcomes and self.final_store.identity_of(getattr(identity, "consumer_id", None), request_id) is None: raise Refusal(request_id, code="REQUEST_ID_USED_OUTSIDE_THIS_WINDOW")
+        def evaluate():
+            self.final_store.set_pin(identity, params)                                  # pinned BEFORE the outcome exists; a crash in between fails closed (a different-parameter request is refused)
+            o = self.resolve(request_id, entry, instrument_id, timeframe_id, step_index, fence, health, require_current, data_vintage_mode, observed_at)
+            self._window_outcome[identity] = o; return o
+        out = self.final_store.resolve(request_id, identity, evaluate)
+        canon = self._window_outcome.get(identity)
+        if canon is None: canon = self._window_outcome[identity] = out                  # restart/other process: adopt the STORED outcome (the store is the authority)
+        elif canon != out: raise Refusal(request_id, code="WINDOW_OUTCOME_STORE_DISAGREES")
+        self._outcomes.setdefault(request_id, canon); return canon
 
     def note_correction_after_bind(self, request_id: str, evidence: Ref):
         """Correction after bind: the stored binding is NOT rewritten; later lineage evidence is appended beside it."""

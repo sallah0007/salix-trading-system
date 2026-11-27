@@ -42,7 +42,7 @@ def test_store_concurrent_callers_smoke_unsynchronised_start():
     # NOT barrier-based: threads start without a start gate or evaluator-entry barrier. Smoke only; forced interleavings live in
     # test_v038_conformance.py (evaluator-entry Events).
     s, i, outs = V.FinalResolutionStore(), _ident("w3"), []
-    def run(k): outs.append(s.resolve(f"r{k}", i, lambda: object()))
+    def run(k): outs.append(s.resolve(f"r{k}", i, lambda: {"o": 1}))
     ts = [threading.Thread(target=run, args=(k,)) for k in range(16)]
     [t.start() for t in ts]; [t.join() for t in ts]
-    assert len({id(o) for o in outs}) == 1 and s.evaluations == 1
+    assert all(o == {"o": 1} for o in outs) and len(outs) == 16 and s.evaluations == 1      # R35: detached equal copies, one evaluation

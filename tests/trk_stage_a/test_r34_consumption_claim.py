@@ -23,16 +23,27 @@ class Era(unittest.TestCase):
 class Revocation(unittest.TestCase):
     D = {"M3": ["M2"], "M2": ["M1"], "M1": []}
     def test_direct_and_transitive_revoked_contributors_are_reported_and_unknowns_fail_closed(self):
-        r = CC.revocation_report("M3", self.D, lambda m: m == "M1"); self.assertEqual((r["status"], r["affected"], r["qualified"]), ("AFFECTED", {"M1": CC.DERIVED_FROM_REVOKED}, False))
-        r = CC.revocation_report("M3", self.D, lambda m: m == "M2"); self.assertEqual(r["affected"], {"M2": CC.CONTRIBUTOR_LATER_REVOKED})
+        r = CC.revocation_report("M3", self.D, lambda m: m == "M1"); self.assertEqual((r["status"], r["affected"], r["qualified"]), ("AFFECTED", {"M1": {"direct": False, "transitive": True, "codes": (CC.DERIVED_FROM_REVOKED,)}}, False))
+        r = CC.revocation_report("M3", self.D, lambda m: m == "M2"); self.assertEqual(r["affected"], {"M2": {"direct": True, "transitive": False, "codes": (CC.CONTRIBUTOR_LATER_REVOKED,)}})
         self.assertEqual(CC.revocation_report("M3", self.D, lambda m: False)["status"], "CLEAN")
         self.assertEqual(CC.revocation_report("M3", self.D, lambda m: None if m == "M1" else False)["status"], "UNKNOWN")             # unknown revocation state is not clean
         self.assertEqual(CC.revocation_report("M3", {"M3": ["M2"]}, lambda m: False)["unresolved"], ("M2",))                           # ancestor missing from lineage map
         self.assertEqual(code(CC.revocation_report, "A", {"A": ["B"], "B": ["A"]}, lambda m: False), "LINEAGE_CYCLE"); self.assertEqual(code(CC.revocation_report, "A", {"A": "B"}, lambda m: False), "LINEAGE_ENTRY_MALFORMED")
+    def test_malformed_callback_results_never_become_clean(self):
+        for bad in ("UNKNOWN", 1, 0, {}, [], "", "False", 0.0): self.assertEqual(code(CC.revocation_report, "R", {"R": ["A"], "A": []}, lambda m, b=bad: b), "REVOCATION_CALLBACK_RESULT_INVALID", repr(bad))
+        D = {"R": ["A"], "A": []}; self.assertEqual(CC.revocation_report("R", D, lambda m: False)["status"], "CLEAN"); self.assertEqual(CC.revocation_report("R", D, lambda m: True)["status"], "AFFECTED"); self.assertEqual(CC.revocation_report("R", D, lambda m: None)["status"], "UNKNOWN")
+    def test_ancestor_order_permutation_and_a_shared_direct_plus_transitive_ancestor_keep_all_path_facts(self):
+        a = CC.revocation_report("R", {"R": ["B", "A"], "B": ["A"], "A": []}, lambda m: m == "A"); b = CC.revocation_report("R", {"R": ["A", "B"], "B": ["A"], "A": []}, lambda m: m == "A")
+        self.assertEqual(a, b); self.assertEqual(a["affected"]["A"], {"direct": True, "transitive": True, "codes": (CC.CONTRIBUTOR_LATER_REVOKED, CC.DERIVED_FROM_REVOKED)})
+        self.assertEqual(CC.revocation_report("R", {"R": ["X"], "X": [], "Y": ["A"], "A": []}, lambda m: m == "A")["status"], "CLEAN")                # an unrelated revoked generation does not affect a fully resolved baseline
     def test_against_the_real_registry_revoked_state(self):
         r = GL.GenerationRegistry()
         for i in ("M1", "M2"): r.register_manifest(man(i)); r.append_lifecycle(i, "COMPLETE_CERTIFIED", 10, "c", "A")
         r.append_lifecycle("M1", "REVOKED", 11, "bad", "A")
         rev = lambda m: (None if r.manifest_of(m) is None else r.read_class(m)["class"] == "FORENSIC_ONLY")
-        self.assertEqual(CC.revocation_report("M2", {"M2": ["M1"], "M1": []}, rev)["affected"], {"M1": CC.CONTRIBUTOR_LATER_REVOKED})
+        self.assertEqual(CC.revocation_report("M2", {"M2": ["M1"], "M1": []}, rev)["affected"], {"M1": {"direct": True, "transitive": False, "codes": (CC.CONTRIBUTOR_LATER_REVOKED,)}})
+class RootLineage(unittest.TestCase):
+    def test_a_root_with_no_lineage_entry_is_unknown_never_clean(self):          # R35 sweep: the walk of an unlisted root visits nothing, so only the explicit check keeps it from CLEAN
+        r = CC.revocation_report("M", {}, lambda m: False); self.assertEqual((r["status"], r["unresolved"]), ("UNKNOWN", ("M",)))
+        r = CC.revocation_report("M", {"M": []}, lambda m: False); self.assertEqual((r["status"], r["unresolved"]), ("CLEAN", ()))
 if __name__ == "__main__": unittest.main()
