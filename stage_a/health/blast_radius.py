@@ -9,7 +9,6 @@ EXACT MISSING SEMANTIC RULE (not invented): what action an UNDETERMINED consumer
 from dataclasses import dataclass
 from typing import Dict, Tuple, Iterable, Optional
 from ..errors import Refusal
-from ..fw.lanes import ConsumerManifest, closure_contains_target
 
 AFFECTED = "AFFECTED_PROVEN_DEPENDENCY"
 UNAFFECTED = "NOT_AFFECTED_NO_PROVEN_DEPENDENCY"
@@ -42,8 +41,10 @@ def downstream_features(failed: bytes, feature_deps: Dict[bytes, Tuple[bytes, ..
             incomplete = True                                  # a dependency target whose own lineage was never supplied
     return affected, incomplete
 
-def blast_radius(failed: bytes, consumers: Dict[str, ConsumerManifest], feature_deps: Dict[bytes, Tuple[bytes, ...]],
+def blast_radius(failed: bytes, consumers: Dict[str, object], feature_deps: Dict[bytes, Tuple[bytes, ...]], closure_contains_target,
                  unread_features: Iterable[bytes] = ()) -> Dict[str, CarriedUpstreamImpact]:
+    """closure_contains_target(manifest, feature, consumers) -> bool is INJECTED (Health must not import FW/ML: architecture rule Q18-Q20); it must raise
+    Refusal for unread ancestry (fw.lanes.closure_contains_target does)."""
     if not isinstance(failed, bytes) or not failed:
         raise Refusal(repr(failed), code="FAILED_SUBJECT_NOT_AN_IDENTITY")
     affected, features_incomplete = downstream_features(failed, feature_deps, unread_features)

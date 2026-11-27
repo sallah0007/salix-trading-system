@@ -55,3 +55,6 @@ Code: `stage_a/binding/`, `stage_a/coordination/provider_contract.py`; edits to 
 - Code: `composer/expression/{evaluator,opcodes,schema}.py`, `tracker/{quant_intake_adapter,quant_certification}.py`, `tracker/verification/independent_traversal.py`, `tracker/materialization/stateful_materializer.py`, `gateway/v038.py` (BOTH).
 - Tests: `test_r11_arithmetic.py`, `test_r11_intake_request.py`, `test_r11_both.py`; sweeps `mutation_sweep_r11.py` (16), `mutation_sweep_r11b.py` (14).
 - Docs: `docs/proposals/{E03_responsibility_map,STATUS_EVENT_OWNERSHIP,A02_trace_and_inputs}.md`, `coder_returns/TRK-STAGE-A-TRACKER-R11.md`.
+
+## 10. R12 additions
+Code: `gateway/v038.py` (BOTH, consumer-local request keys), `gateway/contracts.py`, `tracker/status_projection.py`, `composer/expression/{ceilings,sqe_opset}.py`, `tracker/quant_intake_adapter.py`, `health/blast_radius.py`, `ml/receiver.py`. Tests `test_r12_*.py`, `test_r11_both.py`; sweeps `mutation_sweep_r11b.py` (17), `mutation_sweep_r12.py` (39). Return `coder_returns/TRK-STAGE-A-TRACKER-R12.md`.

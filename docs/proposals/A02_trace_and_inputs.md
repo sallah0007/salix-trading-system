@@ -30,3 +30,8 @@ Group 3 - D13 byte layouts and D14-D18:
 Group 4 - provider/clock/host/grants:
 - qualified provider, clock, host, grants | Build Plan E-01/E-06, R7 | Owner/Manager | qualify provider (D10) | real-world qualification, REAL connection status; NOT component authoring
 I did not recover D14-D18 answers in this segment; reading for them is INSUFFICIENT_EVIDENCE, not an absence.
+
+## R12 update
+- Ceilings: `composer/expression/ceilings.py` validates RESOURCE_CEILING_REF + the seven ceilings at intake (absence refuses, nothing defaulted); `MAX_NODES`/`MAX_WINDOW` removed from schema.py. Not enforced, exact missing rules: MAX_STATE_ELEMENTS count for lag/rolling prototype constructs; class-to-structure compatibility (Annex req. 3); canonical ascending opcode CODE order (no code table).
+- Operators: `composer/expression/sqe_opset.py` implements comparison, EQ_CANONICAL, SELECT (two branches, lazy), VECTOR_/MATRIX_ELEMENTWISE_*, FIXED_SUM, FIXED_DOT as reference semantics. Not wired to manifest admission (no numeric opcode table, no program byte grammar). Multi-branch CASE tie rule is missing. This is NOT a full SQE_OPSET_V1_1 implementation.
+- D13/D14-D18 recovery: a Drive full-text search returned Build Plan versions V206-V213 only; their relevant clauses were not read in this segment. Status: INSUFFICIENT_EVIDENCE (search incomplete), not absence.

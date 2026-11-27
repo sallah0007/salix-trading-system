@@ -3,8 +3,9 @@ import unittest
 from stage_a.errors import Refusal
 from stage_a.fw.lanes import ConsumerManifest as M
 from stage_a.health import blast_radius as B
+from stage_a.fw.lanes import closure_contains_target as CT
 Q, A, X, Y = b"quant", b"base-a", b"feat-x", b"feat-y"
-def run(consumers, deps=None, **kw): return B.blast_radius(Q, {m.manifest_id: m for m in consumers}, deps if deps is not None else {Q: (), A: (), X: (Q,), Y: (X,)}, **kw)
+def run(consumers, deps=None, **kw): return B.blast_radius(Q, {m.manifest_id: m for m in consumers}, deps if deps is not None else {Q: (), A: (), X: (Q,), Y: (X,)}, CT, **kw)
 class T(unittest.TestCase):
     def test_ob2_unrelated_baseline_is_not_blocked_while_quant_consumer_is(self):
         r = run([M("base", "FW", (A,)), M("model", "FW", (Q,))])
@@ -32,7 +33,7 @@ class T(unittest.TestCase):
         self.assertFalse(any("state" in f for f in B.CarriedUpstreamImpact.__dataclass_fields__))
     def test_failed_subject_must_be_an_identity(self):
         for bad in ("quant", b"", None):
-            with self.assertRaises(Refusal): B.blast_radius(bad, {}, {})
+            with self.assertRaises(Refusal): B.blast_radius(bad, {}, {}, CT)
     def test_feature_dependency_cycle_terminates(self):
         r = run([M("m", "FW", (X,))], {Q: (X,), X: (Q,)}); self.assertEqual(r["m"].verdict, B.AFFECTED)
 if __name__ == "__main__": unittest.main()
