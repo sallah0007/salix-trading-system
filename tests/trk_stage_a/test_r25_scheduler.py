@@ -71,3 +71,36 @@ class GatewayHealthBinding(unittest.TestCase):
         hs = self.hs(G.HealthBinding(bytes(range(16, 32)), "1", I, I)); self.assertEqual(self.out(hs).reason, "HEALTH_BINDING_MISMATCH")
     def test_plain_external_snapshot_path_is_unchanged(self):
         self.assertIsInstance(self.out(G.HealthSnapshot(R("hl"), 4, True)), G.Binding)          # externally admitted binding/provenance is NOT modelled or claimed here
+
+class PinnedEvidence(unittest.TestCase):
+    """R26: the scheduler verifies the EXISTING pinned candidate record; it never rebuilds/overwrites it."""
+    def setUp(self):
+        import json; self.json = json
+        self.m = Manifest.from_dict(momentum_manifest()); self.store = SIMS(); self.b = {KEY: (self.m, declared(self.m), self.store)}
+        from stage_a.tracker.reverification import pinned_key
+        from stage_a.identifiers import Scope, FeatureKey
+        self.pk = pinned_key(FeatureKey(Scope(self.m.instrument, self.m.timeframe), self.m.feature_id, self.m.feature_version))
+    def raw(self): return self.store._i._d["SIMULATION/" + self.pk][0]
+    def test_first_pass_pins_then_later_passes_verify_the_same_bytes(self):
+        c = core(); r = S.run_reverification_pass(c, self.b, [KEY], now=10, max_age=5); self.assertEqual((r[0].evidence, r[0].detail), ("PINNED_NEW", "PASS")); pinned = self.raw()
+        r = S.run_reverification_pass(c, self.b, [KEY], now=20, max_age=5); self.assertEqual((r[0].trigger, r[0].evidence, r[0].detail), ("STALE", "PINNED_EXISTING", "PASS")); self.assertEqual(self.raw(), pinned)
+    def test_altered_pinned_record_is_verified_as_found_fails_and_is_never_repaired(self):
+        c = core(); S.run_reverification_pass(c, self.b, [KEY], now=10, max_age=5)
+        rec = self.json.loads(self.raw()); rec["materialization_hash"] = "arbitrary-corrupt-hash"; bad = self.json.dumps(rec, sort_keys=True, separators=(",", ":")).encode()
+        self.store._i._d["SIMULATION/" + self.pk] = (bad, 99)
+        r = S.run_reverification_pass(c, self.b, [KEY], now=20, max_age=5); self.assertEqual((r[0].evidence, r[0].detail), ("PINNED_EXISTING", "FAIL")); self.assertEqual(self.raw(), bad)
+        self.assertEqual(c.recording_health(KEY, "1", 21).state, "NOT_HEALTHY"); self.assertFalse(c.gateway_health(KEY, "1", 21, R("hl"), 20, binding=G.HealthBinding(I, "1", I, I)).acceptable)
+    def test_garbage_pinned_bytes_and_probe_tamper_fail(self):
+        for payload in (b"\xff\xfe not json", b"[1,2]", b"{}"):
+            c = core(); S.run_reverification_pass(c, self.b, [KEY], now=10, max_age=5); self.store._i._d["SIMULATION/" + self.pk] = (payload, 99)
+            r = S.run_reverification_pass(c, self.b, [KEY], now=20, max_age=5); self.assertEqual(r[0].detail, "FAIL", payload); self.assertEqual(c.recording_health(KEY, "1", 21).state, "NOT_HEALTHY")
+        self.setUp()      # fresh store: the loop above left garbage pinned
+        c = core(); S.run_reverification_pass(c, self.b, [KEY], now=10, max_age=5); rec = self.json.loads(self.raw()); rec["probe_batch"] = rec["probe_batch"][:-1]
+        self.store._i._d["SIMULATION/" + self.pk] = (self.json.dumps(rec).encode(), 99); self.assertEqual(S.run_reverification_pass(c, self.b, [KEY], now=20, max_age=5)[0].detail, "FAIL")
+    def test_existing_pin_for_other_feature_binding_fails_scope(self):
+        c = core(); S.run_reverification_pass(c, self.b, [KEY], now=10, max_age=5); rec = self.json.loads(self.raw()); rec["feature_version"] = "2"
+        self.store._i._d["SIMULATION/" + self.pk] = (self.json.dumps(rec).encode(), 99); self.assertEqual(S.run_reverification_pass(c, self.b, [KEY], now=20, max_age=5)[0].detail, "FAIL")
+    def test_pin_race_never_replaces_and_wrong_class_store_refused_before_any_write(self):
+        c = core(); S.run_reverification_pass(c, self.b, [KEY], now=10, max_age=5); before = self.raw()
+        self.assertFalse(self.store.put_if_absent(self.pk, b"other")); self.assertEqual(self.raw(), before)
+        plain = InMemoryObjectStore(); c2 = core(); r = S.run_reverification_pass(c2, {KEY: (self.m, declared(self.m), plain)}, [KEY], now=10, max_age=5); self.assertEqual(r[0].detail, "REVERIFY_CARRIER_CLASS_MISMATCH"); self.assertEqual(plain.list_prefix(""), [])

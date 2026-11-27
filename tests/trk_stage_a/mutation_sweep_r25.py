@@ -9,7 +9,8 @@ M = [
  (IH, '_D_MATERIALIZATION = "SALIX_MATERIALIZATION_V1"', '_D_MATERIALIZATION = "SALIX_MATERIALIZATION_V2"'),
  (RV, '    if got != want: raise Refusal', '    if False: raise Refusal'),
  (RV, 'want = SIMULATION if core.simulation else QUALIFIED', 'want = got'),
- (RV, 'evidence_class=COMPOSED_RECOMPUTATION, result=res)', 'evidence_class=COMPOSED_RECOMPUTATION, result=None)'),
+ (RV, 'evidence_class=COMPOSED_RECOMPUTATION, result=res)\n    return res\n', 'evidence_class=COMPOSED_RECOMPUTATION, result=None)\n    return res\n'),
+ (RV, 'evidence_class=COMPOSED_RECOMPUTATION, result=res)\n    return res, state', 'evidence_class=COMPOSED_RECOMPUTATION, result=None)\n    return res, state'),
  (TC, 'if result is None: raise Refusal("composed evidence needs the verifier result"', 'if False: raise Refusal("composed evidence needs the verifier result"'),
  (TC, 'if not result_is_self_consistent(result): raise', 'if False: raise'),
  (TC, 'result.scope != SCOPE_MATERIALIZATION or ', ''),
@@ -68,8 +69,19 @@ M = [
  ("stage_a/tracker/evidence_truth.py", 'if spec.missingness_observable is not True or not', 'if not'),
  (TC, 'if a is not None and a["status"] != "VALID": reasons.append', 'if False: reasons.append'),
  (TC, 'if x is not None and x["status"] != "VALID": reasons.append', 'if False: reasons.append'),
+ ("stage_a/tracker/reverification.py", 'store.put_if_absent(k, canonical_bytes(rec)); got = store.get(k)', 'store.put_if_match(k, canonical_bytes(rec), 0) if False else None; got = (canonical_bytes(rec),)'),
+ ("stage_a/tracker/reverification.py", 'got = store.get(k); state = "PINNED_EXISTING"\n    if got is None:', 'got = None; state = "PINNED_EXISTING"\n    if got is None:'),
+ ("stage_a/tracker/reverification.py", 'except (ValueError, UnicodeDecodeError): rec = {}', 'except (ValueError, UnicodeDecodeError): rec = rec'),
+ ("stage_a/tracker/reverification.py", 'rec = rec if isinstance(rec, dict) else {}', 'pass'),
+ ("stage_a/tracker/reverification.py", '    _require_class(core, store)\n    fk = FeatureKey(Scope(manifest.instrument, manifest.timeframe), manifest.feature_id, manifest.feature_version); k = pinned_key(fk)', '    fk = FeatureKey(Scope(manifest.instrument, manifest.timeframe), manifest.feature_id, manifest.feature_version); k = pinned_key(fk)'),
+ ("stage_a/core/time_family.py", 'if not isinstance(v, StreamView): raise Refusal(tf, code="SNAPSHOT_STREAM_NOT_PER_TIMEFRAME")', 'pass'),
+ ("stage_a/core/time_family.py", 'if not (isinstance(v.vintage, str) and v.vintage): why.append("VINTAGE_NOT_RESOLVED")', 'pass'),
+ ("stage_a/core/time_family.py", 'if not _int(v.watermark) or v.watermark < 0: why.append("WATERMARK_NOT_RESOLVED")', 'pass'),
+ ("stage_a/core/time_family.py", 'if sel.state == MULTIPLE_CANDIDATES: why.append("AMBIGUOUS_PARENT")', 'pass'),
+ ("stage_a/core/time_family.py", 'RESOLVED if all(e.state == RESOLVED for e in out) else UNRESOLVED)', 'RESOLVED if any(e.state == RESOLVED for e in out) else UNRESOLVED)'),
+ (TC, 'if self._timeframes is None: raise Refusal("registry", code="TIMEFRAME_REGISTRY_UNBOUND")', 'pass'),
 ]
-T = ["tests/trk_stage_a/test_r25_defects.py", "tests/trk_stage_a/test_r24_composed.py", "tests/trk_stage_a/test_verifier_independence.py", "tests/trk_stage_a/test_health_envelope.py", "tests/trk_stage_a/test_r24_core.py", "tests/trk_stage_a/test_r25_scheduler.py", "tests/trk_stage_a/test_r26_evidence_truth.py"]
+T = ["tests/trk_stage_a/test_r25_defects.py", "tests/trk_stage_a/test_r24_composed.py", "tests/trk_stage_a/test_verifier_independence.py", "tests/trk_stage_a/test_health_envelope.py", "tests/trk_stage_a/test_r24_core.py", "tests/trk_stage_a/test_r25_scheduler.py", "tests/trk_stage_a/test_r26_evidence_truth.py", "tests/trk_stage_a/test_r26_snapshot.py"]
 def run():
     try: return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", *[str(ROOT / t) for t in T]], cwd=ROOT, capture_output=True, text=True, timeout=90, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1")).returncode
     except subprocess.TimeoutExpired: return 99

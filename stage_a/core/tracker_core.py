@@ -441,6 +441,13 @@ class TrackerCore:
         missing = list(QUALIFIED_PREREQS_UNBOUND) + ([] if self._chain is not None else ["BASELINE_LIFECYCLE_AUTHORITY_UNBOUND"])
         return {"state": HELD, "eligible": False, "reasons": reasons, "undetermined_inputs": missing, "mode": "QUALIFIED_HELD"}
 
+    def resolve_snapshot(self, query_asof: int, streams: dict):
+        """Cross-timeframe snapshot resolution over the bound timeframe registry (UNBOUND registry => refusal: no calendar default). Journals the per-timeframe result; it selects/binds nothing else."""
+        from . import time_family as TF
+        if self._timeframes is None: raise Refusal("registry", code="TIMEFRAME_REGISTRY_UNBOUND")
+        r = TF.resolve_snapshot(self._timeframes, query_asof, streams)
+        self._commit(lambda st: (None, ("SNAPSHOT_RESOLVED", {"query_asof": query_asof, "state": r.state, "entries": [[e.timeframe, e.selection.state, e.selection.parent_id, e.vintage, e.watermark, e.state, list(e.reasons)] for e in r.entries]})))
+        return r
     def judge_transition_evidence(self, claim, index: dict, now: int):
         """Candidate evidence-truth predicate (tracker.evidence_truth) with its verdict journaled; the caller-supplied index is NOT an admitted authority. Records the verdict; never advances authority."""
         from ..tracker.evidence_truth import judge_transition_evidence
