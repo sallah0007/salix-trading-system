@@ -10,7 +10,11 @@ from stage_a.health import envelope as HV
 from stage_a.tracker import reverification as RV
 from stage_a.tracker.verification import independent_hashing as ih
 from stage_a.tracker.verification.independent_encoding import enc_bytes
-from stage_a.tracker.verification.verification_result import issue_result, make_result, SCOPE_MATERIALIZATION
+from stage_a.tracker.verification.verification_result import make_result, SCOPE_MATERIALIZATION
+from stage_a.tracker.verification import verification_result as _VR
+def receipted(r):
+    """TEST-ONLY: simulates 'this exact result came from a verifier run' so that the LATER binding/level checks of record_verification can be exercised on shapes the real verifier never emits. Not a public API; the provenance test below uses no such helper."""
+    _VR._RECEIPTS.add(r.result_hash); return r
 from stage_a.tracker.verification.stateful_verifier import verify_materialization, probe_for
 from stage_a.tracker.materialization.stateful_materializer import StatefulMaterializer
 from stage_a.composer.expression.canonical_encoding import encode_manifest
@@ -77,10 +81,10 @@ class B3ComposedProvenance(unittest.TestCase):
         self.assertIsNone(rec())                                                                                  # genuine positive
         self.assertEqual(rec(res=replace(r, result_hash="0" * 64)), "HEALTH_COMPOSED_RESULT_FORGED")
         self.assertEqual(rec(res=replace(r, checks=tuple((n, True) for n, _ in r.checks[:-1]))), "HEALTH_COMPOSED_RESULT_FORGED")
-        wrong_scope = issue_result("PASS", "OTHER_SCOPE", dict(r.subject), r.checks, r.reasons); self.assertEqual(rec(res=wrong_scope, dg=wrong_scope.result_hash), "HEALTH_COMPOSED_RESULT_UNBOUND")
+        wrong_scope = make_result("PASS", "OTHER_SCOPE", dict(r.subject), r.checks, r.reasons); self.assertEqual(rec(res=wrong_scope, dg=wrong_scope.result_hash), "HEALTH_COMPOSED_RESULT_UNBOUND")
         self.assertEqual(rec(subject="XAUUSD/H4/other/1"), "HEALTH_COMPOSED_RESULT_UNBOUND")                      # subject binding
         self.assertEqual(rec(dg="1" * 64), "HEALTH_COMPOSED_RESULT_UNBOUND"); self.assertEqual(rec(vid="not-the-verifier"), "HEALTH_COMPOSED_RESULT_UNBOUND")
-        fl = issue_result("FAIL", SCOPE_MATERIALIZATION, dict(r.subject), (("record_field_set", False),), ["x"]); self.assertEqual(rec(res=fl, dg=fl.result_hash), "HEALTH_COMPOSED_RESULT_UNBOUND")   # claims PASS/PASS over a failing result
+        fl = make_result("FAIL", SCOPE_MATERIALIZATION, dict(r.subject), (("record_field_set", False),), ["x"]); self.assertEqual(rec(res=fl, dg=fl.result_hash), "HEALTH_COMPOSED_RESULT_UNBOUND")   # claims PASS/PASS over a failing result
         self.assertEqual(rec(req="NOT_APPLICABLE_BY_GOVERNED_DEFINITION"), "HEALTH_COMPOSED_RESULT_UNBOUND")
     def test_result_on_caller_asserted_class_is_refused_and_honest_label_is_preserved(self):
         c = core(); self.assertEqual(code(c.record_verification, "S", "1", "REQUIRED", "PASS", "PASS", 10, 5, "v", "d", result=self.good()), "HEALTH_RESULT_WITHOUT_COMPOSED_CLASS")
@@ -132,10 +136,10 @@ class B5AntiReplaySubject(unittest.TestCase):
 if __name__ == "__main__": unittest.main()
 
 class B22ReviewerCarrier(unittest.TestCase):
-    T = dict(task_origin="T1", framing_hash="f" * 64, context_hash="c" * 64, forbidden_inputs=["prior-verdict", "owner-hint"])
+    T = dict(task_origin="T1", framing_hash="f" * 64, context_hash="c" * 64, forbidden_inputs=["prior-verdict", "owner-hint"], permitted_evidence_refs=["doc:A#p3", "doc:B#p1"])
     def carrier(self, **kw):
         c = dict(finding_id="F1", reviewer_role="CODER", reviewer_version="1", implementation="MODEL", topology="SINGLE", context_hash="c" * 64, task_origin="T1", framing_hash="f" * 64,
-                 evidence_refs=["doc:A#p3"], affected_scope="XAUUSD/H4", proposed_investigation="re-derive", forbidden_inputs=["prior-verdict", "owner-hint"], author="codex"); c.update(kw); return c
+                 evidence_refs=["doc:A#p3"], affected_scope="XAUUSD/H4", proposed_investigation="re-derive", forbidden_inputs=["prior-verdict", "owner-hint"], author="codex", model_version="m-1"); c.update(kw); return c
     def mk(self, bind=True):
         c = core(); bind and c.bind_review_task(self.T); return c
     def test_positive_records_finding_and_is_idempotent_and_mutates_nothing_else(self):
@@ -173,7 +177,7 @@ class R26Defects(unittest.TestCase):
     """Codex R26 reproductions + wider negatives."""
     def mkres(self, status, names=None, key=KEY, **kw):
         from stage_a.tracker.verification.verification_result import PASS_PROFILE
-        return issue_result(status, SCOPE_MATERIALIZATION, {"expect_scope_key": key}, [(n, True) for n in (names if names is not None else sorted(PASS_PROFILE))], kw.get("reasons", []))
+        return receipted(make_result(status, SCOPE_MATERIALIZATION, {"expect_scope_key": key}, [(n, True) for n in (names if names is not None else sorted(PASS_PROFILE))], kw.get("reasons", [])))
     def rec(self, c, r, version="1", l1="PASS", l2="PASS", key=KEY):
         from stage_a.tracker.verification.verification_result import COMPOSED_VERIFIER_ID
         return code(c.record_verification, key, version, "REQUIRED", l2, l1, 10, 5, COMPOSED_VERIFIER_ID, r.result_hash, evidence_class=COMPOSED_RECOMPUTATION, result=r)
@@ -216,8 +220,34 @@ class R27AssertedResultIsNotAVerifierRun(unittest.TestCase):
         c = core()
         self.assertEqual(code(c.record_verification, "XAUUSD/H4/mom3/1", "1", "REQUIRED", "PASS", "PASS", 10, 5, COMPOSED_VERIFIER_ID, r.result_hash, evidence_class=COMPOSED_RECOMPUTATION, result=r), "HEALTH_COMPOSED_RESULT_NOT_FROM_VERIFIER_RUN")
         self.assertEqual(c.recording_health("XAUUSD/H4/mom3/1", "1", 11).state, "UNKNOWN")                           # nothing was recorded: no composed/healthy label exists
-    def test_receipt_only_from_issue_path(self):
+    def test_there_is_no_public_mint_api_and_real_run_receipt_is_the_only_public_route(self):
         from stage_a.tracker.verification import verification_result as VR
+        self.assertFalse(hasattr(VR, "issue_result"))                                                                  # R29: no public mint-any-result API
         r = make_result("PASS", SCOPE_MATERIALIZATION, {}, [("x", True)], []); self.assertFalse(VR.issued_by_verifier_run(r))
-        r2 = VR.issue_result("PASS", SCOPE_MATERIALIZATION, {}, [("x", True)], []); self.assertTrue(VR.issued_by_verifier_run(r2))
-        self.assertFalse(VR.issued_by_verifier_run(dataclasses.replace(r2, status="FAIL")))                       # edited after issue: hash no longer self-consistent
+        g = world_pass(); self.assertTrue(VR.issued_by_verifier_run(g))                                                # produced by the actual verifier run
+        self.assertFalse(VR.issued_by_verifier_run(dataclasses.replace(g, status="FAIL")))                             # edited after the run: no longer self-consistent
+    def test_genuine_verifier_pass_and_fail_through_the_public_record_path(self):
+        from stage_a.tracker.verification.verification_result import COMPOSED_VERIFIER_ID
+        c = core(); g = world_pass()
+        self.assertIsNone(code(c.record_verification, KEY, "1", "REQUIRED", "PASS", "PASS", 10, 5, COMPOSED_VERIFIER_ID, g.result_hash, evidence_class=COMPOSED_RECOMPUTATION, result=g))
+        self.assertEqual(c.recording_health(KEY, "1", 11).evidence_class, "SIMULATION_COMPOSED_RECOMPUTATION")
+
+
+class R29B22ModelAndPermittedContext(unittest.TestCase):
+    T = B22.T if False else dict(task_origin="T1", framing_hash="f" * 64, context_hash="c" * 64, forbidden_inputs=["prior-verdict", "owner-hint"], permitted_evidence_refs=["doc:A#p3", "doc:B#p1"])
+    def mk(self):
+        c = core(); c.bind_review_task(self.T); return c
+    def carrier(self, **kw):
+        c = dict(finding_id="F1", reviewer_role="CODER", reviewer_version="1", implementation="MODEL", topology="SINGLE", context_hash="c" * 64, task_origin="T1", framing_hash="f" * 64,
+                 evidence_refs=["doc:A#p3"], affected_scope="XAUUSD/H4", proposed_investigation="re-derive", forbidden_inputs=["prior-verdict", "owner-hint"], author="codex", model_version="m-1"); c.update(kw); return c
+    def test_model_version_required_unless_human_and_a_human_may_not_carry_one(self):
+        c = self.mk(); self.assertEqual(code(c.accept_review_finding, self.carrier(model_version=None)), "REVIEW_MODEL_VERSION_REQUIRED")
+        self.assertEqual(code(c.accept_review_finding, self.carrier(model_version="")), "REVIEW_MODEL_VERSION_REQUIRED")
+        self.assertEqual(code(c.accept_review_finding, self.carrier(topology="HUMAN")), "REVIEW_MODEL_VERSION_NOT_APPLICABLE_TO_HUMAN")
+        self.assertIsNone(code(c.accept_review_finding, self.carrier(topology="HUMAN", model_version=None, finding_id="F2")))        # positive: human, no model
+        self.assertIsNone(code(c.accept_review_finding, self.carrier()))                                                           # positive: model named
+    def test_evidence_must_be_inside_the_task_owners_permitted_context(self):
+        c = self.mk(); self.assertEqual(code(c.accept_review_finding, self.carrier(evidence_refs=["doc:A#p3", "doc:Z#9"])), "REVIEW_EVIDENCE_OUTSIDE_PERMITTED_CONTEXT")
+        self.assertIsNone(code(c.accept_review_finding, self.carrier(evidence_refs=["doc:A#p3", "doc:B#p1"])))                    # unrelated permitted refs pass
+        self.assertEqual(code(core().bind_review_task, dict(self.T, permitted_evidence_refs=[])), "REVIEW_TASK_INVALID")           # the permitted context is mandatory, never defaulted to 'everything'
+        t = dict(self.T); del t["permitted_evidence_refs"]; self.assertEqual(code(core().bind_review_task, t), "REVIEW_TASK_INVALID")

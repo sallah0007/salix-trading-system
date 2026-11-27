@@ -144,12 +144,19 @@ H1_REQUIRED = ("CONSUMER_BINDING_ID", "CONSUMER_ID", "TARGET_CONSUMER", "REQUEST
                "BOUND_PAYLOAD_OR_PACKAGE_ID", "PACKAGE_CLASS", "PACKAGE_HASH", "PURPOSE", "TEMPORAL_CONTRACT_ID",
                "ELIGIBILITY_AS_OF_T", "SOURCE_VINTAGE_CAUSAL_POLICY_ID", "RESOLVER_POLICY_ID", "OMISSIONS_EXCLUSIONS_REASON_CODES",
                "FINAL_PACKAGE_HASH", "CREATED_TS", "ISSUER", "BOUND_HEALTH_RESOLUTION_REF", "BOUND_HEALTH_RESOLVED_AT")
-def check_h1(fields: dict, decision_window: bool = True, consumer_is_ml: bool = False) -> None:
-    """Field-PRESENCE check of the Connected Contract V0.37 H1 CONSUMER_BINDING list (as carried by V0.38). Byte encoding
-    of PACKAGE_HASH / FINAL_PACKAGE_HASH is not defined by any source read (D13)."""
+ML_MANIFEST_CLASSES = ("OFFICIAL_ML_TRAINING_MANIFEST", "ML_SIMULATION_MANIFEST", "RESEARCH_MANIFEST")      # Contract V0.38 T-ML (Composer Contract section 11 classes)
+GENERATION_AUTHORITY_CLASSES = ("ML_STANDALONE", "ML_FW_AUGMENTED")                                              # Contract V0.38 T-ML (ML Core)
+def h1_is_ml(fields: dict) -> bool:
+    """ML applicability is DERIVED from the bound consumer/package classes, never from a caller flag: CONSUMER_ID == ML or PACKAGE_CLASS == ML_PACKAGE."""
+    return fields.get("CONSUMER_ID") == "ML" or fields.get("PACKAGE_CLASS") == "ML_PACKAGE"
+def check_h1(fields: dict, decision_window: bool = True) -> None:
+    """Field-PRESENCE check of the Connected Contract V0.37 H1 CONSUMER_BINDING list (as carried by V0.38). ML_MANIFEST_CLASS / GENERATION_AUTHORITY_CLASS are REQUIRED WHEN CONSUMER_ID = ML (H1); applicability is derived from the
+    record (`h1_is_ml`) and cannot be waived by a caller flag (R29). Values must come from the source vocabularies; whether they are the classes of the ACTUAL bound manifest/generation is a source-owned binding checked by
+    `check_h1_ml_binding` (T-ML: applicability and classes derive from the bound manifest and generation, never from the receiver). Byte encoding of PACKAGE_HASH / FINAL_PACKAGE_HASH is not defined by any source read (D13)."""
     need = list(H1_REQUIRED)
     if decision_window: need.append("RESOLUTION_VISIBILITY_WATERMARK")
-    if consumer_is_ml: need += ["ML_MANIFEST_CLASS", "GENERATION_AUTHORITY_CLASS"]
+    ml = h1_is_ml(fields)
+    if ml: need += ["ML_MANIFEST_CLASS", "GENERATION_AUTHORITY_CLASS"]
     missing = [k for k in need if fields.get(k) is None]
     if missing:
         raise Refusal(",".join(missing), code="H1_FIELD_MISSING")
@@ -157,6 +164,18 @@ def check_h1(fields: dict, decision_window: bool = True, consumer_is_ml: bool = 
         raise Refusal(fields["ISSUER"], code="BAD_ISSUER")
     if fields["PACKAGE_CLASS"] not in ("FW_PACKAGE", "ML_PACKAGE", "NEUTRAL_GOVERNED_PACKAGE"):
         raise Refusal(fields["PACKAGE_CLASS"], code="BAD_PACKAGE_CLASS")   # lane names are not PACKAGE_CLASS values (V0.38)
+    if (fields["CONSUMER_ID"] == "FW" and fields["PACKAGE_CLASS"] == "ML_PACKAGE") or (fields["CONSUMER_ID"] == "ML" and fields["PACKAGE_CLASS"] == "FW_PACKAGE"):
+        raise Refusal("%s/%s" % (fields["CONSUMER_ID"], fields["PACKAGE_CLASS"]), code="H1_CONSUMER_PACKAGE_CLASS_MISMATCH")      # ML_PACKAGE != FW_PACKAGE; one binding, one consumer
+    if ml:
+        if fields["ML_MANIFEST_CLASS"] not in ML_MANIFEST_CLASSES: raise Refusal(str(fields["ML_MANIFEST_CLASS"]), code="H1_ML_MANIFEST_CLASS_UNKNOWN")
+        if fields["GENERATION_AUTHORITY_CLASS"] not in GENERATION_AUTHORITY_CLASSES: raise Refusal(str(fields["GENERATION_AUTHORITY_CLASS"]), code="H1_GENERATION_AUTHORITY_CLASS_UNKNOWN")
+
+def check_h1_ml_binding(fields: dict, bound_manifest_class, bound_generation_authority_class) -> None:
+    """The source-owned part: the classes carried in H1 must equal those of the ACTUAL bound ML manifest / generation, supplied by their owner. Without that owner input the H1 classes are only vocabulary-valid, not verified
+    (an exact held slot; nothing is inferred)."""
+    check_h1(fields)
+    if not h1_is_ml(fields): raise Refusal("not an ML binding", code="H1_NOT_ML")
+    if (fields["ML_MANIFEST_CLASS"], fields["GENERATION_AUTHORITY_CLASS"]) != (bound_manifest_class, bound_generation_authority_class): raise Refusal("H1 ML classes differ from the bound manifest/generation", code="H1_ML_CLASSES_NOT_THE_BOUND_ONES")
 
 def to_v038(nd: "C.NonDeliveryResolution", identity: FinalResolutionIdentity, key: ExpectedDependencyKey, wm: VisibilityWatermark,
             target_consumer: str, causal_policy_id: str, resolver_policy_id: str, temporal_contract_id: str, created_ts: int,
@@ -177,11 +196,11 @@ def check_both_separation(fw: dict, ml: dict) -> None:
     PACKAGE_CLASS, TARGET_CONSUMER == 'BOTH' (target comes from the request context), and the two must differ in every identity field.
     Swapped, unknown or arbitrary consumer labels are refused. Hash BYTE ENCODING is undefined (D13): inequality of claimed values only."""
     for lane, rec in (("FW", fw), ("ML", ml)):
-        check_h1(rec, consumer_is_ml=BOTH_LANES[lane]["ML"])
-        if rec["CONSUMER_ID"] != lane:
-            raise Refusal("%s:%r" % (lane, rec["CONSUMER_ID"]), code="BOTH_LANE_CONSUMER_ID_WRONG")
-        if rec["PACKAGE_CLASS"] != BOTH_LANES[lane]["PACKAGE_CLASS"]:
-            raise Refusal("%s:%s" % (lane, rec["PACKAGE_CLASS"]), code="BOTH_LANE_PACKAGE_CLASS_MISMATCH")
+        if rec.get("CONSUMER_ID") != lane:                          # lane identity first (exact lane code), then the H1 check whose ML applicability is derived from the record
+            raise Refusal("%s:%r" % (lane, rec.get("CONSUMER_ID")), code="BOTH_LANE_CONSUMER_ID_WRONG")
+        if rec.get("PACKAGE_CLASS") != BOTH_LANES[lane]["PACKAGE_CLASS"]:
+            raise Refusal("%s:%s" % (lane, rec.get("PACKAGE_CLASS")), code="BOTH_LANE_PACKAGE_CLASS_MISMATCH")
+        check_h1(rec)
         if rec["TARGET_CONSUMER"] != "BOTH":
             raise Refusal("%s:%s" % (lane, rec["TARGET_CONSUMER"]), code="BOTH_LANE_TARGET_NOT_BOTH")
     for f in BOTH_DISTINCT_FIELDS:

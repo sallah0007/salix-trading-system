@@ -70,12 +70,17 @@ def derive(r: ClosureRecord) -> ClosureVerdict:
         by_child.setdefault(e.child, []).append(e)
         if e.edge_class not in EDGE_CLASSES: reasons.append("EDGE_CLASS_OUTSIDE_VOCABULARY")
         if e.edge_class == "ADMINISTRATIVE_NON_CONTENT_EDGE" and e.content_carrying: reasons.append("ADMINISTRATIVE_EDGE_CLAIMS_CONTENT")      # contradictory classification
+    for e in r.edges:
+        if e.edge_class != "ADMINISTRATIVE_NON_CONTENT_EDGE" and e.edge_class in EDGE_CLASSES and e.edge_class != "UNKNOWN" and not e.content_carrying:
+            pass
     seen, stack, taint = {r.subject_id}, [r.subject_id], False
     while stack:
         cur = stack.pop()
         for e in by_child.get(cur, ()):
-            if not e.content_carrying: continue                          # administrative/presentation-only: no ancestry by that link
+            # classification is checked BEFORE the content flag is believed: a content-carrying/non-content ASSERTION on an unknown or unclassified edge cannot itself establish non-content classification
             if e.edge_class == "UNKNOWN" or e.edge_class not in EDGE_CLASSES: reasons.append("UNKNOWN_EDGE_TYPE_ON_REQUIRED_PATH"); continue
+            if e.edge_class != "ADMINISTRATIVE_NON_CONTENT_EDGE" and not e.content_carrying: reasons.append("CONTENT_CLASS_EDGE_MARKED_NON_CONTENT"); continue
+            if not e.content_carrying: continue                          # known administrative edge: no ancestry by that link
             if e.parent not in nodes or e.child not in nodes: reasons.append("EDGE_ENDPOINT_NOT_IN_NODE_SET"); continue
             if e.edge_class == "FW_PREDICTIVE_EDGE" or e.parent in r.fw_taint_source_ids: taint = True
             if e.parent not in seen: seen.add(e.parent); stack.append(e.parent)
@@ -85,6 +90,10 @@ def derive(r: ClosureRecord) -> ClosureVerdict:
     if not r.closure_complete: reasons.append("CLOSURE_COMPLETE_FALSE")
     if taint: reasons.append("FW_TAINT_REACHED")
     if taint and not r.fw_taint_present: reasons.append("FW_TAINT_UNDECLARED")          # derived taint the record denied
+    if r.fw_taint_present: reasons.append("FW_TAINT_DECLARED")                          # the record itself declares FW taint: never a clean ML_STANDALONE input (source-owned taint sources are not second-guessed)
+    if r.ml_fw_augmented_ancestry_present: reasons.append("ML_FW_AUGMENTED_ANCESTRY_DECLARED")   # declared augmented ancestry is not standalone
+    if taint and not r.ml_fw_augmented_ancestry_present and any(e.edge_class == "FW_PREDICTIVE_EDGE" for e in r.edges): reasons.append("FW_PREDICTIVE_ANCESTRY_UNDECLARED_AS_AUGMENTED")
     if r.admission_input_verdict == "PASS" and reasons: reasons.append("ASSERTED_PASS_CONTRADICTED_BY_DERIVATION")
+    if r.admission_input_verdict != "PASS" and not reasons: reasons.append("RECORD_OWN_VERDICT_NOT_PASS_NOT_RECONCILED")      # the record's own FAIL_CLOSED / REVIEW_REQUIRED is never silently upgraded to PASS
     reasons = tuple(sorted(set(reasons)))
     return ClosureVerdict("FAIL_CLOSED" if reasons else "PASS", reasons, tuple(sorted(seen - {r.subject_id})), taint)

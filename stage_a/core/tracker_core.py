@@ -57,7 +57,7 @@ class TrackerCore:
 
     # ---- replay: pure function of the journal up to a given sequence ---------------------------
     def _replay(self, upto=None):
-        st = dict(obs={}, cands={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={}, reviews={}, tasks={}, authev={}, xform={}, assoc={}, snapiss={})
+        st = dict(obs={}, cands={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={}, reviews={}, tasks={}, authev={}, xform={}, assoc={}, snapiss={}, orders={}, order_prov={})
         for r in self._j.read_from(0):
             if upto is not None and r.seq > upto: break
             b = json.loads(r.body_json); k = r.kind
@@ -93,6 +93,8 @@ class TrackerCore:
             elif k == "FINDING": st["findings"].append(b)
             elif k == "AUTH_EVIDENCE": st["authev"][_scope_key(b["subject"], b["version"], b["instrument"], b["timeframe"], b["battery"], b["vintage"], list(b["dependencies"]))] = b      # keyed by the FULL claim scope: one version/scope never clears another
             elif k == "TRANSFORM_VERDICT": st["xform"][_scope_key(b["subject"], b["version"], b["kind"], b["transform_version"], b["lineage_ref"])] = b
+            elif k == "ORDER_ISSUED": st["orders"][b["order_id"]] = dict(b, seq=r.seq)
+            elif k == "ORDER_PROVENANCE": st["order_prov"].setdefault(b["order_id"], []).append(b)
             elif k == "SUBJECT_ASSOC": st["assoc"].setdefault(b["subject"], []).append(b["binding"])
             elif k == "SNAPSHOT_ISSUED": st["snapiss"][b["snapshot_id"]] = b
             elif k == "REVIEW_TASK": st["tasks"][b["task_origin"]] = b
@@ -344,6 +346,15 @@ class TrackerCore:
             seen.add(c); stack += st["ups"].get(c, [])
         return sorted(seen)
 
+    def blast_radius(self, subject: str) -> dict:
+        """Health blast radius of `subject` over the DECLARED dependency edges (reverse closure): every subject that depends on it transitively and is therefore blocked while it is (UPSTREAM_BLOCKED). Unrelated subjects are
+        never listed. It reads only the journal's declared edges: an undeclared dependency is invisible here (a declared-edge fact, not a completeness proof of the dependency graph)."""
+        st = self._replay(); dependents, stack = set(), [subject]
+        while stack:
+            cur = stack.pop()
+            for d, ups in st["ups"].items():
+                if cur in ups and d not in dependents: dependents.add(d); stack.append(d)
+        return {"subject": subject, "dependents": sorted(dependents), "basis": "DECLARED_EDGES_ONLY"}
     def _reconstructable(self, st, up, _seen=frozenset()) -> bool:
         """Genuine reconstruction only: a persisted raw observation whose payload reproduces its digest, or a derived node whose ENTIRE recorded ancestry is itself so reconstructable. A Health record or an
         identity is never reconstruction evidence (R23). Current source/code/environment/contract proof is unbound, hence the qualified hold in `reactivate`."""
@@ -384,11 +395,11 @@ class TrackerCore:
             from ..tracker.verification.verification_result import SCOPE_MATERIALIZATION, COMPOSED_VERIFIER_ID, split_levels, result_is_self_consistent, issued_by_verifier_run
             if result is None: raise Refusal("composed evidence needs the verifier result", code="HEALTH_COMPOSED_RESULT_MISSING")
             if not result_is_self_consistent(result): raise Refusal("result not self-consistent", code="HEALTH_COMPOSED_RESULT_FORGED")
-            if not issued_by_verifier_run(result): raise Refusal("a structurally valid result is not a verifier run", code="HEALTH_COMPOSED_RESULT_NOT_FROM_VERIFIER_RUN")   # asserted PASS-shaped objects stay CALLER_ASSERTED
             if (result.scope != SCOPE_MATERIALIZATION or verifier_id != COMPOSED_VERIFIER_ID or result_digest != result.result_hash
                     or dict(result.subject).get("expect_scope_key") != subject or l2_requirement != "REQUIRED" or (l1, l2_status) != split_levels(result)
                     or str(dict(result.subject).get("expect_scope_key")).rsplit("/", 1)[-1] != version):      # the verified VERSION (last scope-key segment), not only the scope-key string
                 raise Refusal("composed evidence not bound to result", code="HEALTH_COMPOSED_RESULT_UNBOUND")
+            if not issued_by_verifier_run(result): raise Refusal("a structurally valid result is not a verifier run", code="HEALTH_COMPOSED_RESULT_NOT_FROM_VERIFIER_RUN")   # asserted PASS-shaped objects (incl. FAIL-shaped) stay CALLER_ASSERTED; checked after binding so mismatches keep their exact code
         elif result is not None: raise Refusal("result only for composed evidence", code="HEALTH_RESULT_WITHOUT_COMPOSED_CLASS")
         if l2_requirement not in REQ or l2_status not in L2_ST or l1 not in L1_ST: raise Refusal("vocabulary", code="HEALTH_VOCABULARY_UNKNOWN")
         if not _int(at) or at < 0 or not _int(max_age) or max_age <= 0: raise Refusal("interval", code="HEALTH_INTERVAL_INVALID")
@@ -532,6 +543,31 @@ class TrackerCore:
         if binding is not None: self._commit(lambda st2: (None, None) if sid in st2["snapiss"] else (None, ("SNAPSHOT_ISSUED", {"snapshot_id": sid, "subject": subject, "version": version, "at": now})))
         return CoreHealthSnapshot(ref, resolved_at, ok, ec, binding=binding, subject=subject, version=version, evaluated_at=now, held_reason=held, snapshot_id=sid, require_authority_evidence=require_authority_evidence, require_transform_proof=require_transform_proof)
 
+    # ---- Tracker-issued construction order (Composer V9 s7A: ORDER_ISSUER = TRACKER ONLY) ---------------------------------------------
+    ORDER_BINDING_FIELDS = ("REQUEST_CLASS", "REQUESTER_TYPE", "REQUESTER_ID", "TARGET_CONSUMER", "REQUEST_CONTEXT", "PURPOSE_STATEMENT", "OUTCOME_INFORMATION_ACCESS", "IDEA_ORIGIN", "IDEA_BASIS", "EXPECTED_DELIVERY_CONTRACT", "CANDIDATE_IDENTITY")
+    def issue_order(self, rec: dict, lookups: dict, now: int) -> dict:
+        """The ONLY order issuer. Runs the s7A disposition; only PROCEED issues, and the order is a JOURNALED fact (ORDER_ISSUED) - a caller-built dict, an equal request, or a Composer-side object is not an order.
+        An ACTIVE order for the same CANDIDATE_IDENTITY (matching on candidate identity ALONE; TARGET_CONSUMER excluded) is not duplicated: the request attaches as provenance (ORDER_PROVENANCE) to the existing order.
+        order_id is an INTERNAL prototype digest (no source-defined ORDER_ID composition); not a normative identity."""
+        from ..composer.intake import evaluate_intake, PROCEED
+        if not (isinstance(now, int) and not isinstance(now, bool) and now >= 0): raise Refusal("now", code="ORDER_TIME_INVALID")
+        d = evaluate_intake(rec, "ORDER", lookups)
+        if d.disposition != PROCEED: return {"status": d.disposition, "reasons": list(d.reasons), "order_id": None}
+        bind = {k: rec[k] for k in self.ORDER_BINDING_FIELDS}
+        key = {k: v for k, v in bind.items() if k not in ("TARGET_CONSUMER", "REQUESTER_ID", "REQUESTER_TYPE", "REQUEST_CONTEXT", "PURPOSE_STATEMENT")}     # consumer/requester do not split the order
+        oid = domain_hash("TRK/CONSTRUCTION_ORDER_PROTOTYPE", canonical_bytes({"identity": rec["CANDIDATE_IDENTITY"], "contract": rec["EXPECTED_DELIVERY_CONTRACT"], "access": rec["OUTCOME_INFORMATION_ACCESS"]}))
+        def dec(st):
+            ex = st["orders"].get(oid)
+            if ex is not None:
+                if any(p["requester_id"] == rec["REQUESTER_ID"] and p["target_consumer"] == rec["TARGET_CONSUMER"] for p in st["order_prov"].get(oid, [])) or (ex["bindings"]["REQUESTER_ID"] == rec["REQUESTER_ID"] and ex["bindings"]["TARGET_CONSUMER"] == rec["TARGET_CONSUMER"]):
+                    return {"status": "ATTACHED_EXISTING_IDEMPOTENT", "order_id": oid, "reasons": list(d.reasons)}, None
+                return {"status": "ATTACHED_AS_PROVENANCE", "order_id": oid, "reasons": list(d.reasons)}, ("ORDER_PROVENANCE", {"order_id": oid, "requester_id": rec["REQUESTER_ID"], "requester_type": rec["REQUESTER_TYPE"], "target_consumer": rec["TARGET_CONSUMER"], "at": now})
+            return {"status": "ISSUED", "order_id": oid, "reasons": list(d.reasons)}, ("ORDER_ISSUED", {"order_id": oid, "bindings": bind, "applicability": d.field_applicability, "lookup_refs": {k: lookups[k]["ref"] for k in sorted(lookups) if isinstance(lookups[k], dict)}, "issuer": "TRACKER", "at": now})
+        return self._commit(dec)
+    def order(self, order_id):
+        o = self._replay()["orders"].get(order_id); return None if o is None else dict(o)
+    def order_provenance(self, order_id): return list(self._replay()["order_prov"].get(order_id, []))
+
     # ---- reviewer / write-plane boundary ------------------------------------------------------------
     FINDING_FIELDS = ("finding_id", "task_origin", "summary", "author")
     def accept_finding(self, finding: dict):
@@ -546,15 +582,15 @@ class TrackerCore:
         self._commit(d)            # recorded only; mutates no state, authorizes nothing. LEGACY minimal carrier: no bound task/framing/denylist - use accept_review_finding for the §15 carrier
 
     # B22 (frozen Tracker DOCX section 15 reviewer boundary): Tracker-side carrier + guards. No SALIX AI is built or invoked; the carrier is recorded, never acted on.
-    REVIEW_TASK_FIELDS = ("task_origin", "framing_hash", "context_hash", "forbidden_inputs")
+    REVIEW_TASK_FIELDS = ("task_origin", "framing_hash", "context_hash", "forbidden_inputs", "permitted_evidence_refs")
     REVIEW_CARRIER_FIELDS = ("finding_id", "reviewer_role", "reviewer_version", "implementation", "topology", "context_hash", "task_origin", "framing_hash",
-                             "evidence_refs", "affected_scope", "proposed_investigation", "forbidden_inputs", "author")
+                             "evidence_refs", "affected_scope", "proposed_investigation", "forbidden_inputs", "author", "model_version")
     _LISTS = ("evidence_refs", "forbidden_inputs")
     @staticmethod
     def _strs(v): return isinstance(v, list) and all(isinstance(x, str) and x for x in v)
     def bind_review_task(self, task: dict):
         """Binds a review task (origin, framing hash, context hash, forbidden-input denylist) BEFORE any finding may cite it. The framing/denylist are supplied by the task owner, never by the reviewer."""
-        if not isinstance(task, dict) or set(task) != set(self.REVIEW_TASK_FIELDS) or not all(isinstance(task[k], str) and task[k] for k in ("task_origin", "framing_hash", "context_hash")) or not self._strs(task["forbidden_inputs"]):
+        if not isinstance(task, dict) or set(task) != set(self.REVIEW_TASK_FIELDS) or not all(isinstance(task[k], str) and task[k] for k in ("task_origin", "framing_hash", "context_hash")) or not self._strs(task["forbidden_inputs"]) or not self._strs(task["permitted_evidence_refs"]) or not task["permitted_evidence_refs"]:
             raise Refusal("review task shape", code="REVIEW_TASK_INVALID")
         def d(st):
             old = st["tasks"].get(task["task_origin"])
@@ -565,8 +601,12 @@ class TrackerCore:
         self._commit(d)
     def accept_review_finding(self, c: dict):
         if not isinstance(c, dict) or set(c) != set(self.REVIEW_CARRIER_FIELDS): raise Refusal("carrier fields", code="REVIEW_CARRIER_FIELDS_INVALID")
-        if any(not isinstance(c[k], str) or not c[k] for k in self.REVIEW_CARRIER_FIELDS if k not in self._LISTS) or not all(self._strs(c[k]) for k in self._LISTS) or not c["evidence_refs"]:
+        if any(not isinstance(c[k], str) or not c[k] for k in self.REVIEW_CARRIER_FIELDS if k not in self._LISTS and k != "model_version") or not all(self._strs(c[k]) for k in self._LISTS) or not c["evidence_refs"]:
             raise Refusal("carrier values", code="REVIEW_CARRIER_VALUES_INVALID")
+        mv = c["model_version"]                    # s15: 'model/version where applicable'. Applicability is NOT asserted by the reviewer: only a HUMAN topology may omit it; every other topology must name it (the topology vocabulary beyond HUMAN is not source-defined).
+        if c["topology"] == "HUMAN":
+            if mv is not None: raise Refusal("human with model", code="REVIEW_MODEL_VERSION_NOT_APPLICABLE_TO_HUMAN")
+        elif not (isinstance(mv, str) and mv): raise Refusal("model_version", code="REVIEW_MODEL_VERSION_REQUIRED")
         def d(st):
             t = st["tasks"].get(c["task_origin"])
             if t is None: raise Refusal(c["task_origin"], code="REVIEW_TASK_NOT_BOUND")
@@ -574,6 +614,7 @@ class TrackerCore:
             if sorted(c["forbidden_inputs"]) != sorted(t["forbidden_inputs"]): raise Refusal("forbidden inputs", code="REVIEW_FORBIDDEN_INPUTS_MISMATCH")
             used = set(c["evidence_refs"]) & set(t["forbidden_inputs"])
             if used: raise Refusal(",".join(sorted(used)), code="REVIEW_FORBIDDEN_INPUT_USED")
+            if not set(c["evidence_refs"]) <= set(t["permitted_evidence_refs"]): raise Refusal(",".join(sorted(set(c["evidence_refs"]) - set(t["permitted_evidence_refs"]))), code="REVIEW_EVIDENCE_OUTSIDE_PERMITTED_CONTEXT")   # s15: only PERMITTED governed evidence, bound by the task owner
             for f in st["findings"]:
                 if f["finding_id"] == c["finding_id"]:
                     if {k: v for k, v in f.items() if k != "plane"} == c: return None, None

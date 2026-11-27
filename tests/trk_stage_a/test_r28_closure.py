@@ -55,11 +55,39 @@ def test_ml_standalone_callpath_uses_the_derived_closure_and_never_qualifies():
     from stage_a.ml import receiver as R
     Q = b"q"; g = {"m": M("m", "ML", (b"a",))}
     r = rec(subject_id="m", nodes=("m", "A"), edges=(E("A", "m"),))
-    chk = R.check_standalone_with_closure(g["m"], Q, g, "ML_STANDALONE", r); assert chk.closure_verdict.verdict == "PASS" and chk.reached == ("A",)             # positive control
+    chk = R.check_standalone_with_closure(g["m"], Q, g, "ML_STANDALONE", r, "h"); assert chk.closure_verdict.verdict == "PASS" and chk.reached == ("A",)             # positive control
     with pytest.raises(Refusal) as e: R.require_standalone_qualified(chk)
     assert e.value.code == "UNION_CLOSURE_COMPLETENESS_UNPROVEN"                                                                                                  # witness unadmitted: still held
     bad = rec(subject_id="m", nodes=("m", "A"), edges=(E("A", "m"),), missing_required_edges=("X",))
-    with pytest.raises(Refusal) as e: R.check_standalone_with_closure(g["m"], Q, g, "ML_STANDALONE", bad)
+    with pytest.raises(Refusal) as e: R.check_standalone_with_closure(g["m"], Q, g, "ML_STANDALONE", bad, "h")
     assert e.value.code == "ML_STANDALONE_CLOSURE_FAIL_CLOSED"
-    with pytest.raises(Refusal) as e: R.check_standalone_with_closure(g["m"], Q, g, "ML_STANDALONE", rec(subject_id="other", nodes=("other",), edges=()))
+    with pytest.raises(Refusal) as e: R.check_standalone_with_closure(g["m"], Q, g, "ML_STANDALONE", rec(subject_id="other", nodes=("other",), edges=()), "h")
     assert e.value.code == "CLOSURE_SUBJECT_NOT_THIS_MANIFEST"
+
+
+def test_r29_unknown_edge_marked_noncontent_is_held_and_unrelated_unknown_and_admin_are_positive_controls():
+    assert "UNKNOWN_EDGE_TYPE_ON_REQUIRED_PATH" in CL.derive(rec(edges=(CL.ClosureEdge("A", "S", "UNKNOWN", "E", False),))).reasons          # Codex repro: non-content ASSERTION cannot classify an unknown
+    assert "UNKNOWN_EDGE_TYPE_ON_REQUIRED_PATH" in CL.derive(rec(edges=(CL.ClosureEdge("A", "S", "SOMETHING_NEW", "E", False),))).reasons
+    assert "CONTENT_CLASS_EDGE_MARKED_NON_CONTENT" in CL.derive(rec(edges=(E("A", "S", "FEATURE_DEPENDENCY", False),))).reasons
+    assert CL.derive(rec(nodes=("S", "A", "Q", "R"), edges=(E("A", "S"), CL.ClosureEdge("R", "Q", "UNKNOWN", "E", False)))).verdict == "PASS"      # off-path unknown
+    assert CL.derive(rec(edges=(E("A", "S"), E("B", "S", "ADMINISTRATIVE_NON_CONTENT_EDGE", False)))).verdict == "PASS"                           # known administrative
+    # an unknown behind a non-content-classified known edge is not on the content path: still positive
+def test_r29_declared_augmented_ancestry_and_declared_taint_are_never_clean():
+    assert "ML_FW_AUGMENTED_ANCESTRY_DECLARED" in CL.derive(rec(ml_fw_augmented_ancestry_present=True)).reasons
+    assert "FW_TAINT_DECLARED" in CL.derive(rec(fw_taint_present=True, fw_taint_source_ids=("ZZ",))).reasons                                      # declared source not even in the node set
+    assert "FW_PREDICTIVE_ANCESTRY_UNDECLARED_AS_AUGMENTED" in CL.derive(rec(edges=(E("A", "S"), E("B", "A", "FW_PREDICTIVE_EDGE")))).reasons
+    assert "RECORD_OWN_VERDICT_NOT_PASS_NOT_RECONCILED" in CL.derive(rec(admission_input_verdict="FAIL_CLOSED")).reasons
+    assert CL.derive(rec(admission_input_verdict="REVIEW_REQUIRED")).verdict == "FAIL_CLOSED"                                                      # REVIEW_REQUIRED is a hold, not a pass
+def test_r29_callpath_declared_flags_and_exact_version_linkage():
+    from stage_a.fw.lanes import ConsumerManifest as M
+    from stage_a.ml import receiver as R
+    Q = b"q"; g = {"m": M("m", "ML", (b"a",))}; ok = rec(subject_id="m", nodes=("m", "A"), edges=(E("A", "m"),), subject_version_or_hash="h")
+    call = lambda c, *a, **k: codeof(lambda: R.check_standalone_with_closure(g["m"], Q, g, "ML_STANDALONE", c, *a, **k))
+    assert call(ok, "h") is None
+    assert call(dataclasses.replace(ok, ml_fw_augmented_ancestry_present=True), "h") == "ML_STANDALONE_CLOSURE_FAIL_CLOSED"
+    assert call(dataclasses.replace(ok, edges=(CL.ClosureEdge("A", "m", "UNKNOWN", "E", False),)), "h") == "ML_STANDALONE_CLOSURE_FAIL_CLOSED"
+    assert call(ok) == "CLOSURE_MANIFEST_VERSION_NOT_SUPPLIED"                                  # missing version applicability is explicit, not defaulted
+    assert call(ok, "other") == "CLOSURE_SUBJECT_VERSION_MISMATCH"
+    nov = dataclasses.replace(ok, subject_version_or_hash=None)
+    assert call(nov, version_not_applicable=True) is None and call(ok, "h", version_not_applicable=True) == "CLOSURE_VERSION_BINDING_INCONSISTENT"
+    assert call(nov, "h") == "CLOSURE_SUBJECT_VERSION_MISMATCH"

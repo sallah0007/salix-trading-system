@@ -76,8 +76,10 @@ def test_h1_presence_conditionals_and_package_class():
     V.check_h1(_h1())
     for k in V.H1_REQUIRED + ("RESOLUTION_VISIBILITY_WATERMARK",):
         with pytest.raises(Refusal): V.check_h1(_h1(**{k: None}))
-    with pytest.raises(Refusal): V.check_h1(_h1(), consumer_is_ml=True)               # ML needs manifest + generation class
-    V.check_h1(_h1(ML_MANIFEST_CLASS="m", GENERATION_AUTHORITY_CLASS="g"), consumer_is_ml=True)
+    mlh = _h1(CONSUMER_ID="ML", PACKAGE_CLASS="ML_PACKAGE")
+    with pytest.raises(Refusal) as e: V.check_h1(mlh)                                  # Codex R29 repro: ML consumer/package with no classes was accepted by default
+    assert e.value.code == "H1_FIELD_MISSING"
+    V.check_h1(_h1(CONSUMER_ID="ML", PACKAGE_CLASS="ML_PACKAGE", ML_MANIFEST_CLASS="RESEARCH_MANIFEST", GENERATION_AUTHORITY_CLASS="ML_STANDALONE"))
     with pytest.raises(Refusal): V.check_h1(_h1(PACKAGE_CLASS="BASELINE"))            # a lane name is not a PACKAGE_CLASS
     with pytest.raises(Refusal): V.check_h1(_h1(ISSUER="FW"))
     V.check_h1(_h1(RESOLUTION_VISIBILITY_WATERMARK=None), decision_window=False)      # range deliveries do not need it

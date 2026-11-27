@@ -4,7 +4,7 @@ from .independent_encoding import enc_bytes, parse
 from .independent_hashing import manifest_digest, graph_digest, program_digest, materialization_digest
 from .independent_traversal import (structure_violations, extracted_ops, extracted_caps, reference_evaluate,
                                     RefEvalError, bits, make_probe)
-from .verification_result import issue_result, PASS, FAIL, INSUFFICIENT_EVIDENCE, SCOPE_MATERIALIZATION
+from .verification_result import _issue_result, PASS, FAIL, INSUFFICIENT_EVIDENCE, SCOPE_MATERIALIZATION
 
 _REC_KEYS = {"feature_key", "feature_version", "instrument", "timeframe", "object_key", "manifest_hash",
              "graph_hash", "program_hash", "byte_length", "probe_batch", "probe_incremental", "materialization_hash"}
@@ -26,22 +26,22 @@ def verify_materialization(*, store_get, record: dict, declared: dict, expect_sc
     subject = {"expect_scope_key": expect_scope_key, "record_manifest_hash": str(record.get("manifest_hash"))}
 
     if not chk("record_field_set", isinstance(record, dict) and set(record) == _REC_KEYS):
-        return issue_result(FAIL, SCOPE_MATERIALIZATION, subject, checks, reasons)
+        return _issue_result(FAIL, SCOPE_MATERIALIZATION, subject, checks, reasons)
     chk("materialization_hash_recomputed", materialization_digest(record, enc_bytes) == record["materialization_hash"])      # a free-form hash label is never verified identity
     raw = store_get(record["object_key"])
     if not chk("artifact_present", raw is not None):
-        return issue_result(INSUFFICIENT_EVIDENCE, SCOPE_MATERIALIZATION, subject, checks, reasons)
+        return _issue_result(INSUFFICIENT_EVIDENCE, SCOPE_MATERIALIZATION, subject, checks, reasons)
     chk("object_key_is_content_address", record["object_key"] == "artifact/" + record["manifest_hash"])
     chk("byte_length", len(raw) == record["byte_length"])
     try:
         p = parse(raw)
     except Exception as e:
         chk("artifact_parses", False, str(e))
-        return issue_result(FAIL, SCOPE_MATERIALIZATION, subject, checks, reasons)
+        return _issue_result(FAIL, SCOPE_MATERIALIZATION, subject, checks, reasons)
     top = {"schema", "feature_id", "feature_version", "instrument", "timeframe", "inputs", "nodes", "output",
            "fit_refs", "declared_opcodes", "declared_capabilities"}
     if not chk("manifest_field_set", isinstance(p, dict) and set(p) == top):
-        return issue_result(FAIL, SCOPE_MATERIALIZATION, subject, checks, reasons)
+        return _issue_result(FAIL, SCOPE_MATERIALIZATION, subject, checks, reasons)
     chk("artifact_is_canonical_bytes", enc_bytes(p) == raw)
     chk("manifest_hash_recomputed", manifest_digest(raw) == record["manifest_hash"])
     chk("graph_hash_recomputed", graph_digest(p, enc_bytes) == record["graph_hash"])
@@ -57,7 +57,7 @@ def verify_materialization(*, store_get, record: dict, declared: dict, expect_sc
     sv = structure_violations(p)
     chk("structure_sound", not sv, ",".join(sv))
     if sv:
-        return issue_result(FAIL, SCOPE_MATERIALIZATION, subject, checks, reasons)
+        return _issue_result(FAIL, SCOPE_MATERIALIZATION, subject, checks, reasons)
     chk("opcode_declaration_equals_extracted", p["declared_opcodes"] == extracted_ops(p))
     chk("capability_declaration_equals_extracted", p["declared_capabilities"] == extracted_caps(p))
     # numeric equivalence on the verifier's own probe, bit-exact, for both materializer paths
@@ -76,4 +76,4 @@ def verify_materialization(*, store_get, record: dict, declared: dict, expect_sc
     subject["graph_hash"] = record["graph_hash"]
     subject["program_hash"] = record["program_hash"]
     subject["materialization_hash"] = record["materialization_hash"]
-    return issue_result(status, SCOPE_MATERIALIZATION, subject, checks, reasons)
+    return _issue_result(status, SCOPE_MATERIALIZATION, subject, checks, reasons)
