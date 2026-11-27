@@ -64,11 +64,13 @@ class Binding:
 
 class SimulatedGateway:
     """Resolves dependencies at a consumer fence and stores each outcome ONCE (G4 idempotent, G5/G6 immutable)."""
-    def __init__(self, tables: CodeTables, status, watermark: int = 0, allow_uncommitted_status: bool = False):
+    def __init__(self, tables: CodeTables, status, watermark: int = 0, allow_uncommitted_status: bool = False, health_source=None, allow_shape_only_health: bool = False):
         """status must be a committed-journal projection (tracker.status_projection.StatusProjection, `authoritative` True). A bare in-memory ChainStatusAuthority
         is NOT consumer-authoritative: it is accepted only when allow_uncommitted_status=True (tests/simulation), never by default."""
         self.t, self.status, self.watermark = tables, status, watermark
         self.allow_uncommitted_status = allow_uncommitted_status
+        self.health_source = health_source                    # object with confirm_snapshot(snapshot)->bool (the Core that issued the snapshot); no source => Core snapshots are NOT confirmable and are denied
+        self.allow_shape_only_health = allow_shape_only_health  # LEGACY shape-only harness switch: a plain HealthSnapshot proves nothing about any subject. Default False: denied.
         self.rows: Dict[tuple, list] = {}
         self._outcomes: Dict[str, object] = {}
         self._later_lineage: Dict[str, list] = {}
@@ -119,10 +121,13 @@ class SimulatedGateway:
             return nd("NO_STATUS_AUTHORITY_FACT")                    # fail closed on the unread
         if require_current and st.status != CURRENT:
             return nd("CHAIN_STATUS_NOT_CURRENT:" + st.status)       # CATCHING_UP where CURRENT required
-        if getattr(health, "typed_internal", False):                 # Core-produced snapshot: DEFAULT-DENY unless it is bound to exactly this feature/version/instrument/timeframe
-            b = getattr(health, "binding", None)
+        from ..core.tracker_core import CoreHealthSnapshot
+        if type(health) is CoreHealthSnapshot:                       # decided by TYPE, never by an optional marker field: Core snapshot must be journal-confirmed and bound to exactly this dependency
+            if self.health_source is None or not self.health_source.confirm_snapshot(health): return nd("HEALTH_SNAPSHOT_NOT_CONFIRMED")
+            b = health.binding
             if b is None: return nd("HEALTH_BINDING_UNBOUND")
             if (b.feature_id, b.feature_version, b.instrument_id, b.timeframe_id) != (entry.feature_id, entry.feature_version, instrument_id, timeframe_id): return nd("HEALTH_BINDING_MISMATCH")
+        elif not self.allow_shape_only_health: return nd("HEALTH_SNAPSHOT_SHAPE_ONLY_NOT_ACCEPTED")        # a plain snapshot is not verified Health for any subject
         if not health.acceptable:
             return nd("HEALTH_UNACCEPTABLE")
         if health.resolved_at >= fence:

@@ -21,16 +21,16 @@ def jr():
 def commit(j, seq, status, asof=1, corr=False, des=False, mv=MV):
     return j.append(j.head(), "STATUS_FACT_TEST", {"mv": ["b:" + x.hex() if isinstance(x, bytes) else x for x in mv], "seq": seq, "status": status, "asof": asof, "corr": corr, "des": des})
 def gw(status):
-    g = G.SimulatedGateway(B.T, status, watermark=100); g.publish(B._row()); return g
+    g = G.SimulatedGateway(B.T, status, watermark=100, allow_shape_only_health=True); g.publish(B._row()); return g
 def res(g, rid="r"): return g.resolve(rid, B._entry(), B.I, B.I, 3, 10, B._health(), True)
 
 class Projection(unittest.TestCase):
     def test_direct_uncommitted_append_is_not_consumer_authoritative(self):
         a = C.ChainStatusAuthority(); a.append(C.StatusFact(MV, 1, C.CURRENT, 1, False))
         r = res(gw(a)); self.assertEqual(r.reason, "STATUS_SOURCE_NOT_COMMITTED_PROJECTION")           # default is fail closed
-        self.assertIsInstance(res(G.SimulatedGateway(B.T, a, allow_uncommitted_status=True, watermark=100) and self._open(a)), G.Binding)   # explicit test-only opt-in
+        self.assertIsInstance(res(G.SimulatedGateway(B.T, a, allow_uncommitted_status=True, watermark=100, allow_shape_only_health=True) and self._open(a)), G.Binding)   # explicit test-only opt-in
     def _open(self, a):
-        g = G.SimulatedGateway(B.T, a, allow_uncommitted_status=True, watermark=100); g.publish(B._row()); return g
+        g = G.SimulatedGateway(B.T, a, allow_uncommitted_status=True, watermark=100, allow_shape_only_health=True); g.publish(B._row()); return g
     def test_committed_record_projects_and_gateway_binds(self):
         j = jr(); commit(j, 1, C.CURRENT); p = StatusProjection(j, decode); p.refresh()
         self.assertTrue(p.authoritative); self.assertIsInstance(res(gw(p)), G.Binding)
