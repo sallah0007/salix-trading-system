@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Optional
 from ..errors import Refusal
 B0_HELD_SLOTS = ("HEALTH_PROFILE_ID/VERSION", "HEALTH_POLICY_ID/VERSION", "CRITICAL_SET_ID/VERSION", "REASON_CODE registry", "PRODUCER_ID/VERSION", "PRODUCER_SIGNATURE_OR_INTEGRITY_BINDING", "thresholds", "EXPECTATION_STATE")
-KINDS = ("MATERIALIZATION_ROW", "SCHEDULER_RESOURCE_STATE", "GATEWAY_BINDING_NON_DELIVERY", "FW_RETURNS", "ML_GENERATION_AND_CLAIMS")
+KINDS = ("MATERIALIZATION_ROW", "SCHEDULER_RESOURCE_STATE", "GATEWAY_BINDING_NON_DELIVERY", "FW_RETURNS", "ML_GENERATION_AND_CLAIMS", "QUANT_MANIFEST_PROFILE", "FIT_GENERATION", "REPLAY_BACKLOG", "ML_FW_AUGMENTED", "COORDINATION_HANDOFF", "READ_PATH_REVOCATION_CURRENTNESS")
 STATES = ("HEALTHY", "NOT_HEALTHY", "UNKNOWN")
 
 @dataclass(frozen=True)
@@ -49,6 +49,47 @@ def from_fw_association(assoc) -> HealthObservation:
 def from_claim_ledger(claims, registry_correlations: dict = None) -> HealthObservation:
     cs = claims.claims(); corr = dict(registry_correlations or {})
     return HealthObservation("ML_GENERATION_AND_CLAIMS", {"claims": len(cs), "authority_bearing": sum(1 for c in cs if c.authority_bearing), "writer_correlations": {k: v for k, v in sorted(corr.items())}}, "claim_ledger", scope="GLOBAL:CLAIM_LEDGER")
+
+def _subject(feature_key, **extra):
+    return tuple([("expect_scope_key", feature_key.key())] + sorted(extra.items()))
+
+def from_accepted_manifest(readback) -> HealthObservation:
+    """QUANT_MANIFEST_PROFILE (Build Plan 14): facts about the ACCEPTED manifest read back AS FOUND (`tracker.accepted_manifest.read_accepted_manifest`, hashes recomputed independently). SUBJECT-scoped to that feature key/version; no verdict."""
+    d = readback.manifest.data; fk = readback.feature_key
+    return HealthObservation("QUANT_MANIFEST_PROFILE", {"manifest_hash": readback.manifest_hash, "accepted_seq": readback.accepted_seq, "inputs": len(d.get("inputs", ())), "nodes": len(d.get("nodes", ())), "fit_refs": len(d.get("fit_refs", ())), "declared_opcodes": len(d.get("declared_opcodes", ())), "declared_capabilities": len(d.get("declared_capabilities", ()))},
+                             "accepted_manifest:" + fk, subject=(("expect_scope_key", fk), ("record_manifest_hash", readback.manifest_hash)), scope="SUBJECT")
+
+def from_fit_generation_check(feature_key, manifest_fit_refs, accepted_generations) -> HealthObservation:
+    """FIT_GENERATION: runs the existing `check_fit_refs` over the manifest's fit references and the SUPPLIED accepted generations; facts = the refs and the exact refusal code (or OK). SUBJECT-scoped."""
+    from ..composer.expression.fit_generation import check_fit_refs
+    try: check_fit_refs(manifest_fit_refs, accepted_generations); res = "OK"
+    except Refusal as e: res = e.code
+    return HealthObservation("FIT_GENERATION", {"refs": len(manifest_fit_refs), "accepted_generations": len(accepted_generations), "result": res}, "fit_generation_check:" + feature_key.key(), subject=_subject(feature_key), scope="SUBJECT")
+
+def from_replay_backlog(feature_key, journal, applied_seq) -> HealthObservation:
+    """REPLAY_BACKLOG: journal head sequence vs the SUPPLIED applied sequence of a consumer/projection. backlog = head - applied (negative = applied ahead of the journal = a defect, reported as is)."""
+    recs = journal.read_from(1); head = recs[-1].seq if recs else 0
+    return HealthObservation("REPLAY_BACKLOG", {"head_seq": head, "applied_seq": applied_seq, "backlog": head - applied_seq}, "journal:" + feature_key.namespace(), subject=_subject(feature_key), scope="SUBJECT")
+
+def from_augmented_checks(checks) -> HealthObservation:
+    """ML_FW_AUGMENTED bindings (MasterHealthV3 G): counts of `ml.receiver.AugmentedCheck` results by lane and by whether the rebind was verified against an actually issued Gateway binding."""
+    by = {}
+    for c in checks: k = "%s:%s" % (c.lane, "VERIFIED" if c.rebind_verified else "UNVERIFIED"); by[k] = by.get(k, 0) + 1
+    return HealthObservation("ML_FW_AUGMENTED", {"checks": len(checks), "by_lane_and_verification": dict(sorted(by.items()))}, "ml_fw_augmented", scope="GLOBAL:ML_FW_AUGMENTED")
+
+def from_journal_handoff(journal, namespace: str) -> HealthObservation:
+    """COORDINATION_HANDOFF (durable coordination): record kinds, head sequence and legacy (pre-R34, no materialization binding) accepted bodies in one journal namespace, read AS FOUND."""
+    from ..replay import replay
+    recs = journal.read_from(1); by = {}
+    for r in recs: by[r.kind] = by.get(r.kind, 0) + 1
+    try: legacy = sum(1 for v in replay(namespace, recs).values() if v.legacy_binding_absent)
+    except Refusal as e: return HealthObservation("COORDINATION_HANDOFF", {"head_seq": recs[-1].seq if recs else 0, "by_kind": dict(sorted(by.items())), "replay": e.code}, "journal:" + namespace, scope="GLOBAL:JOURNAL:" + namespace)
+    return HealthObservation("COORDINATION_HANDOFF", {"head_seq": recs[-1].seq if recs else 0, "by_kind": dict(sorted(by.items())), "legacy_accepted": legacy, "replay": "OK"}, "journal:" + namespace, scope="GLOBAL:JOURNAL:" + namespace)
+
+def from_revocation_ledgers(datasets=None, generations=None) -> HealthObservation:
+    """READ_PATH_REVOCATION_CURRENTNESS: size and last timestamp of the dataset revocation ledger and the generation lifecycle ledger a read path consults. An empty ledger is a fact (0), never 'currently clean'."""
+    dl = list(datasets._ledger) if datasets is not None else None; gl = list(generations.ledger()) if generations is not None else None
+    return HealthObservation("READ_PATH_REVOCATION_CURRENTNESS", {"dataset_revocations": None if dl is None else len(dl), "dataset_last_ts": None if not dl else dl[-1][1], "generation_ledger": None if gl is None else len(gl)}, "revocation_ledgers", scope="GLOBAL:REVOCATION_LEDGERS")
 
 def state_for(obs: HealthObservation, policy=None):
     """(state, label). No policy -> UNKNOWN. A supplied policy must return exactly HEALTHY / NOT_HEALTHY / UNKNOWN; anything else refuses. An observation without facts is UNKNOWN whatever the policy says."""
