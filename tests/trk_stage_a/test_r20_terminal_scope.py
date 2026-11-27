@@ -98,3 +98,28 @@ class R22UnsupportedActiveEra(unittest.TestCase):
     def test_active_era_other_than_era_1_with_era_1_only_scope_asserts_nothing(self):
         rows = [X(A("b"), era_id="ERA_2"), X(rec("b", state="REJECTED_INVALID"), era_id="ERA_2")]; lk, store = lookup(rows)
         self.assertEqual(TI.subject_terminal_identities(dict(T.subject(), lookup_era_scope="ERA_1_ONLY"), store.all(), T.normalizer(), active_era_id="ERA_2"), ())
+class R23SubjectValidity(unittest.TestCase):
+    """Codex PR46 repro: an otherwise valid PRE_ID subject with subject_mode='INVALID' must not assert identity."""
+    def setUp(self):
+        self.key = T.gate_key(); self.row = T.keyed_row(self.key, current=False, scope="canonical_survivor_discarded")
+        self.n = T.normalizer(); self.sub = T.pre_id_subject()
+    def res(self, sub=None, n=None, era="ERA_1", rows=None):
+        return TI.subject_terminal_resolution(sub or self.sub, rows if rows is not None else [self.row], n or self.n, active_era_id=era)
+    def test_valid_pre_id_subject_is_resolved_positive_control(self):
+        r = self.res(); self.assertEqual((r.status, len(r.identities)), (TI.RESOLVED, 1)); self.assertEqual(r.identities[0].status, TI.TERMINAL_NONCURRENT)
+    def test_each_invalid_subject_dimension_is_unresolved_not_asserted_and_not_not_found(self):
+        cases = {"SUBJECT_MODE_INVALID": dict(self.sub, subject_mode="INVALID"), "LOOKUP_ERA_SCOPE_INVALID": dict(self.sub, lookup_era_scope="ERA_9"),
+                 "ALL_ERAS_COVERAGE_INCOMPLETE": dict(self.sub, lookup_era_scope="ALL_ERAS"), "SUPPLIED_CONTENT_KEY_NOT_ACCEPTED": dict(self.sub, content_key="x"),
+                 "CANDIDATE_CONTENT_INVALID": dict(self.sub, candidate_content={"bogus": 1}), "CANDIDATE_CONTENT_REQUIRED": {k: v for k, v in self.sub.items() if k != "candidate_content"}}
+        for why, sub in cases.items():
+            r = self.res(sub); self.assertEqual((r.status, r.reason, r.identities), (TI.UNRESOLVED, why, ()), why)
+        self.assertEqual(self.res(era="ERA_2").reason, "STORE_ACTIVE_ERA_NOT_ERA1")
+    def test_ungoverned_or_malformed_normalizer_is_unresolved(self):
+        self.assertEqual(self.res(n=T.normalizer(classes=("SOMETHING_ELSE",))).status, TI.UNRESOLVED)
+        self.assertEqual(self.res(n=object()).reason, "NORMALIZER_INVALID")
+    def test_a_forged_normalizer_hash_is_not_governed(self):
+        from tracker_identity.models import NormalizerSpec
+        forged = NormalizerSpec(normalizer_id="tracker.identity.normalizer", version="1", normalizer_hash="deadbeef", equivalence_classes=("EXACT_STRUCTURAL_IDENTITY",))
+        r = self.res(n=forged); self.assertEqual((r.status, r.reason), (TI.UNRESOLVED, "NORMALIZER_NOT_GOVERNED"))
+    def test_empty_resolved_is_distinct_from_unresolved(self):
+        r = self.res(rows=[]); self.assertEqual((r.status, r.identities), (TI.RESOLVED, ()))

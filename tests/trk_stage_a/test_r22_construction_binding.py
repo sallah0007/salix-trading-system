@@ -38,7 +38,8 @@ class QualifiedHold(unittest.TestCase):
         v = {"content_key_composite": adm.subject_key, "request_id": "REQ-1"}
         self.assertTrue(rig.claims.authorizes(adm.subject_key, "REQ-1"))                              # the inner service would say yes
         self.assertFalse(ConstructionAuthorityBinding(rig.claims).resolver(v))                        # but the unbound admission holds it
-        self.assertTrue(ConstructionAuthorityBinding(rig.claims, PrincipalSourceAdmission("REC", "p")).resolver(v))
+        b = ConstructionAuthorityBinding(rig.claims, PrincipalSourceAdmission("arbitrary-unresolved-ref", "wrong-principal"))     # Codex PR46 repro
+        self.assertEqual(b.status(), ADMISSION_ASSERTED); self.assertFalse(b.resolver(v))                                       # an asserted carrier never releases authority
     def test_qualified_claim_service_without_admission_is_held_and_with_asserted_admission_delegates(self):
         from stage_a.storage.object_store import InMemoryObjectStore
         j = ObjectStoreJournal(InMemoryObjectStore(), "claims-q", "w"); j.acquire_epoch(); cs = ClaimService(j, ANCHOR)

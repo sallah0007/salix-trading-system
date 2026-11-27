@@ -402,3 +402,6 @@ The `tests/stage_a` sub-trees concurrency, golden_mirrors and e2e stay NOT_BUILT
 
 ## R21 implementation note
 B01, B03, B04, B05, B13/quarantine, B14 and the as-of eligibility / reviewer guard now have IMPLEMENTED_UNQUALIFIED internal ports in `stage_a/core/tracker_core.py` over candidate carriers (simulation evidence); the composition path feeds the real Gateway, FW and ML receivers (`tests/trk_stage_a/test_r21_core.py`). Byte encodings, calendar rules and provider proof remain unbound.
+
+## R23 implementation note
+Core corrections (candidate-preserving resolution, full-closure epoch supersession with basis, genuine reconstruction, typed HealthReading, unknown-commit resolution against the authoritative chain, plane identity) are in `stage_a/core/tracker_core.py`; evidence in `tests/trk_stage_a/test_r23_core.py`. Level matrix and A07 source-input table: closeout sections 4C and 0F.
