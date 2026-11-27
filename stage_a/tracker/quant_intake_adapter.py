@@ -17,12 +17,13 @@ from ..composer.expression.hashing import manifest_hash, graph_hash, program_has
 from ..composer.expression.capability import check_declared
 from ..composer.expression.fit_generation import check_fit_refs
 from ..composer.request_record import check_request_record
+from ..composer.expression.ceilings import check_ceilings, check_capability_declaration
 
 VERIFIER_ID = "SALIX_STAGE_A_TRACKER_INTAKE_V1"
 POLICY = {"ID": "SALIX_STAGE_A_INTAKE_POLICY", "VERSION": "1"}
 POLICY["HASH"] = domain_hash("SALIX_STAGE_A_INTAKE_POLICY_V1", canonical_bytes(
     {"dimensions": ["SCHEMA", "HASH_BINDING", "CAPABILITY", "FIT_ANCESTRY", "SCOPE_BINDING", "IDENTITY_CONTENT_KEY",
-                    "LOOKUP_COMPLETENESS", "DUPLICATE", "CONSTRUCTION_AUTHORITY", "REQUEST_RECORD"]}))
+                    "LOOKUP_COMPLETENESS", "DUPLICATE", "CONSTRUCTION_AUTHORITY", "REQUEST_RECORD", "RESOURCE_CEILING", "CAPABILITY_DECLARATION"]}))
 
 REQUIRED_IDENTITY_FIELDS = ("scope", "lifecycle_state", "is_current", "declared_normalization", "causal_time_semantics",
                             "completion_semantics", "availability_class", "price_basis", "data_vintage_mode",
@@ -55,6 +56,9 @@ class BuildPackage:
     creation_evidence_ref: str
     era_id: str
     creation_request_id: Optional[str] = None
+    resource_ceiling_ref: Optional[str] = None        # RESOURCE_CEILING_REF (governed artifact id); never defaulted
+    resource_ceilings: Optional[dict] = None          # the seven ceilings as resolved from that artifact (CLAIMED values)
+    capability_declaration: Optional[dict] = None     # PROGRAM_CAPABILITY_DECLARATIONS entry for this program
     request_record: Optional[dict] = None          # Composer s7A APPEND request record; REQUIRED for a requested quant build
 
     def content_hash(self) -> str:
@@ -65,6 +69,9 @@ class BuildPackage:
              "scope": [self.expected_instrument, self.expected_timeframe],
              "quant": self.quant_feature_requested}
         if self.request_record is not None: d["request_record"] = self.request_record
+        if self.resource_ceiling_ref is not None: d["resource_ceiling_ref"] = self.resource_ceiling_ref
+        if self.resource_ceilings is not None: d["resource_ceilings"] = self.resource_ceilings
+        if self.capability_declaration is not None: d["capability_declaration"] = self.capability_declaration
         return domain_hash("SALIX_BUILD_PACKAGE_V1", canonical_bytes(d))
 
 @dataclass
@@ -132,7 +139,12 @@ def admit(pkg: BuildPackage, *, accepted_fit_generations: dict) -> Admission:
     try:
         if not isinstance(pkg.manifest, dict):
             raise Refusal("no manifest for a requested quant build", code="MANIFEST_MISSING")
-        m = Manifest.from_dict(pkg.manifest)
+        try:                                              # ceilings first: they bound the parse; absence refuses, nothing is defaulted
+            ceilings = check_ceilings(pkg.resource_ceiling_ref, pkg.resource_ceilings)
+        except Refusal as e:
+            a.failed.append(("RESOURCE_CEILING", e.code)); a.classification = FAILED_REQUESTED_BUILD
+            return a
+        m = Manifest.from_dict(pkg.manifest, ceilings)
     except Refusal as e:
         fail("SCHEMA", e.code)
         a.classification = FAILED_REQUESTED_BUILD      # TR-06: never silently baseline-only / NONE
@@ -156,6 +168,10 @@ def admit(pkg: BuildPackage, *, accepted_fit_generations: dict) -> Admission:
         check_declared(m)
     except Refusal as e:
         fail("CAPABILITY", e.code)
+    try:
+        check_capability_declaration(pkg.capability_declaration, m, pkg.resource_ceiling_ref)
+    except Refusal as e:
+        fail("CAPABILITY_DECLARATION", e.code)
     try:
         check_fit_refs(m.data["fit_refs"], accepted_fit_generations)
     except Refusal as e:

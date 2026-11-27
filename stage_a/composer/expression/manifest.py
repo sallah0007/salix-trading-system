@@ -7,8 +7,13 @@ class Manifest:
     data: dict
 
     @staticmethod
-    def from_dict(d) -> "Manifest":
-        return Manifest(validate_manifest(d))
+    def from_dict(d, ceilings=None) -> "Manifest":
+        """ceilings: validated governed ceilings (ceilings.check_ceilings). None = structural parse only (no bound is assumed)."""
+        m = Manifest(validate_manifest(d))
+        if ceilings is not None:
+            from .ceilings import check_program_within
+            check_program_within(m, ceilings)
+        return m
 
     @property
     def feature_id(self): return self.data["feature_id"]

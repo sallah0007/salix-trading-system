@@ -10,8 +10,7 @@ TOP_KEYS = {"schema", "feature_id", "feature_version", "instrument", "timeframe"
             "fit_refs", "declared_opcodes", "declared_capabilities"}
 _HEX16 = re.compile(r"^[0-9a-f]{16}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
-MAX_NODES = 512
-MAX_WINDOW = 10000
+# No numeric ceilings live here (R12): the source forbids silent infrastructure defaults. Governed ceilings are validated by ceilings.py at intake.
 
 def _req(cond, code, detail=""):
     if not cond:
@@ -30,7 +29,7 @@ def validate_manifest(m) -> dict:
         check_token(i, "input")
     _req(len(set(inputs)) == len(inputs), "DUPLICATE_INPUT")
     nodes = m["nodes"]
-    _req(isinstance(nodes, list) and 0 < len(nodes) <= MAX_NODES, "NODE_COUNT")
+    _req(isinstance(nodes, list) and len(nodes) > 0, "NODE_COUNT")
     by_id = {}
     used_inputs = set()
     for n in nodes:
@@ -62,7 +61,7 @@ def validate_manifest(m) -> dict:
             used_inputs.add(n["name"])
         if spec.windowed:
             w = n["n"]
-            _req(isinstance(w, int) and not isinstance(w, bool) and 1 <= w <= MAX_WINDOW, "WINDOW_PARAM", nid)
+            _req(isinstance(w, int) and not isinstance(w, bool) and 1 <= w, "WINDOW_PARAM", nid)
         by_id[nid] = n
     _req(used_inputs == set(inputs), "DECLARED_INPUTS_NOT_EQUAL_USED")
     for n in nodes:

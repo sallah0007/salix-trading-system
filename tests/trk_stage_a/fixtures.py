@@ -53,10 +53,16 @@ def package(manifest=_DEFAULT, *, request_id="REQ-1", attempt_id="ATT-1", order_
               semantic_definition="3-bar mean of one-bar close change", created_by="SALIX_MANAGER",
               creation_reason_ref="decision:approved-definition", authority_ref="owner:era1-intake",
               creation_evidence_ref="evidence:definition-review", era_id="ERA_1",
-              request_record=copy.deepcopy(REQUEST_RECORD))
+              request_record=copy.deepcopy(REQUEST_RECORD),
+              resource_ceiling_ref="CEILREF-TEST", resource_ceilings=dict(CEILINGS), capability_declaration=declaration_for(m))
     kw.update(over)
     return BuildPackage(**kw)
 
+CEILINGS = {"MAX_OPCODE_COUNT_PER_PROGRAM": 64, "MAX_BRANCH_COUNT": 0, "MAX_VECTOR_LENGTH": 0, "MAX_MATRIX_ROWS": 0, "MAX_MATRIX_COLS": 0,
+            "MAX_STATE_ELEMENTS": 64, "MAX_REDUCTION_LENGTH": 64}      # TEST values for this repository's fixtures only; not governed values
+def declaration_for(m, ref="CEILREF-TEST"):
+    ops = sorted({n["op"] for n in m["nodes"]}) if isinstance(m, dict) and isinstance(m.get("nodes"), list) else []
+    return {"PROGRAM_REF": "PROG-1", "PROGRAM_CAPABILITY_CLASS": "SCALAR_RECURRENCE", "OPCODE_SET_USED": ops, "RESOURCE_CEILING_REF": ref}
 REQUEST_RECORD = {"REQUEST_SCHEMA_VERSION": "1", "REQUESTER_ID": "fixture-requester", "REQUESTER_TYPE": "MANAGER",
                   "REQUEST_CLASS": "GOVERNED_INTAKE_REQUEST", "TARGET_CONSUMER": "FORWARD_WALK",
                   "REQUEST_CONTEXT": "FW_MANIFEST_NEED", "PURPOSE_STATEMENT": "fixture purpose"}
