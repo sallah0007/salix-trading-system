@@ -17,6 +17,8 @@ FROM_BASIS = ("OBSERVED", "INFERRED_RETROACTIVE", "UNKNOWN")
 RECOVERY = ("TRANSIENT_AUTO_RECOVERABLE", "EVIDENCE_REVALIDATION_REQUIRED", "AUTHORISED_RESTORATION_REQUIRED")
 
 def check_envelope(e: dict, known_schema_versions) -> None:
+    if "ML_LOCAL_STATE" in e:
+        raise Refusal("ML_LOCAL_STATE", code="SECOND_LOCAL_STATE_FIELD")       # ML Health V2: only PRODUCER_REPORTED_LOCAL_STATE may be emitted
     if "EVIDENCE_REFS" in e:
         raise Refusal("EVIDENCE_REFS", code="COMPETING_EVIDENCE_FIELD")      # plural alias must map to one EVIDENCE_REF before it goes outward
     missing = [k for k in REQUIRED if e.get(k) is None]
@@ -91,8 +93,12 @@ def aggregate_state(members) -> str:
         return "AGGREGATE_HEALTHY"
     return "NON_CRITICAL_MEMBER_NOT_HEALTHY"
 
-def attribute_failure(independent_local_evidence: bool, upstream_unhealthy: bool) -> str:
-    """BLOCKED_BY_UPSTREAM != local failure unless independent local evidence exists (Master Health V3 s10)."""
+def attribute_failure(independent_local_evidence: bool, upstream_unhealthy: bool) -> tuple:
+    """Causes that may be reported. BLOCKED_BY_UPSTREAM != local failure unless independent local evidence exists, and (ML Health V2 s4)
+    an upstream problem and an independent local defect may coexist and MUST NOT be merged into one cause, so both are returned."""
+    causes = []
     if independent_local_evidence:
-        return "LOCAL_FAILURE"
-    return "BLOCKED_BY_UPSTREAM" if upstream_unhealthy else "NO_FAILURE_ATTRIBUTED"
+        causes.append("LOCAL_FAILURE")
+    if upstream_unhealthy:
+        causes.append("BLOCKED_BY_UPSTREAM")
+    return tuple(causes) if causes else ("NO_FAILURE_ATTRIBUTED",)

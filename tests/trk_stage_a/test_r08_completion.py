@@ -53,11 +53,14 @@ def test_aggregate_healthy_cannot_mask_a_critical_member():
     assert H.aggregate_state([]) == "UNKNOWN"
 
 def test_upstream_problem_is_not_a_local_failure_without_local_evidence():
-    assert H.attribute_failure(False, True) == "BLOCKED_BY_UPSTREAM"
-    assert H.attribute_failure(True, True) == "LOCAL_FAILURE"
-    assert H.attribute_failure(False, False) == "NO_FAILURE_ATTRIBUTED"
+    assert H.attribute_failure(False, True) == ("BLOCKED_BY_UPSTREAM",)
+    assert H.attribute_failure(True, False) == ("LOCAL_FAILURE",)
+    assert H.attribute_failure(True, True) == ("LOCAL_FAILURE", "BLOCKED_BY_UPSTREAM")      # coexisting causes are not merged (ML Health V2 s4)
+    assert H.attribute_failure(False, False) == ("NO_FAILURE_ATTRIBUTED",)
 
 from stage_a.fw import descriptor_crosswalk as X
+GOOD = {"scope": "s", "interface_id": "i", "version": "1", "content_hash": "a" * 64, "source_authority": "a", "acceptance_record": "r",
+        "validity/supersession": "v"}
 def test_fw_descriptor_crosswalk_ten_fields_all_unbound_and_fail_closed():
     assert len(X.FIELDS) == 10 and set(X.FIELDS) == set(X.SOURCE_STATUS)
     for f in X.FIELDS: assert code(X.require_real_binding, f) == "UNDECLARED_REAL_PAYLOAD_BINDING"
@@ -65,9 +68,9 @@ def test_fw_descriptor_crosswalk_ten_fields_all_unbound_and_fail_closed():
     assert code(X.source_status, "NOT_A_FIELD") == "UNKNOWN_DESCRIPTOR_FIELD"
 
 def test_missing_or_internal_mappings_refused_even_if_a_binding_is_supplied_direct_ones_pass():
-    b = {f: "x" for f in X.FIELDS}
+    b = {f: GOOD for f in X.FIELDS}
     for f in ("SEGMENT_REF", "KNOWABLE_AT", "ADMISSIBILITY_STATE"):
         assert code(X.require_real_binding, f, b) == "DERIVATION_NOT_VERIFIABLE"
-    assert X.require_real_binding("HORIZON_ID", b) == "x" and X.require_real_binding("OBSERVATION_REF", b) == "x"
+    assert X.require_real_binding("HORIZON_ID", b) == GOOD and X.require_real_binding("OBSERVATION_REF", b) == GOOD
     assert code(X.require_all, b) == "DERIVATION_NOT_VERIFIABLE"
     assert code(X.require_real_binding, "HORIZON_ID", {**b, "HORIZON_ID": None}) == "UNDECLARED_REAL_PAYLOAD_BINDING"
