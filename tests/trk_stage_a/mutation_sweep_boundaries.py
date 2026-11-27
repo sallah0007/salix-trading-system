@@ -3,6 +3,29 @@ Each mutant must make tests/trk_stage_a/test_boundaries.py FAIL. Run: python3 te
 import subprocess, sys, pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 M = [
+ ("health/envelope.py", 'if "EVIDENCE_REFS" in e:', "if False:"),
+ ("health/envelope.py", "if missing:", "if False:"),
+ ("health/envelope.py", 'si.get("AUTHORITY_STATE") is None or si.get("INSTRUMENT_ID") is None', 'si.get("AUTHORITY_STATE") is None and si.get("INSTRUMENT_ID") is None'),
+ ("health/envelope.py", 'if e["EXPECTATION_STATE"] not in EXPECTATION:', "if False:"),
+ ("health/envelope.py", 'if et != "OPEN" and (type(et) is not int or et < e["EFFECTIVE_FROM"]):', 'if False:'),
+ ("health/envelope.py", 'if e["HEALTH_ENVELOPE_SCHEMA_VERSION"] not in known_schema_versions:', "if False:"),
+ ("health/envelope.py", "if not integrity_ok:", "if False:"),
+ ("health/envelope.py", 'e["PRODUCER_SEQUENCE"] <= last', 'e["PRODUCER_SEQUENCE"] < last'),
+ ("health/envelope.py", 'key = (e["PRODUCER_ID"], si["AUTHORITY_STATE"], si["INSTRUMENT_ID"], e.get("SUBJECT_VERSION_OR_HASH"))', 'key = (e["PRODUCER_ID"], si["AUTHORITY_STATE"], 0, e.get("SUBJECT_VERSION_OR_HASH"))'),
+ ("health/envelope.py", "if now <= validity_expires_at:", "if now < validity_expires_at:"),
+ ("health/envelope.py", 'if expectation == "EXPECTED":\n        return "STALE_NO_PRODUCER"', 'if expectation != "NOT_EXPECTED":\n        return "STALE_NO_PRODUCER"'),
+ ("health/envelope.py", 'if recovery_class == "AUTHORISED_RESTORATION_REQUIRED":\n        return False', 'if False:\n        return False'),
+ ("health/envelope.py", 'return evidence_kind == "REVALIDATION_PROOF"', 'return True'),
+ ("health/envelope.py", 'if recovery_class not in RECOVERY:', 'if False:'),
+ ("gateway/v038.py", "with self._lock:\n            bound = self._req_ids.get(request_id)", "if True:\n            bound = self._req_ids.get(request_id)"),
+ ("gateway/v038.py", "if identity in self._inflight:", "if False:"),
+ ("gateway/v038.py", "if out is None:", "if False:"),
+ ("gateway/v038.py", "self._inflight.discard(identity)", "pass"),
+ ("schema/independent.py", "raise ValueError(\"unknown tag\")", "return b\"\\x02\" + _ref(v[1])"),
+ ("schema/independent.py", "if type(code) is not int or code not in table.values():", "if type(code) is not int:"),
+ ("schema/independent.py", "if table is None: raise", "if False: raise"),
+ ("schema/independent.py", "if \"refit_mode_is_scheduled\" in m and m[\"refit_mode_is_scheduled\"] is not sched:", "if False:"),
+ ("schema/independent.py", "if (r[\"speculation_mode\"] == _sym(enums, \"SPECULATION_MODE\", \"GATED_ONE_STEP\"))", "if (r[\"speculation_mode\"] == 2)"),
  ("context/news_hub_v2.py", "if publicly_available_at is None or salix_received_at is None:", "if False:"),
  ("context/news_hub_v2.py", "if asof > decision_cutoff:", "if False:"),
  ("context/news_hub_v2.py", 'if pres == "NO_EVENT_RECORDED" and cov != "COMPLETE":', "if False:"),
@@ -35,8 +58,8 @@ M = [
  ("gateway/v038.py", "if available_asof >= fence:", "if available_asof > fence:"),
  ("gateway/v038.py", "if publish_log_position > watermark.status_log_position:", "if publish_log_position >= watermark.status_log_position:"),
  ("gateway/v038.py", "if bound is not None and bound != identity:", "if False:"),
- ("gateway/v038.py", "if prior is not None:", "if False:"),
- ("gateway/v038.py", "if identity in self._by_identity:", "if False:"),
+ ("gateway/v038.py", "if identity in self._by_identity:\n                self._req_ids", "if False:\n                self._req_ids"),
+ ("gateway/v038.py", "if identity in self._by_identity:\n                raise", "if False:\n                raise"),
  ("gateway/v038.py", "if missing:", "if False:"),
  ("gateway/v038.py", "if fields[\"PACKAGE_CLASS\"] not in", "if False and fields[\"PACKAGE_CLASS\"] not in"),
  ("gateway/v038.py", "return NOT_READY\n    return REJECTED", "return NOT_READY\n    return NOT_READY"),
@@ -88,7 +111,7 @@ M = [
  ("schema/candidate_code_tables.py", "enumerate(v, 1)", "enumerate(v, 0)"),
 ]
 def run():
-    return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", str(ROOT / "tests/trk_stage_a/test_boundaries.py"), str(ROOT / "tests/trk_stage_a/test_v038_conformance.py"), str(ROOT / "tests/trk_stage_a/test_schema_annex.py"), str(ROOT / "tests/trk_stage_a/test_context_contracts.py")],
+    return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", str(ROOT / "tests/trk_stage_a/test_boundaries.py"), str(ROOT / "tests/trk_stage_a/test_v038_conformance.py"), str(ROOT / "tests/trk_stage_a/test_schema_annex.py"), str(ROOT / "tests/trk_stage_a/test_context_contracts.py"), str(ROOT / "tests/trk_stage_a/test_health_envelope.py")],
                           cwd=ROOT, capture_output=True, text=True, env=dict(__import__('os').environ, PYTHONDONTWRITEBYTECODE='1')).returncode
 def main():
     assert run() == 0, "baseline must pass"

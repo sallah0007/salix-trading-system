@@ -81,3 +81,40 @@ def test_h1_presence_conditionals_and_package_class():
     with pytest.raises(Refusal): V.check_h1(_h1(PACKAGE_CLASS="BASELINE"))            # a lane name is not a PACKAGE_CLASS
     with pytest.raises(Refusal): V.check_h1(_h1(ISSUER="FW"))
     V.check_h1(_h1(RESOLUTION_VISIBILITY_WATERMARK=None), decision_window=False)      # range deliveries do not need it
+
+# ---------- review R04: concurrency / re-entrancy / failure controls (single-process contract) ---------------------------
+import threading, time
+def test_concurrent_callers_get_one_evaluation_and_one_object():
+    s, calls, outs = V.FinalResolutionStore(), [], []
+    gate = threading.Barrier(16)
+    def ev():
+        calls.append(1); time.sleep(0.01); return object()
+    def worker(i):
+        gate.wait(); outs.append(s.resolve("r%d" % i, IDN, ev))
+    ts = [threading.Thread(target=worker, args=(i,)) for i in range(16)]
+    [t.start() for t in ts]; [t.join() for t in ts]
+    assert len(calls) == 1 and s.evaluations == 1 and len({id(o) for o in outs}) == 1 and len(outs) == 16
+
+def test_reentrant_call_for_same_identity_is_refused_not_double_evaluated():
+    s = V.FinalResolutionStore(); calls = []
+    def ev():
+        calls.append(1)
+        with pytest.raises(Refusal): s.resolve("inner", IDN, ev)                         # re-entry refused
+        return "final"
+    assert s.resolve("outer", IDN, ev) == "final" and len(calls) == 1
+    assert s.resolve("again", IDN, ev) == "final" and len(calls) == 1
+
+def test_failed_or_none_evaluation_stores_nothing_and_is_not_a_final_outcome():
+    s = V.FinalResolutionStore()
+    def boom(): raise RuntimeError("x")
+    with pytest.raises(RuntimeError): s.resolve("r", IDN, boom)
+    s.late_dependency_mutates(IDN)                                                       # nothing stored: window still open
+    with pytest.raises(Refusal): s.resolve("r", IDN, lambda: None)                       # None is refused, not stored
+    s.late_dependency_mutates(IDN)
+    assert s.resolve("r", IDN, lambda: "ok") == "ok" and s.evaluations == 3              # a later good call can still resolve
+    assert s.resolve("r2", IDN, lambda: "other") == "ok"
+
+def test_inflight_marker_cleared_after_failure():
+    s = V.FinalResolutionStore()
+    with pytest.raises(RuntimeError): s.resolve("r", IDN, lambda: (_ for _ in ()).throw(RuntimeError("x")))
+    assert s.resolve("r", IDN, lambda: 1) == 1                                           # not stuck REENTRANT

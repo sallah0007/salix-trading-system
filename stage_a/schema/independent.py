@@ -30,14 +30,28 @@ def _ts(x): return _n(x, 8, -2**63, 2**63 - 1)
 def _bool(x):
     if x is not True and x is not False: raise ValueError("bool")
     return b"\x01" if x else b"\x00"
-def _tagged(v):
-    return b"\x01" + _u16(v[1]) if v[0] == "ENUM" else b"\x02" + _ref(v[1])
+def _code(enums, name, code):
+    """Semantic enum membership from the SUPPLIED versioned table (plain {set: {symbol: code}}); no numbering is assumed here."""
+    table = enums.get(name)
+    if table is None: raise ValueError("enum set not in table: " + name)
+    if type(code) is not int or code not in table.values(): raise ValueError("unknown code for " + name)
+    return _u16(code)
+def _sym(enums, name, symbol):
+    t = enums.get(name)
+    if t is None or symbol not in t: raise ValueError("symbol not in table: %s.%s" % (name, symbol))
+    return t[symbol]
+def _tagged(enums, v):
+    """('ENUM', set_name, code) | ('REF', ref). Any other tag is refused (the producer refuses it too)."""
+    if type(v) is not tuple or not v: raise ValueError("tag")
+    if v[0] == "ENUM" and len(v) == 3: return b"\x01" + _code(enums, v[1], v[2])
+    if v[0] == "REF" and len(v) == 2: return b"\x02" + _ref(v[1])
+    raise ValueError("unknown tag")
 def _h(b): return hashlib.sha256(b).digest()
 
-def row_hash(r):
+def row_hash(r, enums):
     """r: dict with Annex §PENDING_ROW field names (lowercase)."""
     if (r["predecessor_row_hash"] is None) == (r["state_origin_ref"] is None): raise ValueError("origin")
-    if (r["speculation_mode"] == 2) != (r["gate_dependency_hash"] is not None): raise ValueError("gate")
+    if (r["speculation_mode"] == _sym(enums, "SPECULATION_MODE", "GATED_ONE_STEP")) != (r["gate_dependency_hash"] is not None): raise ValueError("gate")
     if not r["input_refs_and_hashes"]: raise ValueError("inputs")
     b = (_fix(r["feature_id"], 16) + _vid(r["feature_version"]) + _fix(r["quant_manifest_hash"], 32) + _fix(r["instrument_id"], 16)
          + _fix(r["timeframe_id"], 16) + _vid(r["materialization_version"]) + _u64(r["step_index"]) + _ts(r["event_time"])
@@ -45,42 +59,43 @@ def row_hash(r):
          + len(r["state_tuple"]).to_bytes(4, "big") + r["state_tuple"] + _vid(r["published_projection_name"])
          + _fix(r["published_projection_bits"], 8) + _lst(r["input_refs_and_hashes"], lambda p: _ref(p[0]) + _fix(p[1], 32))
          + _opt(r["fit_generation_ref"], _ref) + _ref(r["step_class_ref"]) + _opt(r["predecessor_row_hash"], lambda x: _fix(x, 32))
-         + _opt(r["state_origin_ref"], _ref) + _u16(r["speculation_mode"]) + _opt(r["gate_dependency_hash"], lambda x: _fix(x, 32))
+         + _opt(r["state_origin_ref"], _ref) + _code(enums, "SPECULATION_MODE", r["speculation_mode"]) + _opt(r["gate_dependency_hash"], lambda x: _fix(x, 32))
          + _fix(r["materializer_implementation_id"], 16))
     return _h(b)
 
-def transition_hash(c):
+def transition_hash(c, enums):
     if c["available_asof"] != c["canonical_accepted_at"]: raise ValueError("asof")
     return _h(_fix(c["row_content_hash"], 32) + _ref(c["verification_evidence_ref"]) + _u64(c["sifp_fencing_epoch"])
               + _fix(c["canonical_commit_point_id"], 16) + _ts(c["canonical_accepted_at"]) + _ts(c["available_asof"])
-              + _opt(c["gate_dependency_transition_ref"], _ref) + _u16(c["currentness_state_at_acceptance"]) + _u16(c["status_event"]))
+              + _opt(c["gate_dependency_transition_ref"], _ref) + _code(enums, "CURRENTNESS_STATE", c["currentness_state_at_acceptance"]) + _code(enums, "TRANSITION_STATUS_EVENT", c["status_event"]))
 
-def status_event_hash(s):
+def status_event_hash(s, enums):
     e = s["effective_from"]
     if e[0] == "STEP": eff = b"\x01" + _u64(e[1])
     elif e[0] == "INTERVAL" and e[2] > e[1]: eff = b"\x02" + _u64(e[1]) + _u64(e[2])
     else: raise ValueError("effective")
     return _h(_fix(s["status_event_id"], 16) + _vid(s["feature_version"]) + _fix(s["instrument_id"], 16) + _fix(s["timeframe_id"], 16)
-              + _vid(s["materialization_version"]) + _u64(s["mv_status_sequence"]) + _u16(s["status_event_type"]) + eff
-              + _tagged(s["reason_code"]) + _opt(s["predecessor_or_successor_mv_ref"], _ref) + _ts(s["available_asof"])
+              + _vid(s["materialization_version"]) + _u64(s["mv_status_sequence"]) + _code(enums, "CHAIN_STATUS", s["status_event_type"]) + eff
+              + _tagged(enums, s["reason_code"]) + _opt(s["predecessor_or_successor_mv_ref"], _ref) + _ts(s["available_asof"])
               + _ref(s["evidence_ref"]) + _u64(s["sifp_fencing_epoch"]) + _bool(s["correction_marked"]))
 
-def delivered_hash(d):
+def delivered_hash(d, enums):
     return _h(_fix(d["feature_id"], 16) + _vid(d["feature_version"]) + _fix(d["quant_manifest_hash"], 32) + _fix(d["instrument_id"], 16)
               + _fix(d["timeframe_id"], 16) + _vid(d["materialization_version"]) + _u64(d["step_index"]) + _ts(d["event_time"])
               + _vid(d["logical_encoding_version"]) + _vid(d["published_projection_name"]) + _fix(d["published_projection_bits"], 8)
-              + _fix(d["published_projection_hash"], 32) + _opt(d["fit_generation_ref"], _ref) + _u16(d["data_vintage_mode"])
-              + _ts(d["available_asof"]) + _u16(d["chain_status_at_bind"]) + _ref(d["source_or_causal_policy_ref"])
+              + _fix(d["published_projection_hash"], 32) + _opt(d["fit_generation_ref"], _ref) + _code(enums, "DATA_VINTAGE_MODE", d["data_vintage_mode"])
+              + _ts(d["available_asof"]) + _code(enums, "CHAIN_STATUS", d["chain_status_at_bind"]) + _ref(d["source_or_causal_policy_ref"])
               + _ref(d["bound_health_resolution_ref"]) + _ts(d["bound_health_resolved_at"]) + _ref(d["canonical_transition_ref"])
-              + _lst(d["omissions_exclusions_reason_codes"], _tagged))
+              + _lst(d["omissions_exclusions_reason_codes"], lambda v: _tagged(enums, v)))
 
-def manifest_hash(m):
+def manifest_hash(m, enums):
     """Independent MANIFEST_HASH. `m` is a plain dict; refs are (type, id, version, hash|None); keyed lists are lists of
     (name, ref) in ANY order (declaration order is non-authoritative); capabilities are dicts with program_ref,
     capability_class (resolved UINT16), opcode_set_used (ascending, unique, non-empty) and resource_ceiling_ref."""
     if m["shared_evaluator_operator_set_version"] != "SQE_OPSET_V1_1":
         raise ValueError("opset")
-    sched = m["refit_mode_is_scheduled"]
+    sched = m["refit_mode"] == _sym(enums, "REFIT_MODE", "SCHEDULED_REFIT")     # derived from the resolved mode, never trusted from the caller
+    if "refit_mode_is_scheduled" in m and m["refit_mode_is_scheduled"] is not sched: raise ValueError("refit flag disagrees with refit_mode")
     if sched != (m["refit_rule_ref"] is not None) or sched != (m["parameter_generation_source_ref"] is not None):
         raise ValueError("refit presence")
     def keyed(pairs):
@@ -93,14 +108,14 @@ def manifest_hash(m):
     for c in m["program_capability_declarations"]:
         ops = list(c["opcode_set_used"])
         if not ops or ops != sorted(set(ops)): raise ValueError("opcodes")
-        caps.append((_ref(c["program_ref"]), _ref(c["program_ref"]) + _u16(c["capability_class"])
+        caps.append((_ref(c["program_ref"]), _ref(c["program_ref"]) + _code(enums, "PROGRAM_CAPABILITY_CLASS", c["capability_class"])
                      + _lst(ops, _u16) + _ref(c["resource_ceiling_ref"])))
     caps.sort(key=lambda p: p[0])
     if len({k for k, _ in caps}) != len(caps): raise ValueError("dup")
     parts = [_vid(m["quant_manifest_schema_version"]), _fix(m["feature_id"], 16), _vid(m["feature_version"]),
              _vid(m["model_profile_id"]), _vid(m["model_profile_version"]), _vid(m["state_schema_version"]),
              _vid(m["parameter_schema_version"]), _vid(m["arithmetic_contract_version"]), _vid(m["logical_encoding_version"]),
-             _vid(m["shared_evaluator_operator_set_version"]), _u16(m["refit_mode"]),
+             _vid(m["shared_evaluator_operator_set_version"]), _code(enums, "REFIT_MODE", m["refit_mode"]),
              _opt(m["refit_rule_ref"], _ref), _opt(m["parameter_generation_source_ref"], _ref),
              _ref(m["initialization_rule_set_ref"]), _ref(m["step_class_set_ref"]), _ref(m["step_classifier_ref"]),
              keyed(m["input_dependencies"]), keyed(m["transition_program_refs"]), keyed(m["projection_program_refs"]),

@@ -43,31 +43,31 @@ def rowd(r):
 def test_independent_row_hash_equals_producer():
     for r in (row(), row(predecessor_row_hash=None, state_origin_ref=R("o")), row(speculation_mode="GATED_ONE_STEP", gate_dependency_hash=H),
               row(fit_generation_ref=None, input_refs_and_hashes=((R("a"), H), (R("b", H), J * 2)))):
-        assert X.row_hash(rowd(r)) == O.row_content_hash(T, r)
+        assert X.row_hash(rowd(r), ENUMS) == O.row_content_hash(T, r)
 
 def test_independent_row_refuses_what_producer_refuses():
     bad = rowd(row()); bad["state_origin_ref"] = xref(R("o"))
-    with pytest.raises(ValueError): X.row_hash(bad)
+    with pytest.raises(ValueError): X.row_hash(bad, ENUMS)
 
 def test_independent_transition_status_delivered_hashes():
     c = O.CanonicalTransition(H, R("v"), 2, I, 5, 5, None, "CURRENT", "ACCEPT")
     cd = dict(row_content_hash=H, verification_evidence_ref=xref(R("v")), sifp_fencing_epoch=2, canonical_commit_point_id=I,
               canonical_accepted_at=5, available_asof=5, gate_dependency_transition_ref=None,
               currentness_state_at_acceptance=1, status_event=1)
-    assert X.transition_hash(cd) == O.transition_hash(T, c)
+    assert X.transition_hash(cd, ENUMS) == O.transition_hash(T, c)
     s = O.StatusEvent(I, "f1", I, I, "m1", 1, "CURRENT", ("INTERVAL", 2, 9), ("ENUM", "REASON", "NONE"), R("p"), 7, R("e"), 2, True)
     sd = dict(status_event_id=I, feature_version="f1", instrument_id=I, timeframe_id=I, materialization_version="m1", mv_status_sequence=1,
-              status_event_type=1, effective_from=("INTERVAL", 2, 9), reason_code=("ENUM", 1), predecessor_or_successor_mv_ref=xref(R("p")),
+              status_event_type=1, effective_from=("INTERVAL", 2, 9), reason_code=("ENUM", "REASON", 1), predecessor_or_successor_mv_ref=xref(R("p")),
               available_asof=7, evidence_ref=xref(R("e")), sifp_fencing_epoch=2, correction_marked=True)
-    assert X.status_event_hash(sd) == O.status_event_hash(T, s)
+    assert X.status_event_hash(sd, ENUMS) == O.status_event_hash(T, s)
     d = _delivered()
     dd = dataclasses.asdict(d)
     for k in ("fit_generation_ref", "source_or_causal_policy_ref", "bound_health_resolution_ref", "canonical_transition_ref"):
         dd[k] = None if getattr(d, k) is None else xref(getattr(d, k))
     dd["data_vintage_mode"] = 1; dd["chain_status_at_bind"] = 1
-    dd["omissions_exclusions_reason_codes"] = [("ENUM", 1), ("REF", xref(R("why")))]
+    dd["omissions_exclusions_reason_codes"] = [("ENUM", "REASON", 1), ("REF", xref(R("why")))]
     d2 = dataclasses.replace(d, omissions_exclusions_reason_codes=(("ENUM", "REASON", "NONE"), ("REF", R("why"))))
-    assert X.delivered_hash(dd) == O.delivered_hash(T, d2)
+    assert X.delivered_hash(dd, ENUMS) == O.delivered_hash(T, d2)
 
 def _delivered(**kw):
     b = dict(feature_id=I, feature_version="f1", quant_manifest_hash=H, instrument_id=I, timeframe_id=I, materialization_version="m1",
@@ -331,11 +331,11 @@ def test_no_status_fact_fails_closed_and_verifier_refusals():
     assert gw.resolve("a", _entry(), I, I, 3, 10, _health()).reason == "NO_STATUS_AUTHORITY_FACT"
     bad = dict(row_content_hash=H, verification_evidence_ref=xref(R("v")), sifp_fencing_epoch=2, canonical_commit_point_id=I,
                canonical_accepted_at=5, available_asof=6, gate_dependency_transition_ref=None, currentness_state_at_acceptance=1, status_event=1)
-    with pytest.raises(ValueError): X.transition_hash(bad)
+    with pytest.raises(ValueError): X.transition_hash(bad, ENUMS)
     sd = dict(status_event_id=I, feature_version="f1", instrument_id=I, timeframe_id=I, materialization_version="m1", mv_status_sequence=1,
-              status_event_type=1, effective_from=("INTERVAL", 9, 9), reason_code=("ENUM", 1), predecessor_or_successor_mv_ref=None,
+              status_event_type=1, effective_from=("INTERVAL", 9, 9), reason_code=("ENUM", "REASON", 1), predecessor_or_successor_mv_ref=None,
               available_asof=7, evidence_ref=xref(R("e")), sifp_fencing_epoch=2, correction_marked=False)
-    with pytest.raises(ValueError): X.status_event_hash(sd)
+    with pytest.raises(ValueError): X.status_event_hash(sd, ENUMS)
 
 def test_priority_classes_live_heads_never_behind_replay_storm():
     pend = {"replay%02d" % i: ("P2_HISTORICAL_REPLAY", list(range(30))) for i in range(10)}
@@ -362,3 +362,91 @@ def test_d25_candidate_protocol_three_outcomes_and_stale_refusal():
     assert E.apply(4, 4, "CURRENT", "CURRENT")
     with pytest.raises(Refusal): E.apply(3, 4, "CURRENT", "CURRENT")
     with pytest.raises(Refusal): E.apply(4, 4, "CURRENT", "SUPERSEDED")
+
+
+# ---------- review R04: semantic enum membership, tag strictness, remapped provisional tables --------------------------
+def _sd(**kw):
+    d = dict(status_event_id=I, feature_version="f1", instrument_id=I, timeframe_id=I, materialization_version="m1", mv_status_sequence=1,
+             status_event_type=1, effective_from=("INTERVAL", 2, 9), reason_code=("ENUM", "REASON", 1), predecessor_or_successor_mv_ref=None,
+             available_asof=7, evidence_ref=xref(R("e")), sifp_fencing_epoch=2, correction_marked=False)
+    d.update(kw); return d
+
+def test_independent_rejects_unknown_and_malformed_tags():
+    base = X.status_event_hash(_sd(), ENUMS)
+    for bad in (("BOGUS", (1, b"id", b"v", None)), ("BOGUS", "REASON", 1), ("ENUM", 1), ("ENUM",), ("REF",), (), None, "ENUM", ("REF", xref(R("x")), 1),
+                ("ENUM", "NOSET", 1), ("ENUM", "REASON", 99), ("ENUM", "REASON", True), ("ENUM", "REASON", "NONE")):
+        with pytest.raises(ValueError): X.status_event_hash(_sd(reason_code=bad), ENUMS)
+    dd = _delivered_dict()
+    for bad in (("BOGUS", xref(R("w"))), ("ENUM", "REASON", 99), ("REF",)):
+        with pytest.raises(ValueError): X.delivered_hash(dict(dd, omissions_exclusions_reason_codes=[bad]), ENUMS)
+    assert X.status_event_hash(_sd(reason_code=("REF", xref(R("x")))), ENUMS) != base
+
+def _delivered_dict():
+    d = _delivered(); dd = dataclasses.asdict(d)
+    for k in ("fit_generation_ref", "source_or_causal_policy_ref", "bound_health_resolution_ref", "canonical_transition_ref"):
+        dd[k] = None if getattr(d, k) is None else xref(getattr(d, k))
+    dd["data_vintage_mode"] = 1; dd["chain_status_at_bind"] = 1; dd["omissions_exclusions_reason_codes"] = []
+    return dd
+
+def test_independent_enum_membership_unknown_codes_and_remapped_tables():
+    rd = rowd(row())
+    for bad in (0, 3, 99, True, -1, "OFF"):
+        with pytest.raises(ValueError): X.row_hash(dict(rd, speculation_mode=bad), ENUMS)
+    with pytest.raises(ValueError): X.row_hash(rd, {k: v for k, v in ENUMS.items() if k != "SPECULATION_MODE"})   # set absent: fail closed
+    # a provisional REMAPPING (GATED_ONE_STEP -> 17) is honoured from the table; no numbering is adopted by the verifier
+    re_enums = dict(ENUMS, SPECULATION_MODE={"OFF": 5, "GATED_ONE_STEP": 17})
+    T2 = CodeTables(enums=re_enums, ref_types={"R": 1})
+    g = row(speculation_mode="GATED_ONE_STEP", gate_dependency_hash=H); gd = rowd(g); gd["speculation_mode"] = 17
+    assert X.row_hash(gd, re_enums) == O.row_content_hash(T2, g)
+    o = row(); od = rowd(o); od["speculation_mode"] = 5
+    assert X.row_hash(od, re_enums) == O.row_content_hash(T2, o)
+    with pytest.raises(ValueError): X.row_hash(dict(gd, gate_dependency_hash=None), re_enums)      # gate presence follows the table
+    with pytest.raises(ValueError): X.row_hash(dict(od, gate_dependency_hash=H), re_enums)
+    with pytest.raises(ValueError): X.row_hash(dict(gd), ENUMS)                                      # 17 is unknown under the old table
+    for name, f in (("CURRENTNESS_STATE", lambda c: X.transition_hash(dict(c, currentness_state_at_acceptance=77), ENUMS)),
+                    ("TRANSITION_STATUS_EVENT", lambda c: X.transition_hash(dict(c, status_event=77), ENUMS))):
+        c = dict(row_content_hash=H, verification_evidence_ref=xref(R("v")), sifp_fencing_epoch=2, canonical_commit_point_id=I,
+                 canonical_accepted_at=5, available_asof=5, gate_dependency_transition_ref=None, currentness_state_at_acceptance=1, status_event=1)
+        with pytest.raises(ValueError): f(c)
+    with pytest.raises(ValueError): X.status_event_hash(_sd(status_event_type=77), ENUMS)
+    dd = _delivered_dict()
+    for k in ("data_vintage_mode", "chain_status_at_bind"):
+        with pytest.raises(ValueError): X.delivered_hash(dict(dd, **{k: 77}), ENUMS)
+
+# ---------- Q9 (Tracker-owned slice): a new fit generation is a new immutable generation, never a manifest mutation -----------------
+def test_q9_new_fit_generation_changes_row_and_delivered_identity_but_not_manifest_hash():
+    from tests.trk_stage_a.test_schema_annex import manifest
+    Tm = CodeTables(enums={"PROGRAM_CAPABILITY_CLASS": {"TRANSITION": 1, "PROJECTION": 2}, "REFIT_MODE": {"NONE": 1, "SCHEDULED_REFIT": 2}},
+                    ref_types={"R": 1, "PROGRAM": 1, "RULE": 1})
+    mh = O.manifest_hash(Tm, manifest())
+    r1, r2 = row(fit_generation_ref=R("fit", H)), row(fit_generation_ref=R("fit", J * 2))
+    assert O.row_content_hash(T, r1) != O.row_content_hash(T, r2)
+    d1, d2 = _delivered(fit_generation_ref=R("fit", H)), _delivered(fit_generation_ref=R("fit", J * 2))
+    assert O.delivered_hash(T, d1) != O.delivered_hash(T, d2)
+    assert O.manifest_hash(Tm, manifest()) == mh                                   # manifest carries no generation ref: nothing to mutate
+    assert not any(f.name.startswith("fit_generation") for f in dataclasses.fields(O.QuantManifest))
+
+# ---------- D6 evidence: Composer section 28 TRACKER_SAFE_INTAKE_REPORT field list vs the adapter's report ---------------------------
+def test_safe_intake_report_covers_composer_28_field_list():
+    import inspect
+    from stage_a.tracker import quant_intake_adapter as A
+    src = inspect.getsource(A.build_safe_intake_report)
+    # flat names in Composer V9 section 28 -> the key (possibly nested) the adapter emits
+    mapping = {"SAFE_INTAKE_REPORT_ID": "SAFE_INTAKE_REPORT_ID", "BUILD_OUTPUT_PACKAGE_ID / HASH": "BUILD_OUTPUT_PACKAGE", "REQUEST_ID / CREATION_REQUEST_ID": "CREATION_REQUEST_ID",
+               "INTAKE_VERDICT": "INTAKE_VERDICT", "FAILED_DIMENSIONS": "FAILED_DIMENSIONS", "FAILED_DIMENSION_REASON_CODES": "FAILED_DIMENSION_REASON_CODES",
+               "IDENTITY_DECISION": "IDENTITY_DECISION", "RESULTING_FEATURE_ID / FEATURE_VERSION / REGISTRY_ENTRY_REF": "REGISTRY_ENTRY_REF",
+               "CANONICAL_SURVIVOR_ID": "CANONICAL_SURVIVOR", "FEATURE_VERSION_RELATIONSHIP_REF": "FEATURE_VERSION_RELATIONSHIP_REF",
+               "DEPENDENCY_CLOSURE_REF": "DEPENDENCY_CLOSURE_REF", "ANCESTRY_COMPLETENESS": "ANCESTRY_COMPLETENESS",
+               "CAUSAL_AVAILABILITY_VERDICT": "CAUSAL_AVAILABILITY_VERDICT", "SOURCE / VINTAGE / PROVENANCE_VERDICT": "SOURCE_VINTAGE_PROVENANCE_VERDICT",
+               "OUTCOME_INFORMATION_ACCESS_VERDICT": "OUTCOME_INFORMATION_ACCESS_VERDICT", "LEARNED_OR_FITTED_ANCESTRY_VERDICT": "LEARNED_OR_FITTED_ANCESTRY_VERDICT",
+               "COMPLETION_SEMANTICS_VERDICT": "COMPLETION_SEMANTICS_VERDICT", "CURRENTNESS / HEALTH / ELIGIBILITY_INITIAL_STATE": "CURRENTNESS_HEALTH_ELIGIBILITY_INITIAL_STATE",
+               "OMISSIONS / EXCLUSIONS / REASONS": "OMISSIONS_EXCLUSIONS_REASONS", "SAFE_INTAKE_TS": "SAFE_INTAKE_TS", "TRACKER_VERIFIER_ID": "TRACKER_VERIFIER_ID",
+               "POLICY_ID / POLICY_VERSION / POLICY_HASH": "POLICY"}
+    assert len(mapping) == 22                                                       # 22 bullet lines in section 28 (FINAL_REPORT_HASH is added by build_report)
+    for flat, key in mapping.items():
+        assert '"%s"' % key in src, (flat, key)
+    import tracker_component.report as TR
+    assert TR.REPORT_FIELDS[-1] == "FINAL_REPORT_HASH" and len(TR.REPORT_FIELDS) == 23
+    # every top-level key the baseline report schema owns is one the adapter emits (the adapter cannot drift from it)
+    for k in TR.BODY_FIELDS:
+        assert '"%s"' % k in src, k
