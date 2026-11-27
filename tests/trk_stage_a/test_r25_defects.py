@@ -136,10 +136,10 @@ class B5AntiReplaySubject(unittest.TestCase):
 if __name__ == "__main__": unittest.main()
 
 class B22ReviewerCarrier(unittest.TestCase):
-    T = dict(task_origin="T1", framing_hash="f" * 64, context_hash="c" * 64, forbidden_inputs=["prior-verdict", "owner-hint"])
+    T = dict(task_origin="T1", framing_hash="f" * 64, context_hash="c" * 64, forbidden_inputs=["prior-verdict", "owner-hint"], permitted_evidence_refs=["doc:A#p3", "doc:B#p1"])
     def carrier(self, **kw):
         c = dict(finding_id="F1", reviewer_role="CODER", reviewer_version="1", implementation="MODEL", topology="SINGLE", context_hash="c" * 64, task_origin="T1", framing_hash="f" * 64,
-                 evidence_refs=["doc:A#p3"], affected_scope="XAUUSD/H4", proposed_investigation="re-derive", forbidden_inputs=["prior-verdict", "owner-hint"], author="codex"); c.update(kw); return c
+                 evidence_refs=["doc:A#p3"], affected_scope="XAUUSD/H4", proposed_investigation="re-derive", forbidden_inputs=["prior-verdict", "owner-hint"], author="codex", model_version="m-1"); c.update(kw); return c
     def mk(self, bind=True):
         c = core(); bind and c.bind_review_task(self.T); return c
     def test_positive_records_finding_and_is_idempotent_and_mutates_nothing_else(self):
@@ -231,3 +231,23 @@ class R27AssertedResultIsNotAVerifierRun(unittest.TestCase):
         c = core(); g = world_pass()
         self.assertIsNone(code(c.record_verification, KEY, "1", "REQUIRED", "PASS", "PASS", 10, 5, COMPOSED_VERIFIER_ID, g.result_hash, evidence_class=COMPOSED_RECOMPUTATION, result=g))
         self.assertEqual(c.recording_health(KEY, "1", 11).evidence_class, "SIMULATION_COMPOSED_RECOMPUTATION")
+
+
+class R29B22ModelAndPermittedContext(unittest.TestCase):
+    T = B22.T if False else dict(task_origin="T1", framing_hash="f" * 64, context_hash="c" * 64, forbidden_inputs=["prior-verdict", "owner-hint"], permitted_evidence_refs=["doc:A#p3", "doc:B#p1"])
+    def mk(self):
+        c = core(); c.bind_review_task(self.T); return c
+    def carrier(self, **kw):
+        c = dict(finding_id="F1", reviewer_role="CODER", reviewer_version="1", implementation="MODEL", topology="SINGLE", context_hash="c" * 64, task_origin="T1", framing_hash="f" * 64,
+                 evidence_refs=["doc:A#p3"], affected_scope="XAUUSD/H4", proposed_investigation="re-derive", forbidden_inputs=["prior-verdict", "owner-hint"], author="codex", model_version="m-1"); c.update(kw); return c
+    def test_model_version_required_unless_human_and_a_human_may_not_carry_one(self):
+        c = self.mk(); self.assertEqual(code(c.accept_review_finding, self.carrier(model_version=None)), "REVIEW_MODEL_VERSION_REQUIRED")
+        self.assertEqual(code(c.accept_review_finding, self.carrier(model_version="")), "REVIEW_MODEL_VERSION_REQUIRED")
+        self.assertEqual(code(c.accept_review_finding, self.carrier(topology="HUMAN")), "REVIEW_MODEL_VERSION_NOT_APPLICABLE_TO_HUMAN")
+        self.assertIsNone(code(c.accept_review_finding, self.carrier(topology="HUMAN", model_version=None, finding_id="F2")))        # positive: human, no model
+        self.assertIsNone(code(c.accept_review_finding, self.carrier()))                                                           # positive: model named
+    def test_evidence_must_be_inside_the_task_owners_permitted_context(self):
+        c = self.mk(); self.assertEqual(code(c.accept_review_finding, self.carrier(evidence_refs=["doc:A#p3", "doc:Z#9"])), "REVIEW_EVIDENCE_OUTSIDE_PERMITTED_CONTEXT")
+        self.assertIsNone(code(c.accept_review_finding, self.carrier(evidence_refs=["doc:A#p3", "doc:B#p1"])))                    # unrelated permitted refs pass
+        self.assertEqual(code(core().bind_review_task, dict(self.T, permitted_evidence_refs=[])), "REVIEW_TASK_INVALID")           # the permitted context is mandatory, never defaulted to 'everything'
+        t = dict(self.T); del t["permitted_evidence_refs"]; self.assertEqual(code(core().bind_review_task, t), "REVIEW_TASK_INVALID")

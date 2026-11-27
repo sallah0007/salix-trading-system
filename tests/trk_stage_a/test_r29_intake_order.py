@@ -62,3 +62,16 @@ class TrackerIssuedOrder(unittest.TestCase):
         self.assertEqual(code(accept_build_start, mk(), o["order_id"], br), "COMPOSER_BUILD_WITHOUT_TRACKER_ORDER")                                                     # another journal never issued it
         for k, v in (("CANDIDATE_IDENTITY", "x"), ("EXPECTED_DELIVERY_CONTRACT", "y"), ("OUTCOME_INFORMATION_ACCESS", "PERMITTED_UNDER_DECLARED_FITTING_CONTRACT")):
             self.assertEqual(code(accept_build_start, c, o["order_id"], dict(br, **{k: v})), "COMPOSER_BUILD_DIFFERS_FROM_ORDER")
+
+class HealthBlastRadius(unittest.TestCase):
+    def test_dependents_blocked_and_unrelated_baseline_positive_and_required_unknown_fails_closed(self):
+        from .test_r24_core import ver
+        c = mk()
+        c.declare_dependency("MID", "UP"); c.declare_dependency("TOP", "MID")                                                            # edges first: Health recorded under another basis would be UNKNOWN
+        for s in ("UP", "MID", "TOP", "BASE"): ver(c, s, version="1", at=11, age=50)
+        self.assertEqual(c.blast_radius("UP")["dependents"], ["MID", "TOP"]); self.assertEqual(c.blast_radius("BASE")["dependents"], []); self.assertEqual(c.blast_radius("TOP")["dependents"], [])
+        self.assertTrue(c.gateway_health("TOP", "1", 12, None, 11).acceptable and c.gateway_health("BASE", "1", 12, None, 11).acceptable)          # before: positive controls
+        c.quarantine("UP", "DEFECT")
+        self.assertFalse(c.gateway_health("TOP", "1", 13, None, 11).acceptable); self.assertFalse(c.gateway_health("MID", "1", 13, None, 11).acceptable)
+        self.assertTrue(c.gateway_health("BASE", "1", 13, None, 11).acceptable)                                                                 # unrelated baseline unaffected
+        self.assertFalse(c.gateway_health("NEVER_VERIFIED", "1", 13, None, 11).acceptable)                                                      # required, unknown => held, not healthy

@@ -346,6 +346,15 @@ class TrackerCore:
             seen.add(c); stack += st["ups"].get(c, [])
         return sorted(seen)
 
+    def blast_radius(self, subject: str) -> dict:
+        """Health blast radius of `subject` over the DECLARED dependency edges (reverse closure): every subject that depends on it transitively and is therefore blocked while it is (UPSTREAM_BLOCKED). Unrelated subjects are
+        never listed. It reads only the journal's declared edges: an undeclared dependency is invisible here (a declared-edge fact, not a completeness proof of the dependency graph)."""
+        st = self._replay(); dependents, stack = set(), [subject]
+        while stack:
+            cur = stack.pop()
+            for d, ups in st["ups"].items():
+                if cur in ups and d not in dependents: dependents.add(d); stack.append(d)
+        return {"subject": subject, "dependents": sorted(dependents), "basis": "DECLARED_EDGES_ONLY"}
     def _reconstructable(self, st, up, _seen=frozenset()) -> bool:
         """Genuine reconstruction only: a persisted raw observation whose payload reproduces its digest, or a derived node whose ENTIRE recorded ancestry is itself so reconstructable. A Health record or an
         identity is never reconstruction evidence (R23). Current source/code/environment/contract proof is unbound, hence the qualified hold in `reactivate`."""
@@ -573,15 +582,15 @@ class TrackerCore:
         self._commit(d)            # recorded only; mutates no state, authorizes nothing. LEGACY minimal carrier: no bound task/framing/denylist - use accept_review_finding for the §15 carrier
 
     # B22 (frozen Tracker DOCX section 15 reviewer boundary): Tracker-side carrier + guards. No SALIX AI is built or invoked; the carrier is recorded, never acted on.
-    REVIEW_TASK_FIELDS = ("task_origin", "framing_hash", "context_hash", "forbidden_inputs")
+    REVIEW_TASK_FIELDS = ("task_origin", "framing_hash", "context_hash", "forbidden_inputs", "permitted_evidence_refs")
     REVIEW_CARRIER_FIELDS = ("finding_id", "reviewer_role", "reviewer_version", "implementation", "topology", "context_hash", "task_origin", "framing_hash",
-                             "evidence_refs", "affected_scope", "proposed_investigation", "forbidden_inputs", "author")
+                             "evidence_refs", "affected_scope", "proposed_investigation", "forbidden_inputs", "author", "model_version")
     _LISTS = ("evidence_refs", "forbidden_inputs")
     @staticmethod
     def _strs(v): return isinstance(v, list) and all(isinstance(x, str) and x for x in v)
     def bind_review_task(self, task: dict):
         """Binds a review task (origin, framing hash, context hash, forbidden-input denylist) BEFORE any finding may cite it. The framing/denylist are supplied by the task owner, never by the reviewer."""
-        if not isinstance(task, dict) or set(task) != set(self.REVIEW_TASK_FIELDS) or not all(isinstance(task[k], str) and task[k] for k in ("task_origin", "framing_hash", "context_hash")) or not self._strs(task["forbidden_inputs"]):
+        if not isinstance(task, dict) or set(task) != set(self.REVIEW_TASK_FIELDS) or not all(isinstance(task[k], str) and task[k] for k in ("task_origin", "framing_hash", "context_hash")) or not self._strs(task["forbidden_inputs"]) or not self._strs(task["permitted_evidence_refs"]) or not task["permitted_evidence_refs"]:
             raise Refusal("review task shape", code="REVIEW_TASK_INVALID")
         def d(st):
             old = st["tasks"].get(task["task_origin"])
@@ -592,8 +601,12 @@ class TrackerCore:
         self._commit(d)
     def accept_review_finding(self, c: dict):
         if not isinstance(c, dict) or set(c) != set(self.REVIEW_CARRIER_FIELDS): raise Refusal("carrier fields", code="REVIEW_CARRIER_FIELDS_INVALID")
-        if any(not isinstance(c[k], str) or not c[k] for k in self.REVIEW_CARRIER_FIELDS if k not in self._LISTS) or not all(self._strs(c[k]) for k in self._LISTS) or not c["evidence_refs"]:
+        if any(not isinstance(c[k], str) or not c[k] for k in self.REVIEW_CARRIER_FIELDS if k not in self._LISTS and k != "model_version") or not all(self._strs(c[k]) for k in self._LISTS) or not c["evidence_refs"]:
             raise Refusal("carrier values", code="REVIEW_CARRIER_VALUES_INVALID")
+        mv = c["model_version"]                    # s15: 'model/version where applicable'. Applicability is NOT asserted by the reviewer: only a HUMAN topology may omit it; every other topology must name it (the topology vocabulary beyond HUMAN is not source-defined).
+        if c["topology"] == "HUMAN":
+            if mv is not None: raise Refusal("human with model", code="REVIEW_MODEL_VERSION_NOT_APPLICABLE_TO_HUMAN")
+        elif not (isinstance(mv, str) and mv): raise Refusal("model_version", code="REVIEW_MODEL_VERSION_REQUIRED")
         def d(st):
             t = st["tasks"].get(c["task_origin"])
             if t is None: raise Refusal(c["task_origin"], code="REVIEW_TASK_NOT_BOUND")
@@ -601,6 +614,7 @@ class TrackerCore:
             if sorted(c["forbidden_inputs"]) != sorted(t["forbidden_inputs"]): raise Refusal("forbidden inputs", code="REVIEW_FORBIDDEN_INPUTS_MISMATCH")
             used = set(c["evidence_refs"]) & set(t["forbidden_inputs"])
             if used: raise Refusal(",".join(sorted(used)), code="REVIEW_FORBIDDEN_INPUT_USED")
+            if not set(c["evidence_refs"]) <= set(t["permitted_evidence_refs"]): raise Refusal(",".join(sorted(set(c["evidence_refs"]) - set(t["permitted_evidence_refs"]))), code="REVIEW_EVIDENCE_OUTSIDE_PERMITTED_CONTEXT")   # s15: only PERMITTED governed evidence, bound by the task owner
             for f in st["findings"]:
                 if f["finding_id"] == c["finding_id"]:
                     if {k: v for k, v in f.items() if k != "plane"} == c: return None, None
