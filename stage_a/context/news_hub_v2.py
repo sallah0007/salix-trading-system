@@ -171,8 +171,8 @@ def resolve_context(requirement: str, daily_record, event_records, decision_cuto
     The supplied daily record and every event record are VALIDATED here (check_daily_record / event_consumable -> check_event_record), not trusted to the caller.
     Revisions: News Hub V2 gives no revision-selection rule; the frozen Tracker architecture (sec 7A, raw DOCX 15mPi14mG5MAOerZTnhbWfWXwcOIpzWsA) says that when several causally
     valid, non-equivalent candidates exist and NO GOVERNED deterministic rule authorizes one, the resolver returns MULTIPLE_CANDIDATES / REQUIRE_EXPLICIT_SELECTION. So by default
-    (governed_revision_rule=None) distinct payloads for one event id => multiple_candidates; only a caller-supplied rule identity that this module implements
-    ('HIGHEST_REVISION_SEQ') selects, and it is disclosed in 'selection_rule'. The rule's governed ref/version is a named gap (not supplied by any source read)."""
+    (governed_revision_rule=None) distinct payloads for one event id => multiple_candidates; only a caller-supplied rule NAME that this module implements ('HIGHEST_REVISION_SEQ') selects, and then the verdict is NON_AUTHORITATIVE_SELECTION (never USABLE): the rule's governed
+    ref/version is a named gap, so a caller string is not proof of governed selection (selection_rule_verified is always False here). Consumers must use consumer_events()."""
     if requirement not in REQ:
         raise Refusal(str(requirement), code="BAD_CONTEXT_DIMENSION")
     if not _is_ts(decision_cutoff):
@@ -180,7 +180,8 @@ def resolve_context(requirement: str, daily_record, event_records, decision_cuto
     if governed_revision_rule is not None and governed_revision_rule not in KNOWN_REVISION_RULES:
         raise Refusal(str(governed_revision_rule), code="UNKNOWN_REVISION_RULE")
     if requirement == "NOT_REQUESTED":
-        return {"verdict": "USABLE", "coverage": "NOT_REQUESTED", "exhaustive": False, "events": [], "withheld": [], "multiple_candidates": [], "selection_rule": None}
+        return {"verdict": "USABLE", "coverage": "NOT_REQUESTED", "exhaustive": False, "events": [], "withheld": [], "multiple_candidates": [], "selection_rule": None,
+                "selection_rule_verified": False, "admission": ADMISSION_STATE}
     if daily_record is None:
         if requirement == "REQUIRED":
             raise Refusal("daily record missing", code="REQUIRED_CONTEXT_FAIL_CLOSED")
@@ -197,7 +198,7 @@ def resolve_context(requirement: str, daily_record, event_records, decision_cuto
     for ev in event_records:
         check_event_record(ev)
         by_id.setdefault(ev.get("EVENT_ID") or ev.get("EVENT_RECORD_ID"), []).append(ev)
-    used, withheld, multi = [], [], []
+    used, withheld, multi, rule_selected = [], [], [], False
     for eid in sorted(by_id, key=str):
         avail = []
         for ev in by_id[eid]:
@@ -221,9 +222,26 @@ def resolve_context(requirement: str, daily_record, event_records, decision_cuto
             multi.append(eid)
         else:
             used.append(cands[0])
+            rule_selected = True
     if daily_record["EVENT_PRESENCE_STATE"] == "NO_EVENT_RECORDED" and used:
         # DERIVATION (fail-closed, not a source clause): a COMPLETE no-event attestation cannot coexist with a consumable event in the same view; the source says late
         # information creates a CORRECTING daily record, it never silently coexists.
         raise Refusal("NO_EVENT_RECORDED with consumable events", code="DAILY_PRESENCE_CONTRADICTS_EVENTS")
-    return {"verdict": "USABLE", "coverage": daily_record["COVERAGE_STATE"], "exhaustive": daily_record["COVERAGE_STATE"] == "COMPLETE",
-            "events": used, "withheld": withheld, "multiple_candidates": multi, "selection_rule": governed_revision_rule}
+    if multi:
+        verdict = "MULTIPLE_CANDIDATES"                                                  # REQUIRE_EXPLICIT_SELECTION: never readable as USABLE by an unaware consumer
+    elif rule_selected:
+        verdict = "NON_AUTHORITATIVE_SELECTION"                                          # a caller string chose among distinct payloads; no governed rule ref/version is verified
+    else:
+        verdict = "USABLE"
+    return {"verdict": verdict, "coverage": daily_record["COVERAGE_STATE"], "exhaustive": daily_record["COVERAGE_STATE"] == "COMPLETE",
+            "events": used, "withheld": withheld, "multiple_candidates": multi, "selection_rule": governed_revision_rule, "selection_rule_verified": False,
+            "admission": ADMISSION_STATE}
+
+ADMISSION_STATE = "STRUCTURAL_ONLY_NOT_PROVIDER_OR_SOURCE_ADMITTED"
+
+def consumer_events(result: dict) -> list:
+    """The ONLY sanctioned way for a consumer to take events from a resolution. Refuses anything that is not plainly USABLE (MULTIPLE_CANDIDATES, NON_AUTHORITATIVE_SELECTION),
+    and a REQUIRED consumer must additionally hold a provider/source admission, which this module cannot supply (structural validation only): see 'admission'."""
+    if not isinstance(result, dict) or result.get("verdict") != "USABLE":
+        raise Refusal(str(result.get("verdict") if isinstance(result, dict) else type(result).__name__), code="CONTEXT_NOT_CONSUMER_RELIANCE_SAFE")
+    return list(result["events"])

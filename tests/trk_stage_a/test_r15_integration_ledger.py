@@ -1,0 +1,44 @@
+"""R15: ties the 'integrated vs reference-only' claims in the closeout to the actual import graph, and pins the exact journal->status-fact field gap.
+A row cannot be labelled INTEGRATED without a non-test import path from the Tracker pipeline entry; a REFERENCE_ONLY row that becomes reachable fails this test so the
+closeout is re-derived. Reachability is NOT correctness and NOT operational qualification."""
+import unittest
+from dataclasses import fields
+from stage_a.coordination import transition_record as T
+from stage_a.tracker.chain_status import StatusFact
+from tests.trk_stage_a.integration_reach import reachable, import_graph
+
+ENTRY = ("stage_a.tracker.pipeline",)
+# (component module, expected class). Derived by reading the graph; the test enforces it.
+INTEGRATED = ("stage_a.tracker.quant_intake_adapter", "stage_a.tracker.build_output_check", "stage_a.composer.expression.ceilings", "stage_a.composer.request_record",
+              "stage_a.coordination.transition_record", "stage_a.tracker.quant_certification", "stage_a.tracker.materialization.stateful_materializer",
+              "stage_a.tracker.verification.stateful_verifier", "stage_a.authority")
+REFERENCE_ONLY = ("stage_a.context.news_hub_v2", "stage_a.tracker.lifecycle_status_event", "stage_a.tracker.status_projection", "stage_a.health.blast_radius",
+                  "stage_a.gateway.v038", "stage_a.gateway.contracts", "stage_a.fw.receiver", "stage_a.fw.return_lineage", "stage_a.fw.descriptor_crosswalk",
+                  "stage_a.ml.receiver", "stage_a.composer.expression.sqe_opset", "stage_a.health.envelope", "stage_a.health.evidence", "stage_a.tracker.publication")
+
+class Reachability(unittest.TestCase):
+    def test_integrated_rows_have_a_non_test_path_from_the_pipeline(self):
+        r = reachable(ENTRY)
+        for m in INTEGRATED: self.assertIn(m, r, m)
+    def test_reference_only_rows_have_no_production_path(self):
+        r = reachable(ENTRY)
+        for m in REFERENCE_ONLY: self.assertNotIn(m, r, m + " became reachable: re-derive the closeout row")
+    def test_the_check_can_fail(self):
+        g = import_graph()
+        self.assertIn("stage_a.errors", reachable(("stage_a.tracker.pipeline",)))
+        self.assertNotIn("stage_a.tracker.pipeline", reachable(("stage_a.errors",)))      # direction matters: a reversed graph would pass the tests above
+        self.assertTrue(any(g.values()))
+
+class JournalToStatusFactGap(unittest.TestCase):
+    """The mapping record -> StatusFact is undefined by any source read (R7 names no status-origin principal). This pins the exact field mismatch so the claim
+    stays tied to code: a decoder would have to INVENT every missing field."""
+    def test_no_status_fact_field_is_a_journal_body_field(self):
+        need = {f.name for f in fields(StatusFact)}
+        have = set()
+        for k in T.KINDS: have |= set(T._REQUIRED[k])
+        self.assertEqual(need & have, set())                                    # exact: sequence/status/available_asof/correction_marked/mv are NOT in any body
+        self.assertEqual(need, {"mv", "sequence", "status", "available_asof", "correction_marked", "tracker_designated"})
+    def test_lifecycle_kinds_are_not_chain_statuses(self):
+        from stage_a.tracker import chain_status as C
+        self.assertTrue(set(T.KINDS).isdisjoint(set(C.ALL)))                    # vocabulary mismatch: no mapping source read
+if __name__ == "__main__": unittest.main()
