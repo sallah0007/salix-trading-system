@@ -412,3 +412,41 @@ def test_independent_enum_membership_unknown_codes_and_remapped_tables():
     dd = _delivered_dict()
     for k in ("data_vintage_mode", "chain_status_at_bind"):
         with pytest.raises(ValueError): X.delivered_hash(dict(dd, **{k: 77}), ENUMS)
+
+# ---------- Q9 (Tracker-owned slice): a new fit generation is a new immutable generation, never a manifest mutation -----------------
+def test_q9_new_fit_generation_changes_row_and_delivered_identity_but_not_manifest_hash():
+    from tests.trk_stage_a.test_schema_annex import manifest
+    Tm = CodeTables(enums={"PROGRAM_CAPABILITY_CLASS": {"TRANSITION": 1, "PROJECTION": 2}, "REFIT_MODE": {"NONE": 1, "SCHEDULED_REFIT": 2}},
+                    ref_types={"R": 1, "PROGRAM": 1, "RULE": 1})
+    mh = O.manifest_hash(Tm, manifest())
+    r1, r2 = row(fit_generation_ref=R("fit", H)), row(fit_generation_ref=R("fit", J * 2))
+    assert O.row_content_hash(T, r1) != O.row_content_hash(T, r2)
+    d1, d2 = _delivered(fit_generation_ref=R("fit", H)), _delivered(fit_generation_ref=R("fit", J * 2))
+    assert O.delivered_hash(T, d1) != O.delivered_hash(T, d2)
+    assert O.manifest_hash(Tm, manifest()) == mh                                   # manifest carries no generation ref: nothing to mutate
+    assert not any(f.name.startswith("fit_generation") for f in dataclasses.fields(O.QuantManifest))
+
+# ---------- D6 evidence: Composer section 28 TRACKER_SAFE_INTAKE_REPORT field list vs the adapter's report ---------------------------
+def test_safe_intake_report_covers_composer_28_field_list():
+    import inspect
+    from stage_a.tracker import quant_intake_adapter as A
+    src = inspect.getsource(A.build_safe_intake_report)
+    # flat names in Composer V9 section 28 -> the key (possibly nested) the adapter emits
+    mapping = {"SAFE_INTAKE_REPORT_ID": "SAFE_INTAKE_REPORT_ID", "BUILD_OUTPUT_PACKAGE_ID / HASH": "BUILD_OUTPUT_PACKAGE", "REQUEST_ID / CREATION_REQUEST_ID": "CREATION_REQUEST_ID",
+               "INTAKE_VERDICT": "INTAKE_VERDICT", "FAILED_DIMENSIONS": "FAILED_DIMENSIONS", "FAILED_DIMENSION_REASON_CODES": "FAILED_DIMENSION_REASON_CODES",
+               "IDENTITY_DECISION": "IDENTITY_DECISION", "RESULTING_FEATURE_ID / FEATURE_VERSION / REGISTRY_ENTRY_REF": "REGISTRY_ENTRY_REF",
+               "CANONICAL_SURVIVOR_ID": "CANONICAL_SURVIVOR", "FEATURE_VERSION_RELATIONSHIP_REF": "FEATURE_VERSION_RELATIONSHIP_REF",
+               "DEPENDENCY_CLOSURE_REF": "DEPENDENCY_CLOSURE_REF", "ANCESTRY_COMPLETENESS": "ANCESTRY_COMPLETENESS",
+               "CAUSAL_AVAILABILITY_VERDICT": "CAUSAL_AVAILABILITY_VERDICT", "SOURCE / VINTAGE / PROVENANCE_VERDICT": "SOURCE_VINTAGE_PROVENANCE_VERDICT",
+               "OUTCOME_INFORMATION_ACCESS_VERDICT": "OUTCOME_INFORMATION_ACCESS_VERDICT", "LEARNED_OR_FITTED_ANCESTRY_VERDICT": "LEARNED_OR_FITTED_ANCESTRY_VERDICT",
+               "COMPLETION_SEMANTICS_VERDICT": "COMPLETION_SEMANTICS_VERDICT", "CURRENTNESS / HEALTH / ELIGIBILITY_INITIAL_STATE": "CURRENTNESS_HEALTH_ELIGIBILITY_INITIAL_STATE",
+               "OMISSIONS / EXCLUSIONS / REASONS": "OMISSIONS_EXCLUSIONS_REASONS", "SAFE_INTAKE_TS": "SAFE_INTAKE_TS", "TRACKER_VERIFIER_ID": "TRACKER_VERIFIER_ID",
+               "POLICY_ID / POLICY_VERSION / POLICY_HASH": "POLICY"}
+    assert len(mapping) == 22                                                       # 22 bullet lines in section 28 (FINAL_REPORT_HASH is added by build_report)
+    for flat, key in mapping.items():
+        assert '"%s"' % key in src, (flat, key)
+    import tracker_component.report as TR
+    assert TR.REPORT_FIELDS[-1] == "FINAL_REPORT_HASH" and len(TR.REPORT_FIELDS) == 23
+    # every top-level key the baseline report schema owns is one the adapter emits (the adapter cannot drift from it)
+    for k in TR.BODY_FIELDS:
+        assert '"%s"' % k in src, k
