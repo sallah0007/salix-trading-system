@@ -86,8 +86,10 @@ class AugmentedInput:
     ood_ref: Optional[Ref]
     dependency_interval_ref: Optional[Ref]
     gateway_rebind: Optional[Binding]
+    fw_generation_identity_ref: Optional[Ref] = None      # Build Plan 13.2: must preserve FW generation identity
+    research_exposure_ref: Optional[Ref] = None           # ... and research exposure
     def __post_init__(self):
-        for n in ("uncertainty_ref", "ood_ref", "dependency_interval_ref"):
+        for n in ("uncertainty_ref", "ood_ref", "dependency_interval_ref", "fw_generation_identity_ref", "research_exposure_ref"):
             if getattr(self, n) is None:
                 raise Refusal(n, code="AUGMENTED_FIELD_MISSING")
         if self.gateway_rebind is None:

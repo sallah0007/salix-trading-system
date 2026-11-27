@@ -71,3 +71,13 @@ def blast_radius(failed: bytes, consumers: Dict[str, object], feature_deps: Dict
 def must_block(impact: CarriedUpstreamImpact) -> bool:
     """OB2: only a PROVEN dependency may block. Unrelated and undetermined consumers are not blocked by this evidence alone."""
     return impact.verdict == AFFECTED
+
+def consumer_use(impact: CarriedUpstreamImpact, required: bool) -> str:
+    """Applies existing rules; chooses no new recovery policy. Build Plan 13.1: unknown REQUIRED ancestry fails closed; 14A/OB2: a proven-independent branch stays
+    unaffected. AFFECTED -> block; UNAFFECTED -> allow; UNDETERMINED + REQUIRED use -> refuse (unproven independence), reason kept; UNDETERMINED + non-required use ->
+    NO_SOURCE_RULE (no source read states the consequence; the case is named, not decided). Never a global quarantine, never a local-state copy."""
+    if impact.verdict == AFFECTED:
+        return "BLOCK_PROVEN_DEPENDENCY"
+    if impact.verdict == UNAFFECTED:
+        return "ALLOW_PROVEN_INDEPENDENT"
+    return "REFUSE_UNPROVEN_INDEPENDENCE" if required else "NO_SOURCE_RULE_UNDETERMINED_NON_REQUIRED_USE"

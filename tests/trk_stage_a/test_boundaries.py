@@ -284,9 +284,9 @@ def test_ml_generation_checks_and_augmented():
     with pytest.raises(Refusal): ML.check_generation(L.ConsumerManifest("g", "ML", (B1,), derived_from="fw"), Q, g, "ML_STANDALONE")     # M1
     with pytest.raises(Refusal): ML.check_generation(L.ConsumerManifest("g", "ML", (Q,)), Q, g, "ML_STANDALONE")
     gw, b = _bound()
-    ML.AugmentedInput(R("l"), R("u"), R("o"), R("d"), b)                                                                   # F5
-    for kw in (dict(uncertainty_ref=None), dict(ood_ref=None), dict(dependency_interval_ref=None), dict(gateway_rebind=None)):   # F6
-        base = dict(fw_lineage_ref=R("l"), uncertainty_ref=R("u"), ood_ref=R("o"), dependency_interval_ref=R("d"), gateway_rebind=b); base.update(kw)
+    ML.AugmentedInput(R("l"), R("u"), R("o"), R("d"), b, R("g"), R("x"))                                                                   # F5
+    for kw in (dict(uncertainty_ref=None), dict(ood_ref=None), dict(dependency_interval_ref=None), dict(gateway_rebind=None), dict(fw_generation_identity_ref=None), dict(research_exposure_ref=None)):   # F6
+        base = dict(fw_lineage_ref=R("l"), uncertainty_ref=R("u"), ood_ref=R("o"), dependency_interval_ref=R("d"), gateway_rebind=b, fw_generation_identity_ref=R("g"), research_exposure_ref=R("x")); base.update(kw)
         with pytest.raises(Refusal): ML.AugmentedInput(**base)
 
 # ---------- Health (Q17), Context (TR-12) -----------------------------------------------------------------------------

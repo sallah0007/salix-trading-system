@@ -37,3 +37,13 @@ class T(unittest.TestCase):
     def test_feature_dependency_cycle_terminates(self):
         r = run([M("m", "FW", (X,))], {Q: (X,), X: (Q,)}); self.assertEqual(r["m"].verdict, B.AFFECTED)
 if __name__ == "__main__": unittest.main()
+class Use(unittest.TestCase):
+    def test_consumer_use_matrix(self):
+        aff = B.CarriedUpstreamImpact("c", B.AFFECTED, Q); un = B.CarriedUpstreamImpact("c", B.UNAFFECTED, Q); ud = B.CarriedUpstreamImpact("c", B.UNDETERMINED, Q, (), "DERIVED_FROM_UNRESOLVED")
+        self.assertEqual(B.consumer_use(aff, True), "BLOCK_PROVEN_DEPENDENCY"); self.assertEqual(B.consumer_use(aff, False), "BLOCK_PROVEN_DEPENDENCY")
+        self.assertEqual(B.consumer_use(un, True), "ALLOW_PROVEN_INDEPENDENT"); self.assertEqual(B.consumer_use(un, False), "ALLOW_PROVEN_INDEPENDENT")
+        self.assertEqual(B.consumer_use(ud, True), "REFUSE_UNPROVEN_INDEPENDENCE")
+        self.assertEqual(B.consumer_use(ud, False), "NO_SOURCE_RULE_UNDETERMINED_NON_REQUIRED_USE")
+    def test_end_to_end_required_orphan_refused_while_independent_branch_allowed(self):
+        r = run([M("ok", "FW", (A,)), M("orphan", "FW", (A,), derived_from="missing")])
+        self.assertEqual(B.consumer_use(r["ok"], True), "ALLOW_PROVEN_INDEPENDENT"); self.assertEqual(B.consumer_use(r["orphan"], True), "REFUSE_UNPROVEN_INDEPENDENCE")
