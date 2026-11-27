@@ -1,3 +1,5 @@
+> **NON-CONFORMANT NOTICE:** `composer/expression/*` is a prototype that does NOT follow Typed Schema Annex V1.2. Its hashes are not Annex identities. See docs/a07 package §7. Annex-conformant objects live in `stage_a/schema/` (code tables PROVISIONAL).
+
 # SALIX Trading — Stage A — Tracker
 
 Authored end to end under the Owner delegation recorded in `CLAUDE.md` §2A (this repository only).
