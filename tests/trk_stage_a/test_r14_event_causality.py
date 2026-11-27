@@ -104,3 +104,7 @@ class DailyRecordValidatedInsideResolver(unittest.TestCase):
         r = N.resolve_context("REQUIRED", daily(EVENT_PRESENCE_STATE="NO_EVENT_RECORDED"), [ev(PUBLICLY_AVAILABLE_AT=500, SALIX_RECEIVED_AT=500, AVAILABLE_ASOF=500)], 100)
         self.assertEqual(r["events"], [])                                                # a future event does not contradict a quiet-day attestation at this cutoff
 if __name__ == "__main__": unittest.main()
+class AvailableAsofEquality(unittest.TestCase):
+    def test_available_asof_equal_to_cutoff_is_excluded_half_open(self):
+        ok, why = N.event_consumable(ev(PUBLICLY_AVAILABLE_AT=50, SALIX_RECEIVED_AT=50, AVAILABLE_ASOF=100, REVISION_AVAILABLE_AT=50), 100)
+        self.assertEqual((ok, why), (False, "AVAILABLE_ASOF_AFTER_CUTOFF"))

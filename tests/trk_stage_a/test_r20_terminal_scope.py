@@ -66,3 +66,12 @@ class CycleChain(unittest.TestCase):
     def test_cycle_reports_the_repeated_node_not_just_a_status(self):
         a = rec("a", survivor="b"); b = rec("b", survivor="a"); t = TI.resolve_terminal_identity(a, [a, b])
         self.assertEqual((t.status, t.chain), (TI.CYCLE, ("a", "b", "a")))
+class CurrentRowIsNeverAStart(unittest.TestCase):
+    def test_a_matching_current_row_is_not_a_noncurrent_start(self):
+        self.assertEqual(results([A(None, current=True, state="CURRENT")]), ())            # R21 mutant: a current match must not be reported as a terminal start
+class NoContentSubject(unittest.TestCase):
+    def test_subject_without_content_never_matches_by_content_key(self):
+        sub = dict(T.subject()); sub.pop("candidate_content", None)
+        row = X(A("b"), content_key_composite="K", content_key_definition="d", content_key_causal_time="c", content_key_provenance="p", content_key_scope="s", content_key_fitted="f"); self.assertTrue(row.has_content_key)
+        lk, store = lookup([row, rec("b", state="REJECTED_INVALID")])
+        self.assertEqual(len(TI.subject_terminal_identities(sub, store.all(), T.normalizer())), 1)        # still found by exact canonical key, no content-key crash/match

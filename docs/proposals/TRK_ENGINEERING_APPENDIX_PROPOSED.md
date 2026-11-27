@@ -27,7 +27,8 @@ Design rules that apply to every port below (they follow from CLAUDE.md s1/s3/s4
 - CALLPATH: None for bars. Missing binding: the observation identity FIELD LIST and its byte encoding (what makes two observations 'the same').
 - TEST: Same identity+same payload twice = one record; same identity+different payload = AMBIGUOUS and no overwrite (mutant: drop the digest comparison); instrument-qualified keys never collide across EURUSD/XAUUSD.
 - EVIDENCE: Pattern IMPLEMENTED_TESTED for feature versions only. Observation port: PROPOSED_DESIGN, not coded because the field list is unassigned.
-- INPUT: Observation identity field list + canonical bytes + uniqueness constraint -> Core/Tracker blueprint owner -> without it the port cannot define 'same observation' -> recommend: owner supplies field list and encoding; Coder then builds the port and tests above. STATUS=SOURCE_INPUT_UNBOUND.
+- SOURCE-PRESENT: the registry source (1eZThdek..., s5) already names the minimum identity facts of a snapshot/observation (instrument, timeframe/event class, canonical bar/event identity, broker/server time identity, UTC identity, broker-UTC rule/version, source/provider identity, raw source version, schema/calculation-family version, creation/effective/available-as-of identities). These are source-present and are not 'unassigned'.
+- INPUT: (distinct, still unbound) the exact canonical byte encoding, the uniqueness constraint instance, and admission of the observation schema. Owner: Core/Tracker blueprint owner. Consequence: the port can be built and tested over an internal candidate carrier (fact names above, sorted canonical bytes via existing primitives) as simulation evidence, but no production key can be asserted. Ready decision: accept the named facts as the identity tuple and fix the byte layout. STATUS=ENCODING_AND_ADMISSION_UNBOUND (fact list source-present).
 
 ### B02 - Governed timeframe registry and as-of across timeframes (DOCX s5, s21 Time)
 - SOURCE: DOCX s5/s21 Time: governed registry (M15/H1/H4), parent completeness re-derived from segmentation, DST/session rules, cross-timeframe as-of with no back-projection.
@@ -51,7 +52,8 @@ Design rules that apply to every port below (they follow from CLAUDE.md s1/s3/s4
 - CALLPATH: Fence comparison only. Missing: manifest schema/bytes (D13) and DATA_VINTAGE_MODE vocabulary.
 - TEST: Mixed batch refused; allow-policy absent = refused (mutant: default allow); two seals of identical members give one hash.
 - EVIDENCE: Fence IMPLEMENTED_TESTED; manifest PROPOSED_DESIGN.
-- INPUT: Manifest bytes + vintage vocabulary -> Contract/Annex owner -> no snapshot hash can exist -> supply; SOURCE_INPUT_UNBOUND.
+- SOURCE-PRESENT: registry s5 names the minimum TRACKER_SNAPSHOT_MANIFEST content (tracker_snapshot_id, instrument, timeframe/event class, bar/event identity, broker/UTC identities and rule version, source/provider, raw source version, schema version, quality/missingness/staleness, creation/effective/available-as-of, observed-vs-corrected-vs-recomputed mode, enrichment identities, fence/read-boundary identity) and the half-open fence (available_asof < fence included).
+- INPUT: (distinct, still unbound) exact manifest byte encoding, DATA_VINTAGE_MODE vocabulary values, instance and admission. Consequence: seal/verify mechanics run on an internal candidate carrier in simulation; no production snapshot hash. STATUS=ENCODING_AND_ADMISSION_UNBOUND.
 
 ### B04 - SOURCE_DATA_CONTRACT per provider family (DOCX s6, s7A, s21)
 - SOURCE: DOCX s6/s7A/s21: versioned contract, independently derived fingerprint, exactly-one match else raw-preserved/quarantined, freshness/watermark, challenge battery.
@@ -63,7 +65,8 @@ Design rules that apply to every port below (they follow from CLAUDE.md s1/s3/s4
 - CALLPATH: None (ingestion is outside this repository).
 - TEST: Two contracts match -> quarantine; zero match -> quarantine; label spoof with wrong fingerprint refused.
 - EVIDENCE: PROPOSED_DESIGN.
-- INPUT: Contract schema, fingerprint derivation, freshness source, battery -> source/ingestion owner; SOURCE_INPUT_UNBOUND.
+- SOURCE-PRESENT: frozen DOCX s6 names the SOURCE_DATA_CONTRACT content (versioned contract, independently derived fingerprint, exactly-one match, freshness/watermark, challenge battery).
+- INPUT: (distinct, still unbound) concrete per-provider contract instances, fingerprint function values, freshness source, admission. Consequence: resolver exactly-one/zero/many/stale logic is buildable and testable on candidate contracts; no provider is qualified. STATUS=INSTANCES_AND_ADMISSION_UNBOUND.
 
 ### B05 - Raw bytes != semantic identity; semantic epoch (DOCX s6, s21 Materialization)
 - SOURCE: DOCX s6/s21; `epoch_reresolution` is a PROPOSED D25 helper.
@@ -119,7 +122,7 @@ Design rules that apply to every port below (they follow from CLAUDE.md s1/s3/s4
 - PORT: `VersionRelationshipPort.compute(old_version_ref, new_version_ref, diff_schema) -> {relationship_id, hash, outcome} | UNCOMPUTED | UNCOMPUTABLE`; the relationship object is journaled and pinned by historical replay.
 - OWNERS: Producer: Tracker. Consumer: lifecycle, replay.
 - STATE: One journal record; no second lifecycle authority.
-- REFUSALS: CORRECTION requires predecessor-defect evidence that is VERIFIED, else UNCOMPUTABLE; unknown field -> not in partition -> refuse.
+- REFUSALS: UNCOMPUTABLE is reserved for genuinely missing/unverifiable HISTORICAL evidence (`classify_not_computed`); skipped work or a software failure is UNCOMPUTED (blocks the supersession claim, retryable) and is never UNCOMPUTABLE. UNCOMPUTED and UNCOMPUTABLE have distinct consequences (UNCOMPUTABLE routes to MATERIAL_ALTERNATIVE, UNCOMPUTED blocks supersession). CORRECTION requires VERIFIED predecessor-defect evidence; unknown field -> refuse.
 - CALLPATH: Pure partition validator only.
 - TEST: Partition totality/disjointness mutants (exist); add diff-engine tests when the diff schema exists.
 - EVIDENCE: Partition IMPLEMENTED_TESTED.
@@ -176,14 +179,15 @@ Design rules that apply to every port below (they follow from CLAUDE.md s1/s3/s4
 ### B14 - L1/L2 verification and Recording Health (DOCX s9, s21)
 - SOURCE: DOCX s9/s21.
 - REUSE: `stateful_verifier.verify_materialization`, `independent_traversal`, `health/evidence`.
-- PORT: `VerificationScheduler.reverify(feature_key, trigger) -> VerificationResult`; `L2_REQUIREMENT=UNAVAILABLE -> RECORDING_HEALTH UNKNOWN` (never silent L2->L1 fallback).
+- PORT: `VerificationScheduler.reverify(feature_key, trigger) -> VerificationResult`. CORRECTION of an earlier appendix error: there is no `L2_REQUIREMENT=UNAVAILABLE`. Source states are L2_REQUIREMENT = REQUIRED | NOT_APPLICABLE_BY_GOVERNED_DEFINITION; L2_STATUS = UNAVAILABLE; RECORDING_HEALTH = UNKNOWN / NOT_HEALTHY. L2_REQUIREMENT=REQUIRED with L2_STATUS=UNAVAILABLE -> RECORDING_HEALTH UNKNOWN/NOT_HEALTHY (never silent L2->L1 fallback).
 - OWNERS: Tracker verifier; Health consumer.
 - STATE: Verification result journaled by hash; Recording Health is derived, never authority.
 - REFUSALS: UNAVAILABLE L2 -> UNKNOWN; stale health cannot certify PASS.
 - CALLPATH: One-shot at intake only.
 - TEST: Fallback mutant; stale-health PASS mutant.
 - EVIDENCE: One-shot IMPLEMENTED_TESTED (domain-limited; independent oracle is same author, D4).
-- INPUT: L2_REQUIREMENT flag source and RECORDING_HEALTH states -> Health/verification owner.
+- SOURCE-PRESENT: the three states above.
+- INPUT: (unbound only) appointment/profile that sets L2_REQUIREMENT per feature family, and the transport that carries L2_STATUS. Consequence: continuous L1/L2 health logic is buildable over those states; assigning a requirement to a real family is held.
 
 ### B15 - Component vs contract health; localization packet (DOCX s17, s19)
 - SOURCE: DOCX s17/s19; Build Plan 14A.
@@ -371,7 +375,7 @@ The `tests/stage_a` sub-trees concurrency, golden_mirrors and e2e stay NOT_BUILT
 | D1 | `ClaimService.authorizes` hook already tested; install point design: one `construction_authority` provider handed to the baseline at composition time | Manager records the install point |
 | D2 | `principals.GRANT_EVIDENCE_FIELDS` shape only | Owner appointment of signer/anchor |
 | D3 | candidate code tables; Part 5 decoder/graph ports | REF_TYPE vocabulary, opcode table, grammar, sort rule |
-| D4 | harness for an independent oracle | an independent author |
+| D4 | harness for an independent oracle; Claude authors, Codex re-derives/challenges expected bytes (not a staffing blocker) | runtime creator!=certifier and source-principal requirements remain; independence limitation recorded |
 | D5 | `tests/provider_conformance` | real provider evidence |
 | D10 | cross-journal atomicity design on one fenced journal family (B18 WriterGate) | real provider evidence |
 | D6 | `docs/proposals/D6_composer_s27_mapping.md`; Part 5 slots | prose-only s27 field semantics |
@@ -394,3 +398,7 @@ The `tests/stage_a` sub-trees concurrency, golden_mirrors and e2e stay NOT_BUILT
 - A07-3 whole-domain history: open (Drive Activity export or scoped waiver).
 - A07-4 currentness/effectiveness remainder (A01 currentness, QC34, D19/D22, D23/D24/D26/Q03): open with named source owners.
 - Source/qualifier/currentness/history/procedure/QC remainder stays visible. Sallah's sign-off and all gates stay separate.
+
+
+## R21 implementation note
+B01, B03, B04, B05, B13/quarantine, B14 and the as-of eligibility / reviewer guard now have IMPLEMENTED_UNQUALIFIED internal ports in `stage_a/core/tracker_core.py` over candidate carriers (simulation evidence); the composition path feeds the real Gateway, FW and ML receivers (`tests/trk_stage_a/test_r21_core.py`). Byte encodings, calendar rules and provider proof remain unbound.

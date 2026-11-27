@@ -45,3 +45,17 @@ def relationship_consequences(state: str) -> dict:
     if state == UNCOMPUTABLE:
         return {"blocks_supersession_claim": False, "blocks_gateway_delivery_of_existing_eligible_version": False, "may_yield_correction": False, "routes_to": "MATERIAL_ALTERNATIVE"}
     raise Refusal(repr(state), code="UNKNOWN_RELATIONSHIP_STATE")
+
+
+# Why a relationship is not computed. UNCOMPUTABLE is reserved for genuinely missing/unverifiable HISTORICAL evidence; skipped work or a software failure is UNCOMPUTED
+# (retryable, blocks the supersession claim) and never UNCOMPUTABLE.
+EVIDENCE_GENUINELY_MISSING = "HISTORICAL_EVIDENCE_MISSING_OR_UNVERIFIABLE"
+WORK_NOT_DONE = "WORK_NOT_PERFORMED"
+SOFTWARE_FAILURE = "COMPUTATION_FAILED"
+
+def classify_not_computed(reason: str) -> str:
+    if reason == EVIDENCE_GENUINELY_MISSING:
+        return UNCOMPUTABLE
+    if reason in (WORK_NOT_DONE, SOFTWARE_FAILURE):
+        return UNCOMPUTED
+    raise Refusal(repr(reason), code="UNKNOWN_NOT_COMPUTED_REASON")
