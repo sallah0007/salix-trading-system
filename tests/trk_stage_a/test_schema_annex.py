@@ -139,3 +139,55 @@ def test_delivered_entry_binds_vintage_and_reasons():
     b = O.delivered_hash(T, O.DeliveredFeatureEntry(**d))
     d["omissions_exclusions_reason_codes"] = (("ENUM", "REASON", "NONE"),)
     assert O.delivered_hash(T, O.DeliveredFeatureEntry(**d)) != b
+
+# ---------- independent MANIFEST_HASH (verifier side) -----------------------------------------------------------------
+def _xr(r): return (1, r.target_id, r.target_version, r.target_hash)
+def _manifest_dict(m, tables):
+    d = dict(quant_manifest_schema_version=m.quant_manifest_schema_version, feature_id=m.feature_id, feature_version=m.feature_version,
+             model_profile_id=m.model_profile_id, model_profile_version=m.model_profile_version, state_schema_version=m.state_schema_version,
+             parameter_schema_version=m.parameter_schema_version, arithmetic_contract_version=m.arithmetic_contract_version,
+             logical_encoding_version=m.logical_encoding_version, shared_evaluator_operator_set_version=m.shared_evaluator_operator_set_version,
+             refit_mode=tables.enums["REFIT_MODE"][m.refit_mode], refit_mode_is_scheduled=m.refit_mode == "SCHEDULED_REFIT",
+             refit_rule_ref=None if m.refit_rule_ref is None else _xr(m.refit_rule_ref),
+             parameter_generation_source_ref=None if m.parameter_generation_source_ref is None else _xr(m.parameter_generation_source_ref),
+             published_projection_set_ref=_xr(m.published_projection_set_ref), verification_rule_set_ref=_xr(m.verification_rule_set_ref),
+             golden_vector_set_ref=_xr(m.golden_vector_set_ref), health_profile_ref=_xr(m.health_profile_ref),
+             resource_ceiling_ref=_xr(m.resource_ceiling_ref), data_vintage_policy_ref=_xr(m.data_vintage_policy_ref),
+             initialization_rule_set_ref=_xr(m.initialization_rule_set_ref), step_class_set_ref=_xr(m.step_class_set_ref),
+             step_classifier_ref=_xr(m.step_classifier_ref))
+    for k in ("input_dependencies", "transition_program_refs", "projection_program_refs", "invariant_program_refs", "health_metric_program_refs"):
+        d[k] = [(n, _xr(r)) for n, r in getattr(m, k)]
+    d["program_capability_declarations"] = [dict(program_ref=_xr(c.program_ref), capability_class=tables.enums["PROGRAM_CAPABILITY_CLASS"][c.capability_class],
+                                                 opcode_set_used=list(c.opcode_set_used), resource_ceiling_ref=_xr(c.resource_ceiling_ref))
+                                            for c in m.program_capability_declarations]
+    return d
+
+def test_independent_manifest_hash_equals_producer_and_is_order_insensitive():
+    from stage_a.schema import independent as X
+    import copy
+    Tm = CodeTables(enums={"PROGRAM_CAPABILITY_CLASS": {"TRANSITION": 1, "PROJECTION": 2}, "REFIT_MODE": {"NONE": 1, "SCHEDULED_REFIT": 2}},
+                    ref_types={"R": 1, "PROGRAM": 1, "RULE": 1})
+    for m in (manifest(), manifest(refit_mode="SCHEDULED_REFIT", refit_rule_ref=R("rr"), parameter_generation_source_ref=R("pg")),
+              manifest(health_metric_program_refs=(("m2", R("m2")), ("m1", R("m1"))))):
+        d = _manifest_dict(m, Tm)
+        assert X.manifest_hash(d) == O.manifest_hash(Tm, m)
+        e = copy.deepcopy(d); e["input_dependencies"].reverse(); e["program_capability_declarations"].reverse()
+        assert X.manifest_hash(e) == X.manifest_hash(d)
+
+def test_independent_manifest_refusals_and_sensitivity():
+    from stage_a.schema import independent as X
+    Tm = CodeTables(enums={"PROGRAM_CAPABILITY_CLASS": {"TRANSITION": 1, "PROJECTION": 2}, "REFIT_MODE": {"NONE": 1}}, ref_types={"R": 1, "PROGRAM": 1, "RULE": 1})
+    d = _manifest_dict(manifest(), Tm); base = X.manifest_hash(d)
+    import copy
+    def mod(f):
+        e = copy.deepcopy(d); f(e); return e
+    for f in (lambda e: e.update(shared_evaluator_operator_set_version="SQE_OPSET_V1_0"),
+              lambda e: e.update(refit_rule_ref=_xr(R("x"))),
+              lambda e: e.update(input_dependencies=[]),
+              lambda e: e.update(input_dependencies=[("a", _xr(R("a"))), ("a", _xr(R("b")))]),
+              lambda e: e["program_capability_declarations"][0].update(opcode_set_used=[2, 1]),
+              lambda e: e["program_capability_declarations"][0].update(opcode_set_used=[]),
+              lambda e: e.update(program_capability_declarations=[])):
+        with pytest.raises(ValueError): X.manifest_hash(mod(f))
+    assert X.manifest_hash(mod(lambda e: e.update(feature_version="f2"))) != base
+    assert X.manifest_hash(mod(lambda e: e["program_capability_declarations"][0].update(opcode_set_used=[1, 3]))) != base

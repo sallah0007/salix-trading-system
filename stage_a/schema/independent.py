@@ -73,3 +73,45 @@ def delivered_hash(d):
               + _ts(d["available_asof"]) + _u16(d["chain_status_at_bind"]) + _ref(d["source_or_causal_policy_ref"])
               + _ref(d["bound_health_resolution_ref"]) + _ts(d["bound_health_resolved_at"]) + _ref(d["canonical_transition_ref"])
               + _lst(d["omissions_exclusions_reason_codes"], _tagged))
+
+def manifest_hash(m):
+    """Independent MANIFEST_HASH. `m` is a plain dict; refs are (type, id, version, hash|None); keyed lists are lists of
+    (name, ref) in ANY order (declaration order is non-authoritative); capabilities are dicts with program_ref,
+    capability_class (resolved UINT16), opcode_set_used (ascending, unique, non-empty) and resource_ceiling_ref."""
+    if m["shared_evaluator_operator_set_version"] != "SQE_OPSET_V1_1":
+        raise ValueError("opset")
+    sched = m["refit_mode_is_scheduled"]
+    if sched != (m["refit_rule_ref"] is not None) or sched != (m["parameter_generation_source_ref"] is not None):
+        raise ValueError("refit presence")
+    def keyed(pairs):
+        if not pairs: raise ValueError("empty")
+        enc = sorted(((_vid(k), _vid(k) + _ref(r)) for k, r in pairs), key=lambda p: p[0])
+        if len({k for k, _ in enc}) != len(enc): raise ValueError("dup")
+        return _lst([e for _, e in enc], lambda b: b)
+    if not m["program_capability_declarations"]: raise ValueError("empty")
+    caps = []
+    for c in m["program_capability_declarations"]:
+        ops = list(c["opcode_set_used"])
+        if not ops or ops != sorted(set(ops)): raise ValueError("opcodes")
+        caps.append((_ref(c["program_ref"]), _ref(c["program_ref"]) + _u16(c["capability_class"])
+                     + _lst(ops, _u16) + _ref(c["resource_ceiling_ref"])))
+    caps.sort(key=lambda p: p[0])
+    if len({k for k, _ in caps}) != len(caps): raise ValueError("dup")
+    parts = [_vid(m["quant_manifest_schema_version"]), _fix(m["feature_id"], 16), _vid(m["feature_version"]),
+             _vid(m["model_profile_id"]), _vid(m["model_profile_version"]), _vid(m["state_schema_version"]),
+             _vid(m["parameter_schema_version"]), _vid(m["arithmetic_contract_version"]), _vid(m["logical_encoding_version"]),
+             _vid(m["shared_evaluator_operator_set_version"]), _u16(m["refit_mode"]),
+             _opt(m["refit_rule_ref"], _ref), _opt(m["parameter_generation_source_ref"], _ref),
+             _ref(m["initialization_rule_set_ref"]), _ref(m["step_class_set_ref"]), _ref(m["step_classifier_ref"]),
+             keyed(m["input_dependencies"]), keyed(m["transition_program_refs"]), keyed(m["projection_program_refs"]),
+             keyed(m["invariant_program_refs"]),
+             _ref(m["published_projection_set_ref"]), _ref(m["verification_rule_set_ref"]), _ref(m["golden_vector_set_ref"]),
+             _ref(m["health_profile_ref"]), _lst_health(m["health_metric_program_refs"]),
+             _lst([e for _, e in caps], lambda b: b), _ref(m["resource_ceiling_ref"]), _ref(m["data_vintage_policy_ref"])]
+    return _h(b"".join(parts))
+
+def _lst_health(pairs):
+    # HEALTH_METRIC_PROGRAM_REFS may be empty in a manifest whose health profile declares no metrics; the producer allows it.
+    enc = sorted(((_vid(k), _vid(k) + _ref(r)) for k, r in pairs), key=lambda p: p[0])
+    if len({k for k, _ in enc}) != len(enc): raise ValueError("dup")
+    return _lst([e for _, e in enc], lambda b: b)
