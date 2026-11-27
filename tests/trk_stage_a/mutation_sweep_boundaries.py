@@ -3,6 +3,43 @@ Each mutant must make tests/trk_stage_a/test_boundaries.py FAIL. Run: python3 te
 import subprocess, sys, pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 M = [
+ ("context/news_hub_v2.py", "if publicly_available_at is None or salix_received_at is None:", "if False:"),
+ ("context/news_hub_v2.py", "if asof > decision_cutoff:", "if False:"),
+ ("context/news_hub_v2.py", 'if pres == "NO_EVENT_RECORDED" and cov != "COMPLETE":', "if False:"),
+ ("context/news_hub_v2.py", 'if cov == "COMPLETE" and coverage_basis is None:', "if False:"),
+ ("context/news_hub_v2.py", "if not ok:", "if False:"),
+ ("context/news_hub_v2.py", "prior_coverage_issued_at <= decision_cutoff", "prior_coverage_issued_at <= decision_cutoff + 9"),
+ ("context/news_hub_v2.py", "if degraded and optional_degraded_policy_ref is None:", "if False:"),
+ ("context/news_hub_v2.py", "return bar_or_decision_time >= issued_at", "return True"),
+ ("context/decision_context.py", 'if "NEXT_PERMITTED_ACTION" in o:', "if False:"),
+ ("context/decision_context.py", "if o[\"CONTEXT_DOMAIN\"] not in DOMAINS:", "if False:"),
+ ("context/decision_context.py", "if not context_known:", "if False:"),
+ ("context/decision_context.py", "return e[\"CREATED_AT\"] <= t and e[\"AVAILABLE_ASOF\"] <= t", "return e[\"EFFECTIVE_AT\"] <= t"),
+ ("context/decision_context.py", "return dict(apply=True, review=\"CONTEXT_DOMAIN_RESOLUTION_FAILURE\"", "return dict(apply=False, review=\"CONTEXT_DOMAIN_RESOLUTION_FAILURE\""),
+ ("context/decision_context.py", "restoration_allowed=False)", "restoration_allowed=True)"),
+ ("context/decision_context.py", "if not risk_reducing:\n        if not domain_resolvable:", "if not risk_reducing:\n        if False:"),
+ ("schema/independent.py", 'if m["shared_evaluator_operator_set_version"] != "SQE_OPSET_V1_1":', "if False:"),
+ ("schema/independent.py", 'if sched != (m["refit_rule_ref"] is not None) or sched != (m["parameter_generation_source_ref"] is not None):', "if False:"),
+ ("schema/independent.py", 'if not pairs: raise ValueError("empty")', "if False: pass"),
+ ("schema/independent.py", 'if len({k for k, _ in enc}) != len(enc): raise ValueError("dup")\n        return _lst([e for _, e in enc], lambda b: b)\n    if not', 'if False: pass\n        return _lst([e for _, e in enc], lambda b: b)\n    if not'),
+ ("schema/independent.py", "if not ops or ops != sorted(set(ops)): raise ValueError(\"opcodes\")", "if False: pass"),
+ ("schema/independent.py", "caps.sort(key=lambda p: p[0])", "pass"),
+ ("schema/independent.py", "for k, r in pairs), key=lambda p: p[0])\n        if len", "for k, r in pairs), key=lambda p: 0)\n        if len"),
+ ("gateway/v038.py", "if self.status not in NON_DELIVERY_STATUSES:", "if False:"),
+ ("gateway/v038.py", "if self.status == NOT_READY and not self.omissions:", "if False:"),
+ ("gateway/v038.py", "if self.expected_key.feature_version != self.feature_version:", "if False:"),
+ ("gateway/v038.py", "if not isinstance(self.expected_key, ExpectedDependencyKey):", "if False:"),
+ ("gateway/v038.py", "if certified_max_visibility_lag is None:", "if False:"),
+ ("gateway/v038.py", "if settlement_delay < certified_max_visibility_lag:", "if False:"),
+ ("gateway/v038.py", "if resolution_time < fence + settlement_delay:", "if False:"),
+ ("gateway/v038.py", "if available_asof >= fence:", "if available_asof > fence:"),
+ ("gateway/v038.py", "if publish_log_position > watermark.status_log_position:", "if publish_log_position >= watermark.status_log_position:"),
+ ("gateway/v038.py", "if bound is not None and bound != identity:", "if False:"),
+ ("gateway/v038.py", "if prior is not None:", "if False:"),
+ ("gateway/v038.py", "if identity in self._by_identity:", "if False:"),
+ ("gateway/v038.py", "if missing:", "if False:"),
+ ("gateway/v038.py", "if fields[\"PACKAGE_CLASS\"] not in", "if False and fields[\"PACKAGE_CLASS\"] not in"),
+ ("gateway/v038.py", "return NOT_READY\n    return REJECTED", "return NOT_READY\n    return NOT_READY"),
  ("tracker/chain_status.py", "if prev.status == HALTED:", "if False:"),
  ("tracker/chain_status.py", "if f.sequence <= prev.sequence:", "if False:"),
  ("tracker/chain_status.py", "if f.available_asof < prev.available_asof:", "if False:"),
@@ -14,7 +51,7 @@ M = [
  ("tracker/speculation.py", "if c.staged_inputs and c.transitive_speculation_depth != 1:", "if False:"),
  ("tracker/speculation.py", "if c.transitive_speculation_depth not in (0, 1):", "if False:"),
  ("gateway/contracts.py", "if row.available_asof >= fence:", "if row.available_asof > fence:"),
- ("gateway/contracts.py", "if row.visible_at >= fence:", "if False:"),
+ ("gateway/contracts.py", "if row.visible_at >= obs:", "if False:"),
  ("gateway/contracts.py", "if self.watermark < fence:", "if False:"),
  ("gateway/contracts.py", "if require_current and st.status != CURRENT:", "if False:"),
  ("gateway/contracts.py", "if not health.acceptable:", "if False:"),
@@ -51,8 +88,8 @@ M = [
  ("schema/candidate_code_tables.py", "enumerate(v, 1)", "enumerate(v, 0)"),
 ]
 def run():
-    return subprocess.run([sys.executable, "-m", "pytest", "-q", "-x", str(ROOT / "tests/trk_stage_a/test_boundaries.py")],
-                          cwd=ROOT, capture_output=True, text=True).returncode
+    return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", str(ROOT / "tests/trk_stage_a/test_boundaries.py"), str(ROOT / "tests/trk_stage_a/test_v038_conformance.py"), str(ROOT / "tests/trk_stage_a/test_schema_annex.py"), str(ROOT / "tests/trk_stage_a/test_context_contracts.py")],
+                          cwd=ROOT, capture_output=True, text=True, env=dict(__import__('os').environ, PYTHONDONTWRITEBYTECODE='1')).returncode
 def main():
     assert run() == 0, "baseline must pass"
     survived = []

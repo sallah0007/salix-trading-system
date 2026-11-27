@@ -75,7 +75,8 @@ class SimulatedGateway:
         return outcome
 
     def resolve(self, request_id: str, entry: DependencyEntry, instrument_id: bytes, timeframe_id: bytes, step_index: int,
-                fence: int, health: HealthSnapshot, require_current: bool = True, data_vintage_mode: Optional[str] = None):
+                fence: int, health: HealthSnapshot, require_current: bool = True, data_vintage_mode: Optional[str] = None,
+                observed_at: Optional[int] = None):
         done = self._outcomes.get(request_id)
         if done is not None:                                         # G4: retry returns the identical stored outcome
             return done
@@ -93,7 +94,8 @@ class SimulatedGateway:
         if row.available_asof >= fence:                              # G1: equality at the fence is excluded
             return nd("NOT_AVAILABLE_BEFORE_FENCE") if entry.requirement_class == REQUIRED else self._store(
                 request_id, AbsenceApplied(request_id, entry.feature_id, entry.feature_version, entry.absence_rule_ref))
-        if row.visible_at >= fence:                                  # G2: classified, causal set NOT widened
+        obs = fence if observed_at is None else observed_at         # V0.38: resolver observes at fence + SETTLEMENT_DELAY
+        if row.visible_at >= obs:                                    # not visible to the resolver: causal set NOT widened
             return nd("LATE_VISIBILITY")
         if data_vintage_mode is not None and row.data_vintage_mode != data_vintage_mode:
             return nd("DATA_VINTAGE_MODE_MISMATCH")
