@@ -35,8 +35,15 @@ M = [
  (TC, 'raise Refusal(finding["finding_id"], code="FINDING_ID_REUSED")', 'break'),
  (TC, 'raise Refusal(task["task_origin"], code="REVIEW_TASK_REBOUND")', 'return None, ("REVIEW_TASK", dict(task))'),
  (TC, 'or not c["evidence_refs"]:', ':'),
+ ("stage_a/tracker/reverify_scheduler.py", 'if b is None: out.append(PassItem(subject, trigger, "UNBOUND")); continue', 'if b is None: continue'),
+ ("stage_a/tracker/reverify_scheduler.py", '.key() != subject:', '.key() == subject:'),
+ ("stage_a/tracker/reverify_scheduler.py", 'if n >= max_items:', 'if n > max_items:'),
+ ("stage_a/tracker/reverify_scheduler.py", '            core.request_reverification(subject, trigger)\n', ''),
+ ("stage_a/tracker/reverify_scheduler.py", 'core.due_for_reverification(list(subjects), now)', '[(s, "ABSENT") for s in subjects]'),
+ ("stage_a/tracker/reverify_scheduler.py", 'or max_items < 1: raise', ': pass; raise'),
+ ("stage_a/tracker/reverify_scheduler.py", 'except Refusal as e:', 'except KeyError as e:'),
 ]
-T = ["tests/trk_stage_a/test_r25_defects.py", "tests/trk_stage_a/test_r24_composed.py", "tests/trk_stage_a/test_verifier_independence.py", "tests/trk_stage_a/test_health_envelope.py", "tests/trk_stage_a/test_r24_core.py"]
+T = ["tests/trk_stage_a/test_r25_defects.py", "tests/trk_stage_a/test_r24_composed.py", "tests/trk_stage_a/test_verifier_independence.py", "tests/trk_stage_a/test_health_envelope.py", "tests/trk_stage_a/test_r24_core.py", "tests/trk_stage_a/test_r25_scheduler.py"]
 def run():
     try: return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", *[str(ROOT / t) for t in T]], cwd=ROOT, capture_output=True, text=True, timeout=90, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1")).returncode
     except subprocess.TimeoutExpired: return 99
