@@ -1,0 +1,9 @@
+# Status-event ownership against R7 section 2/3 (R11)
+
+Status: PROPOSAL (Coder analysis). Not a decision. R7 sections 1-6 are the CURRENT conditional design source for the isolated replica (not operational reliance).
+Clause mapping (reviewer judgment; evidence = directly read R7 text and repo code):
+1. Semantic origin: authenticated originating evidence comes from the origin functions (R7 acceptance-origin for acceptance evidence; Tracker status facts originate in `tracker/chain_status.py` callers: materialization and designation steps). The origin cannot write HEAD or materialise.
+2. Sole canonical commit: replica-commit-service is the exclusive HEAD/transition writer. In the repo only `coordination/transition_record.py` + `object_store_journal.py` write; role lookup is `security/principals.replica_capabilities`.
+3. Rebuildable projection: `ChainStatusAuthority._events` is an in-memory pure state machine over appended facts; `postgres_read_model.py` is the projection. Neither is the canonical writer; both are rebuildable from journal events.
+4. No second canonical writer: `ChainStatusAuthority.append` is today a writer of in-memory state with no journal commit. It is a projection only if every append is derived from a committed journal event. That derivation is NOT enforced in code.
+Exact unresolved clause: R7 section 2 says the constrained service "derives only the authorized journal/lifecycle transition" but R7 does not name which principal supplies status-event origin evidence (other section 3 principals are unnamed in R7). Until named, `ChainStatusAuthority.append` cannot be wired as projection-only without inventing that principal. Smallest resolution: Manager records the principal for status-event origin and whether status events share the replica-commit-service journal. Blocked action: wiring status events through the commit service.

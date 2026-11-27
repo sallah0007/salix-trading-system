@@ -47,18 +47,30 @@ def certify(manifest: Manifest, probe: dict) -> Certification:
             return True
         return False
     chk("duplicate_node_refused", dup)
+    def _outcome(series):
+        """Evaluation outcome as comparable data: values, or the arithmetic refusal code (domain failure / non-finite is a deterministic outcome)."""
+        try:
+            return ("OK", evaluate(manifest, series))
+        except Refusal as e:
+            if e.code not in ("NON_FINITE_RESULT", "DOMAIN_DIV_ZERO", "DOMAIN_SQRT_NEGATIVE"): raise
+            return ("REFUSED", e.code)
     def deterministic():
-        a = evaluate(manifest, probe)
-        b = evaluate(manifest, probe)
-        return a == b
+        return _outcome(probe) == _outcome(probe)
     chk("repeat_evaluation_identical", deterministic)
     def causal():
         # truncating the future must not change any earlier output value
         n = check_series(manifest, probe)
-        full = evaluate(manifest, probe)
         cut = n // 2
-        part = evaluate(manifest, {k: v[:cut] for k, v in probe.items()})
-        return full[:cut] == part
+        def prefix_ok(series):
+            full = _outcome(series)
+            if full[0] != "OK":
+                return None                                        # no values to compare on this series
+            part = _outcome({k: v[:cut] for k, v in series.items()})
+            return part[0] == "OK" and full[1][:cut] == part[1]
+        r = prefix_ok(probe)
+        if r is None:   # the edge probe hit an arithmetic refusal: prove causality on a domain-safe transform of the SAME probe (positive, None pattern kept)
+            r = prefix_ok({k: [None if x is None else abs(x) + 1.0 for x in v] for k, v in probe.items()})
+        return bool(r)                                             # still None (refused even when domain-safe) => not proven => False
     chk("prefix_causality", causal)
     status = "CERTIFIED" if all(ok for _, ok in checks) else "REFUSED"
     h = domain_hash(CERT_DOMAIN, canonical_bytes({"status": status, "checks": [[a, b] for a, b in checks],

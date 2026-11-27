@@ -1,11 +1,13 @@
-"""Admitted opcode table (generic kernel). SPEC (this implementation's definition; source admission OPEN):
-  all values are IEEE-754 binary64 or UNDEFINED(None); any UNDEFINED argument gives UNDEFINED.
-  div: divisor == 0.0 -> UNDEFINED.  sqrt: x < 0 -> UNDEFINED.  log: x <= 0 -> UNDEFINED.
-  lag(x, n)           : value of x at t-n (UNDEFINED while t < n).
-  rolling_sum(x, n)   : s = 0.0; for the n values ending at t, oldest to newest: s = s + v; UNDEFINED if any undefined/short.
-  rolling_mean(x, n)  : rolling_sum / float(n).
-  A finite operation that overflows to inf/nan is a REFUSAL (non-finite), never a value.
-Opcodes outside this table are refused; EMULATED ones are refused distinctly (no silent software emulation)."""
+"""Admitted opcode table. ALIGNED (R11) to SQE_OPSET_V1_1 (Parent V1.2 Drive 1i5P8zxQmvBDKz397BxIUKM8AnBY00-ItzLMOjNGOkRM lines 116-204;
+Annex V1.2 Drive 13PE_pli3ZlFjjPdhHtWtLyyH2XdAv8XGA4FN0KGcIlA lines 84-121). Names are THIS repository's lowercase identifiers; numeric opcode codes and the
+canonical program byte grammar are NOT assigned by any source read and are NOT invented here.
+Mapping to the source operator names (documentary; no rename):
+  add->ADD  sub->SUBTRACT  mul->MULTIPLY  div->DIVIDE_GUARDED  neg->NEGATE  abs->ABS  sqrt->SQRT_GUARDED  min->MIN_TOTAL  max->MAX_TOTAL
+  rolling_sum ~ FIXED_SUM (ascending sequential accumulation from +0); rolling_mean = FIXED_SUM then DIVIDE_GUARDED by the declared length (composite)
+  input, const, lag: structural / state-table constructs NOT named in the SQE_OPSET_V1_1 operator list (source-unbound; retained as prototype constructs)
+NOT admitted (PROFILE_ONLY): log (removed in R11; it was wrongly admitted), exp, pow, any transcendental; comparison/select/vector/matrix/FIXED_DOT are
+admitted by the source but NOT implemented here (no boolean/shape typing exists in this prototype; absent behaviour, not invented).
+Arithmetic semantics are in evaluator.py. UNDEFINED (None) = missing-input propagation only (source-unbound)."""
 from collections import namedtuple
 
 OpSpec = namedtuple("OpSpec", "arity windowed capability")
@@ -22,9 +24,10 @@ OPCODES = {
     "neg":          OpSpec(1, False, "ARITH_BINARY64"),
     "abs":          OpSpec(1, False, "ARITH_BINARY64"),
     "sqrt":         OpSpec(1, False, "ELEMENTARY_BINARY64"),
-    "log":          OpSpec(1, False, "ELEMENTARY_BINARY64"),
     "lag":          OpSpec(1, True, "WINDOW_LAG"),
     "rolling_sum":  OpSpec(1, True, "WINDOW_ROLLING"),
     "rolling_mean": OpSpec(1, True, "WINDOW_ROLLING"),
 }
 EMULATED = frozenset({"exp", "pow", "tanh", "sin", "cos", "tan", "erf"})
+# Refused distinctly: named by SQE_OPSET_V1_1 as NOT ADMITTED for PROFILE_ONLY (a later governed operator-set successor would be required).
+NOT_ADMITTED_PROFILE_ONLY = frozenset({"log"})

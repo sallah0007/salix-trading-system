@@ -115,15 +115,45 @@ class Evaluator(unittest.TestCase):
         M = Manifest.from_dict(momentum_manifest()); a = evaluate(M, {"close": self.CLOSE})
         b = evaluate(M, {"close": self.CLOSE[:3] + [999.0, -999.0]})
         self.assertEqual(a[:3], b[:3])
-    def test_undefined_semantics(self):
+    def test_missing_input_propagates_but_domain_failures_refuse(self):
+        # UNDEFINED (None) is missing-input propagation only; a zero denominator / negative sqrt input is an arithmetic DOMAIN FAILURE (refusal).
+        def man(nodes, ops, caps, out):
+            m = momentum_manifest(); m["nodes"] = nodes; m["output"] = out; m["declared_opcodes"] = ops; m["declared_capabilities"] = caps
+            return Manifest.from_dict(m)
+        z = {"id": "z", "op": "const", "value": encode_const(0.0)}; a = {"id": "a", "op": "input", "name": "close"}
+        d = man([a, z, {"id": "q", "op": "div", "args": ["a", "z"]}], ["const", "div", "input"], ["ARITH_BINARY64", "CONST_BINARY64", "INPUT_SERIES"], "q")
+        self.assertEqual(code(evaluate, d, {"close": [4.0]}), "DOMAIN_DIV_ZERO")
+        self.assertEqual(evaluate(d, {"close": [None]}), [None])                 # missing input propagates, is not a domain failure
+        nz = man([a, {"id": "n", "op": "const", "value": encode_const(-0.0)}, {"id": "q", "op": "div", "args": ["a", "n"]}],
+                 ["const", "div", "input"], ["ARITH_BINARY64", "CONST_BINARY64", "INPUT_SERIES"], "q")
+        self.assertEqual(code(evaluate, nz, {"close": [4.0]}), "DOMAIN_DIV_ZERO")   # -0 denominator canonicalised to +0, still guarded
+        s = man([a, {"id": "s", "op": "sqrt", "args": ["a"]}], ["input", "sqrt"], ["ELEMENTARY_BINARY64", "INPUT_SERIES"], "s")
+        self.assertEqual(code(evaluate, s, {"close": [-1.0]}), "DOMAIN_SQRT_NEGATIVE")
+        self.assertEqual(evaluate(s, {"close": [4.0, -0.0, None]}), [2.0, 0.0, None])
+        self.assertEqual(struct.pack(">d", evaluate(s, {"close": [-0.0]})[0]), struct.pack(">d", 0.0))   # sqrt(-0) -> +0 canonical
+    def test_log_is_not_admitted_and_refused_distinctly(self):
         m = momentum_manifest()
-        m["nodes"] = [{"id": "a", "op": "input", "name": "close"}, {"id": "z", "op": "const", "value": encode_const(0.0)},
-                      {"id": "q", "op": "div", "args": ["a", "z"]}, {"id": "l", "op": "log", "args": ["a"]},
-                      {"id": "s", "op": "sqrt", "args": ["a"]}, {"id": "o", "op": "add", "args": ["q", "l"]},
-                      {"id": "p", "op": "add", "args": ["o", "s"]}]
-        m["output"] = "p"; m["declared_opcodes"] = ["add", "const", "div", "input", "log", "sqrt"]
-        m["declared_capabilities"] = ["ARITH_BINARY64", "CONST_BINARY64", "ELEMENTARY_BINARY64", "INPUT_SERIES"]
-        self.assertEqual(evaluate(Manifest.from_dict(m), {"close": [4.0, -1.0]}), [None, None])
+        m["nodes"] = [{"id": "a", "op": "input", "name": "close"}, {"id": "l", "op": "log", "args": ["a"]}]
+        m["output"] = "l"; m["declared_opcodes"] = ["input", "log"]; m["declared_capabilities"] = ["ELEMENTARY_BINARY64", "INPUT_SERIES"]
+        self.assertEqual(code(Manifest.from_dict, m), "OPCODE_NOT_ADMITTED_SQE_OPSET_V1_1")
+        for op in ("exp", "pow", "tanh"):
+            m["nodes"][1]["op"] = op
+            self.assertEqual(code(Manifest.from_dict, m), "EMULATED_OPCODE_REFUSED")
+    def test_signed_zero_and_subnormal_boundaries(self):
+        def one(op, vals, n=2):
+            m = momentum_manifest()
+            nodes = [{"id": "a", "op": "input", "name": "close"}] + ([{"id": "b", "op": "input", "name": "x"}] if n == 2 else [])
+            m["inputs"] = ["close", "x"] if n == 2 else ["close"]
+            m["nodes"] = nodes + [{"id": "r", "op": op, "args": ["a", "b"] if n == 2 else ["a"]}]; m["output"] = "r"
+            m["declared_opcodes"] = sorted({"input", op}); m["declared_capabilities"] = sorted({"INPUT_SERIES", "ARITH_BINARY64"})
+            return evaluate(Manifest.from_dict(m), vals)[0]
+        bits = lambda x: struct.pack(">d", x)
+        self.assertEqual(bits(one("neg", {"close": [0.0]}, 1)), bits(0.0))                  # neg(+0) -> +0, not -0
+        self.assertEqual(bits(one("mul", {"close": [-1.0], "x": [0.0]})), bits(0.0))        # -1 * 0 -> +0 canonical
+        self.assertEqual(bits(one("min", {"close": [-0.0], "x": [0.0]})), bits(0.0))
+        self.assertEqual(one("add", {"close": [5e-324], "x": [5e-324]}), 1e-323)              # subnormals preserved, not flushed
+        self.assertEqual(one("mul", {"close": [5e-324], "x": [1.0]}), 5e-324)
+        self.assertEqual(code(lambda: one("mul", {"close": [1e200], "x": [1e200]})), "NON_FINITE_RESULT")
     def test_overflow_is_refusal_not_value(self):
         m = momentum_manifest()
         m["nodes"] = [{"id": "a", "op": "input", "name": "close"}, {"id": "m", "op": "mul", "args": ["a", "a"]}]
@@ -136,8 +166,9 @@ class Evaluator(unittest.TestCase):
         self.assertEqual(code(evaluate, M, {"close": [1.0], "open": [1.0]}), "INPUT_SET_MISMATCH")
         self.assertEqual(code(evaluate, M, {}), "INPUT_SET_MISMATCH")
     def test_const_roundtrip_bit_exact(self):
-        for x in (0.1, -0.0, 5e-324, 1.7976931348623157e308):
+        for x in (0.1, 5e-324, -5e-324, 2.2250738585072014e-308, 1.7976931348623157e308):    # subnormals preserved bit-exact
             self.assertEqual(struct.pack(">d", decode_const(encode_const(x))), struct.pack(">d", x))
+        self.assertEqual(struct.pack(">d", decode_const(encode_const(-0.0))), struct.pack(">d", 0.0))   # signed zero canonicalised to +0
     def test_incremental_equals_batch_bit_exact(self):
         M = Manifest.from_dict(momentum_manifest()); rng = random.Random(3)
         series = [None if i % 7 == 3 else rng.uniform(-5, 5) for i in range(60)]

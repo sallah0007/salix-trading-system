@@ -52,9 +52,14 @@ def package(manifest=_DEFAULT, *, request_id="REQ-1", attempt_id="ATT-1", order_
               declared_program_hash=declared[2], lookup_outcome=lookup, identity_fields=copy.deepcopy(IDENTITY_FIELDS),
               semantic_definition="3-bar mean of one-bar close change", created_by="SALIX_MANAGER",
               creation_reason_ref="decision:approved-definition", authority_ref="owner:era1-intake",
-              creation_evidence_ref="evidence:definition-review", era_id="ERA_1")
+              creation_evidence_ref="evidence:definition-review", era_id="ERA_1",
+              request_record=copy.deepcopy(REQUEST_RECORD))
     kw.update(over)
     return BuildPackage(**kw)
+
+REQUEST_RECORD = {"REQUEST_SCHEMA_VERSION": "1", "REQUESTER_ID": "fixture-requester", "REQUESTER_TYPE": "MANAGER",
+                  "REQUEST_CLASS": "GOVERNED_INTAKE_REQUEST", "TARGET_CONSUMER": "FORWARD_WALK",
+                  "REQUEST_CONTEXT": "FW_MANIFEST_NEED", "PURPOSE_STATEMENT": "fixture purpose"}
 
 class Rig:
     def __init__(self, store=None, fits=None, baseline=None):

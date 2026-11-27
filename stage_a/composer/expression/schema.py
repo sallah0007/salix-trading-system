@@ -3,7 +3,7 @@ sets, no unknown keys, no duplicates, acyclic, every node reachable from the out
 import re
 from ...errors import Refusal
 from ...identifiers import check_token
-from .opcodes import OPCODES, EMULATED
+from .opcodes import OPCODES, EMULATED, NOT_ADMITTED_PROFILE_ONLY
 
 SCHEMA_ID = "SALIX_EXPR_MANIFEST_V1"
 TOP_KEYS = {"schema", "feature_id", "feature_version", "instrument", "timeframe", "inputs", "nodes", "output",
@@ -38,6 +38,7 @@ def validate_manifest(m) -> dict:
         nid, op = check_token(n["id"], "node id"), n["op"]
         _req(nid not in by_id, "DUPLICATE_NODE_ID", nid)
         _req(op not in EMULATED, "EMULATED_OPCODE_REFUSED", op)
+        _req(op not in NOT_ADMITTED_PROFILE_ONLY, "OPCODE_NOT_ADMITTED_SQE_OPSET_V1_1", str(op))
         _req(isinstance(op, str) and op in OPCODES, "UNKNOWN_OPCODE", str(op))
         spec = OPCODES[op]
         allowed = {"id", "op"}

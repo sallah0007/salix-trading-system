@@ -1,0 +1,28 @@
+# E-03 responsibility -> existing file/function map (R11)
+
+Status: PROPOSAL / reviewer judgment (Coder). A proposed mapping delta, not a governed decision. Nothing is renamed; current candidate paths are retained.
+DERIVATION_CLASS = INDEPENDENTLY_DERIVED for the counts; the classification column is reviewer judgment from reading function names and docstrings, not an equivalence proof.
+EXACT_INPUTS = Build Plan "E-03 FINAL REPOSITORY MODULE MAP" (57 paths, text lines 4522-4720 of the Drive read) vs `git ls-files 'stage_a/**.py'` (non-`__init__`) at the R11 branch head.
+METHOD = parse the E-03 tree; set-compare to repo paths. Result: 57 map paths, 32 exist, 25 map-only, 29 repo-only. REPRODUCIBLE_BY_MANAGER = YES.
+A missing filename is not a missing behaviour. Classes: EQ = behaviour exists under another path; MISSING = Tracker-owned behaviour genuinely absent; LATER = counterpart (Composer/FW/ML/Health-provider) work, not Tracker-owned; INT = internal helper placed elsewhere on purpose.
+
+| E-03 path (absent) | Responsibility | Where it lives now | Class |
+|---|---|---|---|
+| composer/governed_order_adapter.py | Composer-side order adapter | none; Tracker is sole order issuer (journal-verified claim in `tracker/authority_bridge.py`) | LATER (Composer side) |
+| composer/build_executor.py, refit_executor.py, build_output.py | Composer build/refit execution and output package | none; Tracker consumes `BuildPackage` in `tracker/quant_intake_adapter.py` | LATER (Composer side) |
+| context/event_identity.py | event identity | `context/decision_context.py` (`check_envelope`, `domain_for_event`) | EQ (partial; identity key derivation not verified) |
+| context/coverage.py, applicability.py | coverage / applicability dimensions | `context/news_hub_v2.py` (`check_dimensions`) | EQ (partial) |
+| context/resolver.py | context resolution | none found | MISSING (only to the extent a source defines it; not invented) |
+| context/causal_gate.py | as-of visibility | `decision_context.as_of_visible`, `news_hub_v2.actual_available_asof` | EQ |
+| gateway/dependency_resolution.py | dependency resolution | `gateway/contracts.py` (`DependencyEntry`, `SimulatedGateway`) | EQ but SIMULATED, not REAL |
+| gateway/binding.py | consumer binding (H1) | `gateway/v038.py` (`check_h1`, now `check_both_separation`), `contracts.Binding` | EQ (field-presence only; hash bytes D13) |
+| gateway/non_delivery.py | non-delivery resolution | `v038.NonDeliveryResolutionV038`, `to_v038`, `FinalResolutionStore` | EQ |
+| gateway/settlement.py | settlement | `v038.check_settlement`, `classify_late` | EQ (delay value D16 open) |
+| gateway/health_snapshot.py | health snapshot | `contracts.HealthSnapshot` | EQ (simulated) |
+| fw/request_adapter.py, input_binding.py, return_lineage.py | FW request, input binding, return lineage | `fw/receiver.py` (`receive`), `fw/lanes.py`, `fw/descriptor_crosswalk.py` | EQ partial; return lineage not found -> MISSING until FW payload definitions (group 2) |
+| ml/dataset_binding.py, standalone_ancestry.py, fw_augmented_rebind.py, generation_lineage.py | ML dataset/ancestry/rebind/lineage | `ml/receiver.py` (`build_row`, `check_generation`, `AugmentedInput`) | EQ partial; ML manifest writer declaration open (group 2) |
+| health/b0_adapter.py, quant_evidence.py, blast_radius.py, expectation.py | Health adapter, evidence, blast radius, expectation | `health/envelope.py` (`derive_silence`, `aggregate_state`, `attribute_failure`), `health/evidence.py` | EQ partial; blast-radius computation not found -> MISSING (Health profile home D17/D18 open) |
+
+Repo-only paths (29) include the R7/R9/R10 additions (`security/principals.py`, `coordination/provider_contract.py`, `binding/producer_binding.py`, `composer/request_record.py`), the identity-adjacent Tracker files (`tracker/pipeline.py`, `registry.py`, `chain_status.py`, `epoch_reresolution.py`, `speculation.py`, `stateful_*`, `independent_*`) and `schema/*`. Placement of these is an INT/mapping-delta question for the Manager; none is claimed as governed.
+
+Proposed mapping delta (for Manager recording in Drive): add the repo-only Tracker files above under their current paths; mark the Composer-side rows LATER; mark `context/resolver.py`, FW return lineage, ML-side lineage declarations and Health blast radius as the only rows with possibly absent Tracker-owned behaviour, each blocked on a named source (see A02_trace_and_inputs.md groups 2-3). Not implemented: building them now would invent field definitions.

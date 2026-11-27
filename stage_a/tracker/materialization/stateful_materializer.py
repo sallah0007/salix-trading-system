@@ -6,10 +6,14 @@ from ...storage.byte_primitives import canonical_bytes, domain_hash
 from ...identifiers import Scope, FeatureKey
 from ...composer.expression.manifest import Manifest
 from ...composer.expression.artifacts import build_artifact
-from ...composer.expression.evaluator import evaluate, op_value, topo_order, check_series
+from ...composer.expression.evaluator import evaluate, op_value, topo_order, check_series, canon
 import struct
 
 MATERIALIZATION_DOMAIN = "SALIX_MATERIALIZATION_V1"
+# Recorded error categories. Specific domain codes are collapsed to ONE category so that batch (node-major) and incremental (row-major)
+# paths agree on the category even when two different domain failures exist in one probe (a mixed NON_FINITE/DOMAIN probe can still
+# differ by order: that yields a verifier FAIL, never a false PASS).
+_ERR_CATEGORY = {"NON_FINITE_RESULT": "NON_FINITE", "DOMAIN_DIV_ZERO": "DOMAIN_FAILURE", "DOMAIN_SQRT_NEGATIVE": "DOMAIN_FAILURE"}
 
 def _bits(x):
     return None if x is None else struct.pack(">d", x).hex()
@@ -31,7 +35,7 @@ class IncrementalEvaluator:
         for nid in self._order:
             node = self._by[nid]
             if node["op"] == "input":
-                v = row[node["name"]]
+                v = canon(row[node["name"]])
             else:
                 v = op_value(node, t, lambda k, i: self._hist[k][i])
             self._hist[nid].append(v)
@@ -52,13 +56,15 @@ class StatefulMaterializer:
         try:
             batch = [_bits(x) for x in evaluate(manifest, probe)]
         except Refusal as e:
-            batch = {"error": "NON_FINITE"} if e.code == "NON_FINITE_RESULT" else (_ for _ in ()).throw(e)
+            if e.code not in _ERR_CATEGORY: raise
+            batch = {"error": _ERR_CATEGORY[e.code]}
         inc = IncrementalEvaluator(manifest)
         try:
             length = len(next(iter(probe.values())))
             incremental = [_bits(inc.push({k: v[t] for k, v in probe.items()})) for t in range(length)]
         except Refusal as e:
-            incremental = {"error": "NON_FINITE"} if e.code == "NON_FINITE_RESULT" else (_ for _ in ()).throw(e)
+            if e.code not in _ERR_CATEGORY: raise
+            incremental = {"error": _ERR_CATEGORY[e.code]}
         fk = FeatureKey(Scope(manifest.instrument, manifest.timeframe), manifest.feature_id, manifest.feature_version)
         rec = {"feature_key": fk.key(), "feature_version": manifest.feature_version, "instrument": manifest.instrument,
                "timeframe": manifest.timeframe, "object_key": key, "manifest_hash": art.manifest_hash,
