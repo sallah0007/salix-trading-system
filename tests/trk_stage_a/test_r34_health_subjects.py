@@ -27,6 +27,7 @@ class SubjectCoverage(unittest.TestCase):
         c.associate_subject(KEY, b, "a"); snap = c.gateway_health(KEY, "1", 12, R("hl"), 11, binding=b)
         r = SC.coverage(c, KEY, "1", 12, gateway_snapshot=snap); d = {k: s for k, s, _ in r.local}; self.assertEqual((d["GATEWAY_BINDING_NON_DELIVERY"], r.carried), ("HEALTHY", (("FW_ML_CARRIED_UPSTREAM_IMPACT", ("DOWN",)),)))
         up = SC.coverage(c, "DOWN", "1", 12); self.assertEqual(dict((k, s) for k, s, _ in up.local)["RECORDING_VERIFICATION"], "HEALTHY")             # the dependent's LOCAL reading is its own, not the upstream's
+        self.assertEqual(dict((k, s) for k, s, _ in SC.coverage(c, "DOWN", "1", 12, gateway_snapshot=snap).local)["GATEWAY_BINDING_NON_DELIVERY"], "UNKNOWN")                 # a CURRENT confirmed snapshot of another subject
         c.quarantine(KEY, "DEFECT"); r2 = SC.coverage(c, KEY, "1", 12, gateway_snapshot=snap); self.assertEqual(dict((k, s) for k, s, _ in r2.local)["GATEWAY_BINDING_NON_DELIVERY"], "UNKNOWN")      # stale/unconfirmed snapshot is not evidence
         self.assertEqual(dict((k, s) for k, s, _ in SC.coverage(c, "DOWN", "1", 12, gateway_snapshot=snap).local)["GATEWAY_BINDING_NON_DELIVERY"], "UNKNOWN")                 # snapshot for another subject
 class RequestedVersion(unittest.TestCase):
