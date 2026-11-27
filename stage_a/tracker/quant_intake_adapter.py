@@ -16,12 +16,13 @@ from ..composer.expression.manifest import Manifest
 from ..composer.expression.hashing import manifest_hash, graph_hash, program_hash
 from ..composer.expression.capability import check_declared
 from ..composer.expression.fit_generation import check_fit_refs
+from ..composer.request_record import check_request_record
 
 VERIFIER_ID = "SALIX_STAGE_A_TRACKER_INTAKE_V1"
 POLICY = {"ID": "SALIX_STAGE_A_INTAKE_POLICY", "VERSION": "1"}
 POLICY["HASH"] = domain_hash("SALIX_STAGE_A_INTAKE_POLICY_V1", canonical_bytes(
     {"dimensions": ["SCHEMA", "HASH_BINDING", "CAPABILITY", "FIT_ANCESTRY", "SCOPE_BINDING", "IDENTITY_CONTENT_KEY",
-                    "LOOKUP_COMPLETENESS", "DUPLICATE", "CONSTRUCTION_AUTHORITY"]}))
+                    "LOOKUP_COMPLETENESS", "DUPLICATE", "CONSTRUCTION_AUTHORITY", "REQUEST_RECORD"]}))
 
 REQUIRED_IDENTITY_FIELDS = ("scope", "lifecycle_state", "is_current", "declared_normalization", "causal_time_semantics",
                             "completion_semantics", "availability_class", "price_basis", "data_vintage_mode",
@@ -54,6 +55,7 @@ class BuildPackage:
     creation_evidence_ref: str
     era_id: str
     creation_request_id: Optional[str] = None
+    request_record: Optional[dict] = None          # Composer s7A APPEND request record; REQUIRED for a requested quant build
 
     def content_hash(self) -> str:
         d = {"package_id": self.package_id, "attempt_id": self.attempt_id, "request_id": self.request_id,
@@ -62,6 +64,7 @@ class BuildPackage:
              "semantic_definition": self.semantic_definition, "era_id": self.era_id,
              "scope": [self.expected_instrument, self.expected_timeframe],
              "quant": self.quant_feature_requested}
+        if self.request_record is not None: d["request_record"] = self.request_record
         return domain_hash("SALIX_BUILD_PACKAGE_V1", canonical_bytes(d))
 
 @dataclass
@@ -135,6 +138,15 @@ def admit(pkg: BuildPackage, *, accepted_fit_generations: dict) -> Admission:
         a.classification = FAILED_REQUESTED_BUILD      # TR-06: never silently baseline-only / NONE
         return a
     a.manifest = m
+    # s7A request record (stage ORDER: the package carries an order_id). Missing record fails closed; UNKNOWN target -> REVIEW_REQUIRED, not admitted.
+    if pkg.request_record is None:
+        fail("REQUEST_RECORD", "REQUEST_RECORD_MISSING")
+    else:
+        try:
+            if check_request_record(pkg.request_record, "ORDER") == "REVIEW_REQUIRED":
+                fail("REQUEST_RECORD", "REQUEST_REVIEW_REQUIRED_TARGET_CONSUMER_UNKNOWN")
+        except Refusal as e:
+            fail("REQUEST_RECORD", e.code)
     a.hashes = (manifest_hash(m), graph_hash(m), program_hash(m))
     if (pkg.declared_manifest_hash, pkg.declared_graph_hash, pkg.declared_program_hash) != a.hashes:
         fail("HASH_BINDING", "DECLARED_HASH_NOT_RECOMPUTED_HASH")
