@@ -35,10 +35,10 @@ def _int(x): return isinstance(x, int) and not isinstance(x, bool)
 class TrackerCore:
     PLANES = ("core_market", "event_context", "market_features", "research")       # source-named planes (DOCX s4/s21; registry s18); the write-role/restore ADMISSION is unbound (D2)
 
-    def __init__(self, journal, *, simulation: bool, chain_status=None, plane: str = None):
+    def __init__(self, journal, *, simulation: bool, chain_status=None, plane: str = None, timeframes=None):
         if plane is not None and plane not in self.PLANES: raise Refusal(str(plane), code="UNKNOWN_PLANE")
         if not isinstance(simulation, bool): raise Refusal("simulation must be a bool", code="SIMULATION_FLAG_INVALID")
-        self._j = journal; self._simulation = simulation; self._chain = chain_status; self._plane = plane
+        self._j = journal; self._simulation = simulation; self._chain = chain_status; self._plane = plane; self._timeframes = timeframes     # optional governed TimeframeRegistry (core/time_family); when supplied an unregistered timeframe is refused at admission
         cls = authority_class_of(journal)
         if (cls == QUALIFIED) == self._simulation:
             raise Refusal("journal class %s vs simulation=%s" % (cls, simulation), code="AUTHORITY_CLASS_MISMATCH")
@@ -120,6 +120,7 @@ class TrackerCore:
 
     def admit_observation(self, facts: dict, payload: bytes, available_asof: int, vintage: str) -> str:
         key = self.obs_key(facts)
+        if self._timeframes is not None: self._timeframes.require(facts["timeframe"])
         if not _int(available_asof) or available_asof < 0 or not isinstance(vintage, str) or not vintage or not isinstance(payload, bytes):
             raise Refusal("observation fields", code="OBSERVATION_FIELDS_INVALID")
         dg = domain_hash("TRK/PAYLOAD", payload); cid = self._cid(dg, available_asof, vintage)

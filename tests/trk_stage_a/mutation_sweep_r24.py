@@ -43,7 +43,8 @@ M = [
      (AM, 'if not isinstance(p, dict) or enc_bytes(p) != raw: raise', 'if not isinstance(p, dict): raise'),
      (AM, 'if (p.get("instrument"), p.get("timeframe")', 'if False and (p.get("instrument"), p.get("timeframe")'),
      (AM, 'if got is None: raise Refusal(body["manifest_hash"], code="ACCEPTED_ARTIFACT_ABSENT")', 'pass'),
-     (AM, 'if st is None: raise Refusal(feature_key.key(), code="NO_ACCEPTED_RECORD")', 'pass')]
+     (AM, 'if st is None: raise Refusal(feature_key.key(), code="NO_ACCEPTED_RECORD")', 'pass'),
+     (TC, '        if self._timeframes is not None: self._timeframes.require(facts["timeframe"])', '        pass')]
 T = ["tests/trk_stage_a/test_r24_core.py", "tests/trk_stage_a/test_r24_composed.py", "tests/trk_stage_a/test_r24_accepted_readback.py"]
 def run():
     try: return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", *[str(ROOT / t) for t in T]], cwd=ROOT, capture_output=True, text=True, timeout=90, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1")).returncode

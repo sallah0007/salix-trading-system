@@ -55,6 +55,14 @@ class ComposedReverification(unittest.TestCase):
         c = core(); self.assertEqual(code(c.record_verification, "S", "1", "REQUIRED", "PASS", "PASS", 1, 5, "v", "d", None, "FORGED_QUALIFIED"), "HEALTH_EVIDENCE_CLASS_UNKNOWN")
 
 REG = lambda: TF.TimeframeRegistry([("H4", "H1"), ("H1", "M15"), ("M15", None)])           # TEST registry handed in by the test: the module ships none
+class TimeFamilyWiring(unittest.TestCase):
+    def test_core_refuses_an_unregistered_timeframe_only_when_a_governed_registry_is_supplied(self):
+        from .test_r24_core import facts, adm
+        st = SimulationStore(InMemoryObjectStore()); j = ObjectStoreJournal(st, "tf", "w"); j.acquire_epoch(); c = TrackerCore(j, simulation=True, timeframes=TF.TimeframeRegistry([("H4", "H1"), ("H1", None)]))
+        self.assertEqual(adm(c), "NEW")                                                   # facts() default timeframe H4 is registered
+        self.assertEqual(code(c.admit_observation, facts(timeframe="D1"), b"p", 5, "V1"), "UNKNOWN_TIMEFRAME")
+        self.assertEqual(len([r for r in j.read_from(0) if r.kind == "OBS_ADMITTED"]), 1)   # nothing was appended for the refused observation
+        j2 = ObjectStoreJournal(st, "tf2", "w"); j2.acquire_epoch(); self.assertEqual(TrackerCore(j2, simulation=True).admit_observation(facts(timeframe="D1"), b"p", 5, "V1"), "NEW")   # no registry bound: legacy behaviour, explicitly scoped
 class TimeFamily(unittest.TestCase):
     def test_empty_registry_knows_no_timeframe_and_ships_no_defaults(self):
         self.assertEqual(code(TF.TimeframeRegistry().require, "H4"), "UNKNOWN_TIMEFRAME"); self.assertEqual(code(REG().require, "D1"), "UNKNOWN_TIMEFRAME")
