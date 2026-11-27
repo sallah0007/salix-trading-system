@@ -32,11 +32,16 @@ M = [
  ("stage_a/tracker/reverification.py", 'if (body["feature_key"], body["feature_version"]) != (feature_key.key(), feature_key.feature_version): raise', "if False: raise"),
  ("stage_a/ml/six_joins.py", 'if isinstance(j, dict) and ("ML_LOCAL_STATE" in j or "EVIDENCE_REFS" in j): add', "if False: add"),
  ("stage_a/ml/writer_finalizer.py", " or w[0][3] != m.manifest_hash", ""),
+ ("stage_a/tracker/status_decoder.py", 'if not (isinstance(v, str) and len(v) == 2 * bf[n]): raise', "if False: raise"),
+ ("stage_a/tracker/status_decoder.py", "if st is None: raise", "if False: raise"),
+ ("stage_a/tracker/status_decoder.py", "type(seq) is not int or ", "False or "),
+ ("stage_a/tracker/status_decoder.py", 'if rec.kind != spec["record_kind"]: return None', "pass"),
+ ("stage_a/tracker/status_decoder.py", "type(corr) is not bool", "False"),
  (OD, "if old[0] != pkg: raise", "if False: raise"),
  (OD, "if not isinstance(issued, Binding): raise", "if False: raise"),
  (OD, "delivered: bool = False", "delivered: bool = True"),
 ]
-T = [f"tests/trk_stage_a/{f}" for f in ("test_r36_recovery_holds.py", "test_r36_commit_point.py", "test_r36_source_values.py", "test_r36_ops.py", "test_r36_dataset_authority.py", "test_r36_producer_route.py", "test_r36_outcome_desk.py", "test_r35_durable_final_store.py", "test_r36_survivor_kills.py")]
+T = [f"tests/trk_stage_a/{f}" for f in ("test_r36_recovery_holds.py", "test_r36_commit_point.py", "test_r36_source_values.py", "test_r36_ops.py", "test_r36_dataset_authority.py", "test_r36_producer_route.py", "test_r36_outcome_desk.py", "test_r35_durable_final_store.py", "test_r36_survivor_kills.py", "test_r36_status_decoder.py")]
 def run():
     try: return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", *[str(ROOT / t) for t in T]], cwd=ROOT, capture_output=True, text=True, timeout=120, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1")).returncode
     except subprocess.TimeoutExpired: return 99
