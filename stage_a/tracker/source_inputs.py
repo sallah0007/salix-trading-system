@@ -3,7 +3,7 @@ What IS authorable under the existing schemas: the accepted manifest (read from 
 Composer 27/28 require that every input resolve to a Tracker identity or a returned node. This module verifies, AS FOUND, that a SUPPLIED binding map {input_name: {"ref": str, "hash": hex64}} covers EXACTLY the accepted manifest's declared inputs and, where a SUPPLIED resolver `resolver(ref) -> hex64 | None` exists, that each ref resolves to the
 declared hash. It never fetches data, never invents a ref/hash encoding, never overwrites the artifact, and with NO resolver reports BOUND_UNVERIFIED (shape-only), never VERIFIED. The source-value/history STREAM itself (real provider data, vintage, as-of series) is NOT verified here and its proof stays unbound.
 Statuses per input: BOUND_VERIFIED | BOUND_UNVERIFIED | MISSING | MISMATCH | UNRESOLVED(resolver returned None). Overall: VERIFIED only if every input is BOUND_VERIFIED and there are no extras; HELD_UNVERIFIED if all are BOUND_UNVERIFIED/BOUND_VERIFIED (no resolver) ; FAIL otherwise."""
-import json, re
+import json, re, struct
 from ..errors import Refusal
 from .reverification import accepted_as_found
 from .verification.stateful_verifier import verify_materialization
@@ -39,6 +39,10 @@ def verify_accepted_source_inputs(*, journal, store, feature_key, bindings, reso
     else: overall = "HELD_UNVERIFIED"
     return {"overall": overall, "reason": "", "inputs": out, "extra": extra, "stream_verified": False}
 
+def _bits_finite(x):
+    """INDEPENDENT finite test on the IEEE-754 binary64 bit pattern (exponent field != all ones); deliberately does not use the evaluator's or producer's helper. Frozen Parent p90: every operator input must be finite BEFORE evaluation."""
+    return ((struct.unpack(">Q", struct.pack(">d", x))[0] >> 52) & 0x7FF) != 0x7FF
+
 def verify_source_values(*, journal, store, feature_key, bindings, fetch, series_hash, expected_output=None) -> dict:
     """Generic accepted source-VALUE verification under the existing schemas, with INDEPENDENT recomputation.
     After the as-found accepted binding: for every declared input, `fetch(ref)` supplies the actual value series (list of binary64 floats; None = unresolved) and the binding hash must equal `series_hash(series)` - the
@@ -57,11 +61,13 @@ def verify_source_values(*, journal, store, feature_key, bindings, fetch, series
         v = fetch(b["ref"])
         if v is None: out[n] = "UNRESOLVED"; continue
         if not isinstance(v, (list, tuple)) or not v or not all(type(x) is float for x in v): out[n] = "SERIES_MALFORMED"; continue
+        if not all(_bits_finite(x) for x in v): out[n] = "SERIES_NONFINITE"; continue                # checked BEFORE hash comparison and evaluation: a matching hash does not make NaN/Inf admissible
         out[n] = "BOUND_VERIFIED" if series_hash(list(v)) == b["hash"] else "MISMATCH"; series[n] = list(v)
     extra = tuple(sorted(set(bindings) - set(names)))
     if extra or any(v != "BOUND_VERIFIED" for v in out.values()): return dict(base, overall="FAIL", reason="INPUTS_NOT_VERIFIED", inputs=out, extra=extra)
     if len({len(v) for v in series.values()}) > 1: return dict(base, overall="FAIL", reason="SERIES_LENGTH_DIFFERS", inputs=out, extra=extra)
     try: rec = [bits(x) for x in reference_evaluate(p, series)]
     except RefEvalError as e: return dict(base, overall="FAIL", reason="REFERENCE_EVALUATION_REFUSED:" + str(e), inputs=out, extra=extra)
+    if any(x is not None and (((int(x, 16) >> 52) & 0x7FF) == 0x7FF or int(x, 16) == 1 << 63) for x in rec): return dict(base, overall="FAIL", reason="RECOMPUTED_OUTPUT_NOT_CANONICAL_FINITE", inputs=out, extra=extra)       # p91 finite result, p92 +0 canonicalisation
     m = None if expected_output is None else (rec == expected_output)
     return dict(base, overall="VERIFIED_RECOMPUTED" if m in (None, True) else "FAIL", reason="" if m in (None, True) else "OUTPUT_DIFFERS_FROM_EXPECTED", inputs=out, extra=extra, recomputed=rec, matches_expected=m)

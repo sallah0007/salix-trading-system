@@ -89,26 +89,38 @@ class DurableFinalResolutionStore(V.FinalResolutionStore):
             rb = _dump({"consumer_id": identity.consumer_id, "request_id": request_id, "identity_key": k}); rk = _req_key(identity.consumer_id, request_id)
             try: self._put(rk, rb)
             except FinalResolutionWriteNotCommitted as e:
-                if not had_rq: self._req_ids.pop((identity.consumer_id, request_id), None)               # the identity IS committed: keep it; only the request binding is retried
-                raise (e.__cause__ or e)
-            except BaseException:
-                if not had_rq: self._req_ids.pop((identity.consumer_id, request_id), None)
-                raise
+                raise (e.__cause__ or e)               # the identity IS committed: keep the identity, the outcome AND the in-memory request RESERVATION (a different-window rebind of this request id stays refused); the binding record is re-attempted on the same-identity retry
+            except Refusal:
+                self._held.add(identity); raise          # the binding write is of unknown commit state and unreadable: hold
             return out
     def recover(self):
-        """Rebuild the in-memory maps from the object store (restart). Does not evaluate anything."""
+        """Rebuild the in-memory maps from the object store (restart). Does not evaluate anything. TRANSACTIONAL: everything is read and validated into LOCAL maps first; only a fully validated recovery replaces the live maps and releases holds. A failed recovery changes nothing and keeps every hold.
+        A committed identity whose outcome names the request that decided it (`request_id`, same consumer) re-derives that request's reservation even if its binding record was never written (request-binding phase fault); conflicting associations are an IntegrityFailure. Old outcomes are never rewritten."""
         with self._lock:
-            self._held.clear(); ids = {}
+            by, ids, pins, facts, reqs = {}, {}, {}, {}, {}
             for k in self._o.list_prefix("final-resolution/id/"):
-                got = self._o.get(k); d = json.loads(got[0]); ident = decode(d["identity"])
+                got = self._o.get(k)
+                if got is None: raise IntegrityFailure("listed identity record unreadable")
+                d = json.loads(got[0]); ident = decode(d["identity"])
                 if _ident_key(ident) != k: raise IntegrityFailure("identity record key does not match its content")
-                self._by_identity[ident] = decode(d["outcome"]); ids[k] = ident
+                by[ident] = decode(d["outcome"]); ids[k] = ident
             for k in self._o.list_prefix("final-resolution/pin/"):
-                d = json.loads(self._o.get(k)[0]); ident = decode(d["identity"])
+                got = self._o.get(k)
+                if got is None: raise IntegrityFailure("listed pin record unreadable")
+                d = json.loads(got[0]); ident = decode(d["identity"])
                 if _pin_key(ident) != k: raise IntegrityFailure("pin record key does not match its content")
-                self._pins[ident] = d["pin"]; self._facts[ident] = d.get("facts")
+                pins[ident] = d["pin"]; facts[ident] = d.get("facts")
             for k in self._o.list_prefix("final-resolution/req/"):
-                d = json.loads(self._o.get(k)[0]); ident = ids.get(d["identity_key"])
+                got = self._o.get(k)
+                if got is None: raise IntegrityFailure("listed request binding unreadable")
+                d = json.loads(got[0]); ident = ids.get(d["identity_key"])
                 if ident is None or _req_key(d["consumer_id"], d["request_id"]) != k or ident.consumer_id != d["consumer_id"]: raise IntegrityFailure("request binding without a matching identity record")
-                self._req_ids[(d["consumer_id"], d["request_id"])] = ident
+                reqs[(d["consumer_id"], d["request_id"])] = ident
+            for ident, out in by.items():
+                rid = getattr(out, "request_id", None)
+                if isinstance(rid, str) and rid:
+                    key = (ident.consumer_id, rid)
+                    if reqs.setdefault(key, ident) != ident: raise IntegrityFailure("request id associated with two identities")
+            self._by_identity, self._pins, self._facts, self._req_ids = by, pins, facts, reqs
+            self._held.clear()
         return len(self._by_identity)
