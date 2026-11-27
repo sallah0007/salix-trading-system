@@ -13,6 +13,11 @@ def journal_key(ns, seq, rec_hash):
     if not isinstance(seq, int) or seq < 1 or len(rec_hash) != 64:
         raise Refusal("%r %r" % (seq, rec_hash), code="BAD_JOURNAL_KEY")
     return "%s%020d/%s" % (journal_prefix(ns), seq, rec_hash)
+def accepted_materialization_key(materialization_hash):
+    """CANDIDATE internal key (not a governed schema): the exact materialization record the acceptance verified, content-addressed by its own materialization_hash."""
+    if len(materialization_hash) != 64 or any(c not in "0123456789abcdef" for c in materialization_hash):
+        raise Refusal(materialization_hash, code="BAD_MATERIALIZATION_KEY")
+    return "accepted-materialization/%s" % materialization_hash
 def artifact_key(manifest_hash):
     if len(manifest_hash) != 64 or any(c not in "0123456789abcdef" for c in manifest_hash):
         raise Refusal(manifest_hash, code="BAD_ARTIFACT_KEY")

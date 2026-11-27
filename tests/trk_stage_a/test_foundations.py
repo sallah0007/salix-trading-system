@@ -19,7 +19,7 @@ NS = "XAUUSD/H4/mom3"
 def accepted_body(v="1", vh="v" * 64):
     return {"feature_key": "%s/%s" % (NS, v), "feature_version": v, "manifest_hash": "m" * 64, "graph_hash": "g" * 64,
             "program_hash": "p" * 64, "attempt_id": "A", "verification_hash": vh, "certification_hash": "c" * 64,
-            "claim_witness": "claims#1:" + "w" * 64, "safe_intake_report_hash": "r" * 64}
+            "claim_witness": "claims#1:" + "w" * 64, "safe_intake_report_hash": "r" * 64, "materialization_hash": "m" * 64}
 def pub_body(st, v="1", vh="v" * 64):
     return {"feature_key": "%s/%s" % (NS, v), "feature_version": v, "accepted_seq": st[0], "accepted_hash": st[1], "verification_hash": vh}
 

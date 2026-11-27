@@ -7,6 +7,8 @@ the claim (CLAIM_CONSUMED, compare-and-append on the claims journal re-verifying
 point) and then appends CANONICAL_ACCEPTED carrying that consumption record as its witness. A crash between the two
 leaves a consumed claim with no acceptance; a retry of the same request completes it (idempotent)."""
 from ..storage.authority_class import QUALIFIED, SIMULATION, authority_class_of
+from ..storage.keys import accepted_materialization_key
+from ..storage.byte_primitives import canonical_bytes
 from dataclasses import dataclass, field
 from typing import Optional, Any
 from tracker_component.canonical import canonical_json
@@ -239,7 +241,11 @@ class TrackerPipeline:
                     "graph_hash": rec["graph_hash"], "program_hash": rec["program_hash"], "attempt_id": pkg.attempt_id,
                     "verification_hash": ver.result_hash, "certification_hash": cert.cert_hash,
                     "claim_witness": "claims#%d:%s" % (witness.seq, witness.record_hash),
-                    "safe_intake_report_hash": report["FINAL_REPORT_HASH"]}
+                    "safe_intake_report_hash": report["FINAL_REPORT_HASH"], "materialization_hash": rec["materialization_hash"]}
+            mk = accepted_materialization_key(rec["materialization_hash"]); mb = canonical_bytes(rec)       # the exact verified record is persisted BEFORE the acceptance names it (content-addressed, never overwritten)
+            if not self._store.put_if_absent(mk, mb):
+                g = self._store.get(mk)
+                if g is None or g[0] != mb: raise IntegrityFailure("accepted materialization key %s holds different bytes" % mk)
             T.validate_body(T.CANONICAL_ACCEPTED, body)
             T.check_transition(None, T.CANONICAL_ACCEPTED)
             head = j.head()

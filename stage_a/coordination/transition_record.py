@@ -16,7 +16,7 @@ _NEXT = {None: {CANONICAL_ACCEPTED}, CANONICAL_ACCEPTED: {PUBLISHABLE, WITHDRAWN
 _REQUIRED = {
     CANONICAL_ACCEPTED: ("feature_key", "feature_version", "manifest_hash", "graph_hash", "program_hash",
                          "attempt_id", "verification_hash", "certification_hash", "claim_witness",
-                         "safe_intake_report_hash"),
+                         "safe_intake_report_hash", "materialization_hash"),
     PUBLISHABLE: ("feature_key", "feature_version", "accepted_seq", "accepted_hash", "verification_hash"),
     WITHDRAWN: ("feature_key", "feature_version", "reason"),
 }

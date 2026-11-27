@@ -20,8 +20,8 @@ class JoinReport:
     qualified: bool = False    # never True here: writer principal, instances and acceptance are unbound
     writer_principal: str = "UNBOUND_NOT_IN_SOURCE"
 
-def check_six_joins(joins, registry, *, fence, catalog_snapshot=None, request_snapshot=None, dataset_manifests=None, consumer_binding_id=None, family_map=None, hypothesis_family_id=None) -> JoinReport:
-    """ML Integration Binding Addendum V1 s6: the dataset manifest does NOT carry a forward consumer-binding field (NOT_YET_NATIVE), so J1 is a REVERSE reference: the supplied `consumer_binding_id` (Gateway CONSUMER_BINDING.MANIFEST_OR_DATASET_BINDING_ID) must equal J1.binding_id, and a SUPPLIED `dataset_manifests` index {manifest_id: hash} must contain J1's manifest id with J1's hash. s4: a SUPPLIED `family_map` {hypothesis_family_id: research_family_id} must resolve `hypothesis_family_id` to exactly J6.family_ref. All supplied indexes are unadmitted."""
+def check_six_joins(joins, registry, *, fence, catalog_snapshot=None, request_snapshot=None, dataset_manifests=None, binding_to_manifest=None, consumer_binding_id=None, family_map=None, hypothesis_family_id=None) -> JoinReport:
+    """ML Integration Binding Addendum V1 s6: the dataset manifest does NOT carry a forward consumer-binding field (NOT_YET_NATIVE), so J1 is a REVERSE reference. R34: the relation is an EXPLICIT SUPPLIED resolver `binding_to_manifest` {binding_id: [manifest_id, ...]} (CONSUMER_BINDING.MANIFEST_OR_DATASET_BINDING_ID -> exact manifest); no identity equality between a binding id and a manifest id is assumed (the key may be indirect). J1 verifies only if the supplied `consumer_binding_id` equals J1.binding_id, the resolver maps it to EXACTLY ONE manifest id, that id is J1.dataset_manifest_id, and the SUPPLIED index `dataset_manifests` {manifest_id: hash} holds J1's hash for it. Absent, ambiguous or foreign relation -> not verified / MISMATCH. The J1 -> bind-time Health relation is NOT checked here. s4: a SUPPLIED `family_map` {hypothesis_family_id: research_family_id} must resolve `hypothesis_family_id` to exactly J6.family_ref. All supplied indexes are unadmitted."""
     if not isinstance(joins, dict): raise Refusal(type(joins).__name__, code="ML_JOINS_NOT_A_RECORD")
     if not _i(fence): raise Refusal("fence", code="ML_JOINS_FENCE_INVALID")
     out = []
@@ -29,9 +29,10 @@ def check_six_joins(joins, registry, *, fence, catalog_snapshot=None, request_sn
     j = joins.get("J1_DATASET_MANIFEST")
     if not (isinstance(j, dict) and set(j) == {"binding_id", "dataset_manifest_id", "dataset_manifest_hash"} and all(_s(v) for v in j.values())): add(JOINS[0], MISSING if j is None else MISMATCH, "shape")
     elif consumer_binding_id is not None and consumer_binding_id != j["binding_id"]: add(JOINS[0], MISMATCH, "J1 binding id differs from the consumer binding's MANIFEST_OR_DATASET_BINDING_ID")
+    elif binding_to_manifest is not None and (consumer_binding_id is None or len(binding_to_manifest.get(consumer_binding_id, [])) != 1 or binding_to_manifest[consumer_binding_id][0] != j["dataset_manifest_id"]): add(JOINS[0], MISMATCH, "the supplied reverse relation does not resolve the consumer binding to exactly this dataset manifest (absent, ambiguous or foreign)")
     elif dataset_manifests is not None and dataset_manifests.get(j["dataset_manifest_id"]) != j["dataset_manifest_hash"]: add(JOINS[0], MISMATCH, "dataset manifest unknown in, or hash differs from, the SUPPLIED index")
-    elif consumer_binding_id is not None and dataset_manifests is not None: add(JOINS[0], VERIFIED_AGAINST_REGISTRY, "reverse reference equals the SUPPLIED consumer binding and dataset-manifest index (both unadmitted)")
-    else: add(JOINS[0], PRESENT_UNVERIFIED, "dataset manifest registry instance and/or consumer binding unbound")
+    elif consumer_binding_id is not None and binding_to_manifest is not None and dataset_manifests is not None: add(JOINS[0], VERIFIED_AGAINST_REGISTRY, "reverse relation resolved the supplied consumer binding to exactly this manifest, hash equal in the SUPPLIED index (relation and index unadmitted; J1->Health not checked)")
+    else: add(JOINS[0], PRESENT_UNVERIFIED, "reverse relation, dataset manifest index and/or consumer binding unbound")
     j = joins.get("J2_INCLUDED_FEATURES"); keys = ("feature_id", "feature_version", "definition_hash", "formula_hash", "graph_hash", "closure_ref")
     if not (isinstance(j, list) and j and all(isinstance(f, dict) and set(f) == set(keys) and all(_s(f[k]) for k in keys) for f in j)): add(JOINS[1], MISSING if j is None else MISMATCH, "shape")
     elif catalog_snapshot is None: add(JOINS[1], PRESENT_UNVERIFIED, "catalog snapshot instance unbound")
