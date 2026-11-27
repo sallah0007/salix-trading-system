@@ -64,12 +64,21 @@ class Correlation(unittest.TestCase):
 
 class ReverseJ1AndFamily(unittest.TestCase):
     def st(self, rep): return {j: s for j, s, _ in rep.statuses}
-    def test_j1_is_a_reverse_reference_verified_only_against_supplied_binding_and_index(self):
-        r = reg("M1"); d = good(r); idx = {"dm1": "h1"}
-        self.assertEqual(self.st(SJ.check_six_joins(d, r, fence=10, dataset_manifests=idx, consumer_binding_id="b1"))["J1_DATASET_MANIFEST"], SJ.VERIFIED_AGAINST_REGISTRY)
-        self.assertEqual(self.st(SJ.check_six_joins(d, r, fence=10, dataset_manifests=idx))["J1_DATASET_MANIFEST"], SJ.PRESENT_UNVERIFIED)           # index alone: no consumer binding => not verified
-        for kw in ({"dataset_manifests": {"dm1": "other"}, "consumer_binding_id": "b1"}, {"dataset_manifests": {}, "consumer_binding_id": "b1"}, {"dataset_manifests": idx, "consumer_binding_id": "b-other"}):
-            rep = SJ.check_six_joins(d, r, fence=10, **kw); self.assertEqual((self.st(rep)["J1_DATASET_MANIFEST"], rep.complete), (SJ.MISMATCH, False))
+    def test_j1_needs_a_supplied_reverse_relation_that_resolves_the_binding_to_exactly_this_manifest(self):
+        r = reg("M1"); d = good(r); idx = {"dm1": "h1", "dm2": "h2"}; rel = {"b1": ["dm1"]}
+        ok = SJ.check_six_joins(d, r, fence=10, dataset_manifests=idx, binding_to_manifest=rel, consumer_binding_id="b1")
+        self.assertEqual((self.st(ok)["J1_DATASET_MANIFEST"], ok.complete, ok.qualified), (SJ.VERIFIED_AGAINST_REGISTRY, True, False))
+        for kw in ({"binding_to_manifest": {"b1": ["dm2"]}},          # R33 defect: binding resolves to a DIFFERENT known manifest, J1 names dm1 (both independently in the index)
+                   {"binding_to_manifest": {"b1": ["dm1", "dm2"]}},   # ambiguous
+                   {"binding_to_manifest": {}}, {"binding_to_manifest": {"b-other": ["dm1"]}},   # absent / foreign binding
+                   {"dataset_manifests": {"dm1": "other", "dm2": "h2"}}, {"consumer_binding_id": "b-other"}, {"consumer_binding_id": None}):
+            a = dict(dataset_manifests=idx, binding_to_manifest=rel, consumer_binding_id="b1"); a.update(kw)
+            rep = SJ.check_six_joins(d, r, fence=10, **a); self.assertEqual((self.st(rep)["J1_DATASET_MANIFEST"], rep.complete), (SJ.MISMATCH, False), kw)
+        d2 = good(r); d2["J1_DATASET_MANIFEST"] = {"binding_id": "DM1", "dataset_manifest_id": "DM2", "dataset_manifest_hash": "h2"}               # the verified R33 repro
+        rep = SJ.check_six_joins(d2, r, fence=10, dataset_manifests={"DM1": "h1", "DM2": "h2"}, binding_to_manifest={"DM1": ["DM1"]}, consumer_binding_id="DM1"); self.assertEqual(self.st(rep)["J1_DATASET_MANIFEST"], SJ.MISMATCH)
+        d3 = good(r); d3["J1_DATASET_MANIFEST"] = {"binding_id": "DM1", "dataset_manifest_id": "DM1", "dataset_manifest_hash": "h1"}
+        self.assertEqual(self.st(SJ.check_six_joins(d3, r, fence=10, dataset_manifests={"DM1": "h1"}, binding_to_manifest={"DM1": ["DM1"]}, consumer_binding_id="DM1"))["J1_DATASET_MANIFEST"], SJ.VERIFIED_AGAINST_REGISTRY)   # genuine direct pointer where DECLARED by the relation
+        self.assertEqual(self.st(SJ.check_six_joins(d, r, fence=10, dataset_manifests=idx, consumer_binding_id="b1"))["J1_DATASET_MANIFEST"], SJ.PRESENT_UNVERIFIED)    # index alone: not a relation
     def test_hypothesis_family_must_resolve_to_exactly_the_j6_family(self):
         r = reg("M1"); d = good(r)
         self.assertEqual(self.st(SJ.check_six_joins(d, r, fence=10, family_map={"h": "fam"}, hypothesis_family_id="h"))["J6_RESEARCH_FAMILY_EXPOSURE"], SJ.PRESENT_UNVERIFIED)
