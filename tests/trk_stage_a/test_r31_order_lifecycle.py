@@ -61,3 +61,17 @@ class RiskReducingRevocation(unittest.TestCase):
             self.assertEqual(code(r.append_lifecycle, "M1", st, 40, "x", "A"), "ML_LIFECYCLE_RESTORATION_HELD", st)                                      # REVOKED revival / un-revoke held
         r2 = reg("M1"); r2.append_lifecycle("M1", "SUPERSEDED", 20, "x", "A"); self.assertEqual(code(r2.append_lifecycle, "M1", "COMPLETE_CERTIFIED", 30, "x", "A"), "ML_LIFECYCLE_RESTORATION_HELD")   # SUPERSEDED -> COMPLETE held
         self.assertEqual(code(r2.append_lifecycle, "M1", "CANDIDATE", 31, "x", "A"), "ML_LIFECYCLE_RESTORATION_HELD")
+
+class DetachedPublicReads(unittest.TestCase):
+    def test_returned_order_provenance_and_verified_order_cannot_mutate_the_projection_cache(self):
+        rig = Rig(); c = rig.claims; o = issue(c)["order_id"]; issue(c, rec(TARGET_CONSUMER="MACHINE_LEARNING", REQUESTER_TYPE="AI", REQUESTER_ID="ai-1"))
+        self.assertEqual(G(c, o, bld()).order_id, o)                                                                                  # genuine positive
+        row = c.order(o); row["constraints"]["FORBIDDEN_INPUTS"] = "changed"; row["constraints"]["lookup_refs"]["X"] = "y"
+        self.assertEqual(code(G, c, o, bld(FORBIDDEN_INPUTS="changed")), "COMPOSER_BUILD_DIFFERS_FROM_ORDER")                          # reproduced: this used to be ACCEPTED
+        self.assertEqual(G(c, o, bld()).order_id, o)
+        v = c.verified_order(o); v.constraints["FORBIDDEN_INPUTS"] = "changed2"; v.constraints["applicability"]["FW_LOCAL"] = "NOT_APPLICABLE"
+        self.assertEqual(code(G, c, o, bld(FORBIDDEN_INPUTS="changed2")), "COMPOSER_BUILD_DIFFERS_FROM_ORDER")
+        pv = c.order_provenance(o); pv[0]["constraints"]["SCOPE"] = "tampered"; self.assertEqual(c.order_provenance(o)[0]["constraints"]["SCOPE"], "x")
+        from tracker_component.claims import ClaimService; from .fixtures import ANCHOR
+        fresh = ClaimService(rig.claims_journal, ANCHOR); self.assertEqual(fresh.order(o)["constraints"], c.order(o)["constraints"]); self.assertEqual(fresh.order(o)["constraints"]["FORBIDDEN_INPUTS"], "x")      # fresh replay parity
+        self.assertEqual(issue(c)["status"], "ATTACHED_EXISTING_IDEMPOTENT")                                                          # coalescing reads the true row too

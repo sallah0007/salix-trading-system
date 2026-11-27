@@ -148,10 +148,10 @@ def check_daily_record(rec: dict) -> None:
                      rec.get("PRIOR_COVERAGE_ISSUED_AT"), rec["ISSUED_AT"])
 
 def event_consumable(ev: dict, cutoff: int, cutoff_kind=None):
-    """(consumable: bool, reason). Consumable at a decision cutoff only when EVERY causal stamp is a verified integer STRICTLY < cutoff (half-open fence, equality excluded; NEWS-02/03 frozen clause): REVISION_AVAILABLE_AT (sec 9.0 revision rule),
-    PUBLICLY_AVAILABLE_AT and SALIX_RECEIVED_AT (sec 9.0 keeps them distinct and forbids backfilling a publicly-earlier fact into an earlier SALIX state, so SALIX receipt must
-    also be <= cutoff), the general AVAILABLE_ASOF, and ACTUAL_AVAILABLE_ASOF when ACTUAL is present. DERIVATION (fail-closed, NOT a source formula): AVAILABLE_ASOF earlier
-    than max(PUBLIC, RECEIPT) is withheld. Per-value stamps gate consensus/previous: unstamped => withheld. Malformed/missing stamps raise rather than compare."""
+    """(consumable: bool, reason). Every causal stamp must be a verified integer that is NOT past the cutoff under the DECLARED `cutoff_kind`: DECISION_CUTOFF => stamp <= cutoff (NewsHub V2 p146/185/187/231); SNAPSHOT_FENCE => stamp < cutoff (Tracker half-open,
+    equality excluded). The source states no relation between the two and none is assumed; an undeclared kind is refused. Stamps: REVISION_AVAILABLE_AT (sec 9.0 revision rule), PUBLICLY_AVAILABLE_AT and SALIX_RECEIVED_AT (sec 9.0 keeps them distinct and forbids backfilling a
+    publicly-earlier fact into an earlier SALIX state), the general AVAILABLE_ASOF, and ACTUAL_AVAILABLE_ASOF when ACTUAL is present. The check that AVAILABLE_ASOF is not earlier than max(PUBLIC, RECEIPT) is a fail-closed DERIVATION, NOT a source formula.
+    Per-value stamps gate consensus/previous: unstamped => withheld. Malformed/missing stamps raise rather than compare. Which comparator the actual Tracker/Gateway caller must use is UNBOUND until that boundary is source-bound."""
     if not _is_ts(cutoff):
         raise Refusal("decision cutoff", code="CUTOFF_MALFORMED")
     check_event_record(ev)                                                              # never rely on the caller having validated

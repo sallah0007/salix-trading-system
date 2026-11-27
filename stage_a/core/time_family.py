@@ -20,6 +20,9 @@ class TimeframeRegistry:
     def require(self, tf: str) -> str:
         if tf not in self._e: raise Refusal(str(tf), code="UNKNOWN_TIMEFRAME")
         return tf
+    def basis(self) -> tuple:
+        """The governed entries this registry instance was handed (sorted): the registry basis a resolution depended on."""
+        return tuple(sorted((k, v) for k, v in self._e.items()))
     def child_of(self, tf: str):
         self.require(tf); return self._e[tf]
 
