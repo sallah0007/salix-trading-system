@@ -3,10 +3,10 @@ import dataclasses, unittest
 from stage_a.errors import Refusal
 from stage_a.tracker import build_output_check as B
 from stage_a.tracker.quant_intake_adapter import admit, QUANT_FEATURE
-from tests.trk_stage_a.fixtures import package, momentum_manifest, build_output_for
+from tests.trk_stage_a.fixtures import SIM_CONF, package, momentum_manifest, build_output_for
 
 def codes(a): return [c for d, c in a.failed if d == "BUILD_OUTPUT_CONTRACT"]
-def adm(**o): return admit(package(**o), accepted_fit_generations=o.pop("fits", {}))
+def adm(**o): return admit(package(**o), conformance=SIM_CONF, accepted_fit_generations=o.pop("fits", {}))
 def code(fn, *a, **k):
     try: fn(*a, **k)
     except Refusal as e: return e.code
@@ -33,9 +33,9 @@ class LearnedDerivedAtIntake(unittest.TestCase):
     def _m(self): return momentum_manifest(fit_refs=[{"generation": 2, "ref_hash": "b" * 64}])
     def test_fit_refs_make_the_construct_learned_derived_and_upstream_identity_mandatory(self):
         m = self._m(); bo = {k: v for k, v in build_output_for(m).items() if not k.startswith("UPSTREAM") and k != "GENERATION_AUTHORITY_CLASS"}
-        a = admit(package(m, build_output=bo), accepted_fit_generations=self.FITS)
+        a = admit(package(m, build_output=bo), conformance=SIM_CONF, accepted_fit_generations=self.FITS)
         self.assertEqual(codes(a), ["LEARNED_DERIVED_WITHOUT_UPSTREAM_GENERATION_IDENTITY"])
-        self.assertEqual(codes(admit(package(m), accepted_fit_generations=self.FITS)), [])
+        self.assertEqual(codes(admit(package(m), conformance=SIM_CONF, accepted_fit_generations=self.FITS)), [])
 class Direct(unittest.TestCase):
     OK = dict(order_id="O", creation_request_id="R")
     def test_learned_derived_requires_upstream_identity_each_field(self):

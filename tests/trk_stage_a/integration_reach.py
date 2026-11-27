@@ -33,3 +33,11 @@ def reachable(entries):
             continue
         seen.add(m); st.extend(g[m])
     return seen
+
+def called_names(rel_path):
+    """Names called (as plain names or attributes) anywhere in a stage_a module: FUNCTION-INVOCATION evidence, which an import alone is not."""
+    t = ast.parse((ROOT.parent / rel_path).read_text()); out = set()
+    for n in ast.walk(t):
+        if isinstance(n, ast.Call):
+            out.add(n.func.id if isinstance(n.func, ast.Name) else getattr(n.func, "attr", ""))
+    return out

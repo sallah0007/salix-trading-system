@@ -16,7 +16,7 @@ from stage_a.tracker.pipeline import BaselineBinding
 from stage_a.tracker.quant_intake_adapter import admit, NO_QUANT_FEATURE, FAILED_REQUESTED_BUILD, QUANT_FEATURE
 from stage_a.tracker.authority_bridge import make_construction_authority_resolver
 from stage_a.tracker.verification.verification_result import make_result, FAIL, SCOPE_MATERIALIZATION
-from .fixtures import Rig, package, momentum_manifest, ANCHOR, IDENTITY_FIELDS
+from .fixtures import SIM_CONF, Rig, package, momentum_manifest, ANCHOR, IDENTITY_FIELDS
 
 def feature_records(rig, ns="XAUUSD/H4/mom3"):
     return rig.journals.journal(ns).read_from(1)
@@ -136,19 +136,19 @@ class Rejections(unittest.TestCase):
         rig = Rig(); p = package(); rig.issue(p); rig.claims.revoke_order("ORD-1", "no")
         o = rig.pipe.run(p); self.assertIn("ORDER_REVOKED", [c for _, c in o.failures])
     def test_expired_order(self):
-        rig = Rig(); p = package(); adm = admit(p, accepted_fit_generations={})
+        rig = Rig(); p = package(); adm = admit(p, conformance=SIM_CONF, accepted_fit_generations={})
         rig.claims.issue_order(ConstructionOrder("ORD-1", adm.subject_key, "SRC-BINDING-1", "MANAGER", valid_until_seq=0))
         o = rig.pipe.run(p); self.assertIn("ORDER_EXPIRED", [c for _, c in o.failures])
     def test_subject_already_claimed_by_other_request(self):
         rig = Rig(); p = package(); rig.issue(p)
-        rig.claims.reserve(subject_key=admit(p, accepted_fit_generations={}).subject_key, request_id="OTHER", order_id="ORD-1", lookup_outcome=LookupOutcome.ABSENT)
+        rig.claims.reserve(subject_key=admit(p, conformance=SIM_CONF, accepted_fit_generations={}).subject_key, request_id="OTHER", order_id="ORD-1", lookup_outcome=LookupOutcome.ABSENT)
         o = rig.pipe.run(p); self.assertIn("SUBJECT_ALREADY_CLAIMED", [c for _, c in o.failures])
     def test_failed_build_releases_claim_so_subject_is_not_stuck(self):
         rig = Rig(); p = package(); rig.issue(p)
         bad = mock.patch("stage_a.tracker.pipeline.certify", side_effect=lambda m, pr: __import__("stage_a.tracker.quant_certification", fromlist=["x"]).Certification("REFUSED", (), ("forced",), "h"))
         with bad: o = rig.pipe.run(p)
         self.assertFalse(o.accepted_ok); self.assertEqual(rig.claims.claim("CLAIM:REQ-1")["state"], "RELEASED")
-        p2 = package(request_id="REQ-2", attempt_id="ATT-2"); rig.claims.issue_order(ConstructionOrder("ORD-2", admit(p2, accepted_fit_generations={}).subject_key, "SRC-BINDING-1", "MANAGER"))
+        p2 = package(request_id="REQ-2", attempt_id="ATT-2"); rig.claims.issue_order(ConstructionOrder("ORD-2", admit(p2, conformance=SIM_CONF, accepted_fit_generations={}).subject_key, "SRC-BINDING-1", "MANAGER"))
         self.assertTrue(rig.pipe.run(package(request_id="REQ-2", attempt_id="ATT-2", order_id="ORD-2")).accepted_ok)
 
 class TR06(unittest.TestCase):
@@ -187,7 +187,7 @@ class IsolationAndConflict(unittest.TestCase):
     def test_content_duplicate_under_new_id_is_blocked_by_subject_claim(self):
         rig = Rig(); p1 = package(); rig.issue(p1); rig.pipe.run(p1)
         alias = package(momentum_manifest(feature_id="alias"), request_id="R3", attempt_id="A3", order_id="O3")
-        k1, k2 = admit(p1, accepted_fit_generations={}).subject_key, admit(alias, accepted_fit_generations={}).subject_key
+        k1, k2 = admit(p1, conformance=SIM_CONF, accepted_fit_generations={}).subject_key, admit(alias, conformance=SIM_CONF, accepted_fit_generations={}).subject_key
         self.assertEqual(k1, k2)       # baseline content key excludes identity: same program+semantics = same subject
         rig.claims.issue_order(ConstructionOrder("O3", k2, "SRC-BINDING-1", "MANAGER"))
         o = rig.pipe.run(alias)

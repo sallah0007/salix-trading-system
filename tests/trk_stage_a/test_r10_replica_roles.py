@@ -35,7 +35,7 @@ def test_replica_merge_prohibitions():
 # ---- Composer s7A APPEND request record -----------------------------------------------------------------------------------------------
 from stage_a.composer import request_record as RR
 REC = {"REQUEST_SCHEMA_VERSION": "1", "REQUESTER_TYPE": "OWNER", "REQUESTER_ID": "r1", "REQUEST_CLASS": "GOVERNED_INTAKE_REQUEST",
-       "TARGET_CONSUMER": "FORWARD_WALK", "REQUEST_CONTEXT": "MANUAL_CHECKUP", "PURPOSE_STATEMENT": "p"}
+       "TARGET_CONSUMER": "FORWARD_WALK", "REQUEST_CONTEXT": "MANUAL_CHECKUP", "PURPOSE_STATEMENT": "p", "OUTCOME_INFORMATION_ACCESS": "FORBIDDEN"}
 def test_request_record_ok_and_enum_refusals():
     assert RR.check_request_record(dict(REC), "ORDER") == "OK"
     for k, bad in (("REQUESTER_TYPE", "ROOT"), ("REQUEST_CLASS", "ML_DATASET_OR_MODEL_REQUEST"), ("REQUEST_CLASS", "DIAGNOSTIC_REQUEST"),

@@ -14,7 +14,7 @@ INTEGRATED = ("stage_a.tracker.quant_intake_adapter", "stage_a.tracker.build_out
               "stage_a.tracker.verification.stateful_verifier", "stage_a.authority")
 REFERENCE_ONLY = ("stage_a.context.news_hub_v2", "stage_a.tracker.lifecycle_status_event", "stage_a.tracker.status_projection", "stage_a.health.blast_radius",
                   "stage_a.gateway.v038", "stage_a.gateway.contracts", "stage_a.fw.receiver", "stage_a.fw.return_lineage", "stage_a.fw.descriptor_crosswalk",
-                  "stage_a.ml.receiver", "stage_a.composer.expression.sqe_opset", "stage_a.health.envelope", "stage_a.health.evidence", "stage_a.tracker.publication")
+                  "stage_a.ml.receiver", "stage_a.composer.expression.sqe_opset", "stage_a.health.envelope", "stage_a.health.evidence", "stage_a.tracker.publication", "stage_a.tracker.feature_lineage")
 
 class Reachability(unittest.TestCase):
     def test_integrated_rows_have_a_non_test_path_from_the_pipeline(self):
@@ -41,4 +41,22 @@ class JournalToStatusFactGap(unittest.TestCase):
     def test_lifecycle_kinds_are_not_chain_statuses(self):
         from stage_a.tracker import chain_status as C
         self.assertTrue(set(T.KINDS).isdisjoint(set(C.ALL)))                    # vocabulary mismatch: no mapping source read
+class FunctionInvocation(unittest.TestCase):
+    """Import is not invocation (R16 counterexample: check_outcome_access was imported-adjacent but never called from intake). These pin which helpers the production intake
+    path actually CALLS and which it does not, so the closeout cannot call a helper 'integrated' by import alone."""
+    def test_intake_calls_these_checks(self):
+        from tests.trk_stage_a.integration_reach import called_names
+        c = called_names("stage_a/tracker/quant_intake_adapter.py")
+        for f in ("check_build_output", "check_conformance", "check_capability_declaration", "check_request_record", "check_fit_refs", "check_declared"):
+            self.assertIn(f, c, f)
+    def test_conformance_calls_outcome_access_but_nothing_calls_the_open_helpers(self):
+        from tests.trk_stage_a.integration_reach import called_names
+        self.assertIn("check_outcome_access", called_names("stage_a/tracker/build_output_check.py"))
+        for mod in ("stage_a/tracker/quant_intake_adapter.py", "stage_a/tracker/pipeline.py", "stage_a/tracker/build_output_check.py"):
+            c = called_names(mod)
+            self.assertNotIn("check_inputs_resolve", c, mod); self.assertNotIn("check_reproduction", c, mod)      # OPEN helpers: if this fails, re-derive the closeout row
+    def test_pipeline_does_not_call_consumer_seam_validators(self):
+        from tests.trk_stage_a.integration_reach import called_names
+        c = called_names("stage_a/tracker/pipeline.py")
+        for f in ("resolve_context", "blast_radius", "check_fw_augmented", "check_generation", "journal_to_status_event", "feature_deps_from_quant_manifests"): self.assertNotIn(f, c, f)
 if __name__ == "__main__": unittest.main()

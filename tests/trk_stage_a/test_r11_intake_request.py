@@ -1,18 +1,18 @@
 """R11: s7A request record wired into Tracker intake (admit). Fails closed; a code event only."""
 import copy, dataclasses, unittest
 from stage_a.tracker.quant_intake_adapter import admit, FAILED_REQUESTED_BUILD, QUANT_FEATURE
-from tests.trk_stage_a.fixtures import package, REQUEST_RECORD
+from tests.trk_stage_a.fixtures import SIM_CONF, package, REQUEST_RECORD
 
 def adm(**rr):
     rec = copy.deepcopy(REQUEST_RECORD); rec.update(rr)
-    return admit(package(request_record=rec), accepted_fit_generations={})
+    return admit(package(request_record=rec), conformance=SIM_CONF, accepted_fit_generations={})
 def codes(a): return [c for d, c in a.failed if d == "REQUEST_RECORD"]
 
 class IntakeRequestRecord(unittest.TestCase):
     def test_valid_record_admits(self):
         a = adm(); self.assertEqual(codes(a), []); self.assertEqual(a.classification, QUANT_FEATURE)
     def test_missing_record_fails_closed(self):
-        a = admit(package(request_record=None), accepted_fit_generations={})
+        a = admit(package(request_record=None), conformance=SIM_CONF, accepted_fit_generations={})
         self.assertEqual(codes(a), ["REQUEST_RECORD_MISSING"]); self.assertEqual(a.classification, FAILED_REQUESTED_BUILD)
     def test_unknown_target_is_review_required_not_admitted(self):
         a = adm(TARGET_CONSUMER="UNKNOWN")
@@ -28,7 +28,7 @@ class IntakeRequestRecord(unittest.TestCase):
         self.assertNotEqual(a.content_hash(), b.content_hash())
     def test_no_quant_request_unaffected(self):
         from stage_a.tracker.quant_intake_adapter import NO_QUANT_FEATURE
-        a = admit(package(None, quant=False, request_record=None), accepted_fit_generations={})
+        a = admit(package(None, quant=False, request_record=None), conformance=SIM_CONF, accepted_fit_generations={})
         self.assertEqual(a.classification, NO_QUANT_FEATURE)
 class PolicyPinsDimension(unittest.TestCase):
     def test_policy_hash_names_request_record_dimension(self):

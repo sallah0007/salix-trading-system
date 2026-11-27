@@ -4,10 +4,10 @@ from stage_a.errors import Refusal
 from stage_a.composer.expression import ceilings as C
 from stage_a.composer.expression.manifest import Manifest
 from stage_a.tracker.quant_intake_adapter import admit, FAILED_REQUESTED_BUILD, QUANT_FEATURE
-from tests.trk_stage_a.fixtures import package, CEILINGS, momentum_manifest, declaration_for
+from tests.trk_stage_a.fixtures import SIM_CONF, package, CEILINGS, momentum_manifest, declaration_for
 
 def codes(a, dim): return [c for d, c in a.failed if d == dim]
-def adm(**over): return admit(package(**over), accepted_fit_generations={})
+def adm(**over): return admit(package(**over), conformance=SIM_CONF, accepted_fit_generations={})
 def cc(**ch):
     v = dict(CEILINGS); v.update(ch); return v
 

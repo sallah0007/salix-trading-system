@@ -88,6 +88,7 @@ class Admission:
     failed: List[Tuple[str, str]] = field(default_factory=list)
     lookup_gate: Optional[str] = None
     notes: List[str] = field(default_factory=list)
+    unverified: List[Tuple[str, str]] = field(default_factory=list)   # duties the Tracker could NOT determine: labelled, never certified
 
     @property
     def admissible(self):
@@ -177,11 +178,14 @@ def admit(pkg: BuildPackage, *, accepted_fit_generations: dict, conformance=None
     except Refusal as e:
         fail("BUILD_OUTPUT_CONTRACT", e.code)
     try:
-        check_conformance(pkg.build_output, conformance)            # Tracker-originated verification evidence; none supplied => FORBIDDEN is held
+        check_conformance(pkg.build_output, conformance, (pkg.request_record or {}).get("OUTCOME_INFORMATION_ACCESS"))            # Tracker-originated verification evidence; none supplied => FORBIDDEN is held
     except Refusal as e:
         fail("BUILD_CONFORMANCE", e.code)
     try:
         check_capability_declaration(pkg.capability_declaration, m, pkg.resource_ceiling_ref)
+        # Parent V1.2 capability-emulation firewall: class-to-structure verification is mandatory. Enum membership (checked above) is NOT that verification, and no source read
+        # defines the compatibility semantics: the declared class is carried UNVERIFIED (never read as certified); an ambiguous classification would route to GENERIC_EXTENSION review.
+        a.unverified.append(("CAPABILITY_CLASS_STRUCTURE", "NOT_VERIFIED_NO_SOURCE_COMPATIBILITY_RULE"))
     except Refusal as e:
         fail("CAPABILITY_DECLARATION", e.code)
     try:
