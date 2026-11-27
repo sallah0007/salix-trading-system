@@ -90,14 +90,12 @@ M = [
  (TC, 'if cur in ups and d not in dependents: dependents.add(d); stack.append(d)', 'if cur in ups and d not in dependents: dependents.add(d)'),
  (OA, 'if d.disposition != PROCEED: return {"status": d.disposition', 'if False: return {"status": d.disposition'),
  (OA, 'if diff or ex["subject_key"] != subject_key', 'if False'),
- (OA, 'if k not in NON_MATERIAL and k in ec', 'if False and k in ec'),
+ (OA, 'mc.get(k) != me.get(k))       # symmetric', 'False)       # symmetric'),
  (OA, 'claims.attach_provenance(oid, ctx)', 'pass'),
- (BG, 'if build_request[k] != cons[k]', 'if False'),
- (BG, 'if k not in build_request: raise', 'if False: raise'),
  (BG, 'try: o = claims.verified_order(order_id)', 'try: o = claims.order(order_id) and __import__("tracker_component.order", fromlist=["x"]).ConstructionOrder.from_body(claims.order(order_id))'),
  (H3, 'if a > s: break', 'if False: break'),
  (H3, 'elif v is not True and v is not False: raise', 'elif False: raise'),
- (GL, 'if prev is not None and prev.state in ("REVOKED", "SUPERSEDED") and state != prev.state:', 'if False:'),
+ (GL, 'if prev is not None and prev.state in ("REVOKED", "SUPERSEDED") and state != prev.state and not', 'if False and not'),
  (GL, 'if self._issued.get(snap.request_id) != snap: raise', 'if False: raise'),
  (GL, 'if event.instrument_id not in m.fit_instrument_set: raise', 'if False: raise'),
  (GL, 'if not (current_read_freshness == "PASS" and historical_slice_completeness == "PASS"):', 'if False:'),
@@ -107,8 +105,19 @@ M = [
  (TC, 'if dependent in st["anc"]: raise Refusal', 'if False: raise Refusal'),
  (TC, 'and not (rn and self._ancestry_blocks(st, subject))', ''),
  (TC, '"ra": ra, "rt": rt, "rn": rn}', '"ra": ra, "rt": rt}'),
+ (OA, 'if applicability.get(side) == "CONSUMER_LOCAL_REQUIRED" and k.startswith(side + ":")', 'if k.startswith(side + ":")'),
+ (OA, 'if amb: return {"status": "REVIEW_REQUIRED"', 'if False: return {"status": "REVIEW_REQUIRED"'),
+ (OA, '(k in mc) != (k in me) or mc.get(k) != me.get(k)', 'mc.get(k) != me.get(k) and k in mc and k in me'),
+ (BG, 'for k in stored:', 'for k in []:'),
+ (BG, 'if extra: raise', 'if False: raise'),
+ (GL, ' and not (prev.state == "SUPERSEDED" and state == "REVOKED"):', ':'),
+ (GL, '"REVOKED": "FORENSIC_ONLY"', '"REVOKED": "HISTORICAL_READABLE"'),
+ (BG, '            continue\n        if k not in build_request: raise Refusal(k, code="COMPOSER_BUILD_OMITS_ORDER_CONSTRAINT")\n        if build_request[k] != cons[k]: raise Refusal(k, code="COMPOSER_BUILD_DIFFERS_FROM_ORDER")\n    stored', '            continue\n        if k not in build_request: raise Refusal(k, code="COMPOSER_BUILD_OMITS_ORDER_CONSTRAINT")\n    stored'),
+ (BG, '            continue\n        if k not in build_request: raise Refusal(k, code="COMPOSER_BUILD_OMITS_ORDER_CONSTRAINT")', '            continue\n        if False: raise Refusal(k, code="COMPOSER_BUILD_OMITS_ORDER_CONSTRAINT")'),
+ (BG, '    for k in stored:\n        if k not in build_request: raise Refusal(k, code="COMPOSER_BUILD_OMITS_ORDER_CONSTRAINT")\n        if build_request[k] != cons[k]: raise Refusal(k, code="COMPOSER_BUILD_DIFFERS_FROM_ORDER")', '    for k in stored:\n        if k not in build_request: raise Refusal(k, code="COMPOSER_BUILD_OMITS_ORDER_CONSTRAINT")'),
+ (BG, '    for k in stored:\n        if k not in build_request: raise', '    for k in stored:\n        if False: raise'),
 ]
-T = ["tests/trk_stage_a/test_r25_defects.py", "tests/trk_stage_a/test_r26_evidence_truth.py", "tests/trk_stage_a/test_r27_binding.py", "tests/trk_stage_a/test_boundaries.py", "tests/trk_stage_a/test_r24_core.py", "tests/trk_stage_a/test_r25_scheduler.py", "tests/trk_stage_a/test_r28_closure.py", "tests/trk_stage_a/test_r28_h3.py", "tests/trk_stage_a/test_r29_generation_lifecycle.py", "tests/trk_stage_a/test_r29_intake_order.py", "tests/trk_stage_a/test_r11_both.py", "tests/trk_stage_a/test_v038_conformance.py"]
+T = ["tests/trk_stage_a/test_r25_defects.py", "tests/trk_stage_a/test_r26_evidence_truth.py", "tests/trk_stage_a/test_r27_binding.py", "tests/trk_stage_a/test_boundaries.py", "tests/trk_stage_a/test_r24_core.py", "tests/trk_stage_a/test_r25_scheduler.py", "tests/trk_stage_a/test_r28_closure.py", "tests/trk_stage_a/test_r28_h3.py", "tests/trk_stage_a/test_r29_generation_lifecycle.py", "tests/trk_stage_a/test_r29_intake_order.py", "tests/trk_stage_a/test_r31_order_lifecycle.py", "tests/trk_stage_a/test_r11_both.py", "tests/trk_stage_a/test_v038_conformance.py"]
 def run():
     try: return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", *[str(ROOT / t) for t in T]], cwd=ROOT, capture_output=True, text=True, timeout=120, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1")).returncode
     except subprocess.TimeoutExpired: return 99
