@@ -74,6 +74,8 @@ class ReverseJ1AndFamily(unittest.TestCase):
                    {"dataset_manifests": {"dm1": "other", "dm2": "h2"}}, {"consumer_binding_id": "b-other"}, {"consumer_binding_id": None}):
             a = dict(dataset_manifests=idx, binding_to_manifest=rel, consumer_binding_id="b1"); a.update(kw)
             rep = SJ.check_six_joins(d, r, fence=10, **a); self.assertEqual((self.st(rep)["J1_DATASET_MANIFEST"], rep.complete), (SJ.MISMATCH, False), kw)
+        rep = SJ.check_six_joins(d, r, fence=10, dataset_manifests=idx, binding_to_manifest={"b1": ["dm1"], "b-other": ["dm1"]}, consumer_binding_id="b-other")      # relation resolves, but J1 names a different binding id
+        self.assertEqual((self.st(rep)["J1_DATASET_MANIFEST"], rep.complete), (SJ.MISMATCH, False))
         d2 = good(r); d2["J1_DATASET_MANIFEST"] = {"binding_id": "DM1", "dataset_manifest_id": "DM2", "dataset_manifest_hash": "h2"}               # the verified R33 repro
         rep = SJ.check_six_joins(d2, r, fence=10, dataset_manifests={"DM1": "h1", "DM2": "h2"}, binding_to_manifest={"DM1": ["DM1"]}, consumer_binding_id="DM1"); self.assertEqual(self.st(rep)["J1_DATASET_MANIFEST"], SJ.MISMATCH)
         d3 = good(r); d3["J1_DATASET_MANIFEST"] = {"binding_id": "DM1", "dataset_manifest_id": "DM1", "dataset_manifest_hash": "h1"}
