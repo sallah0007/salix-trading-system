@@ -1,6 +1,6 @@
 # Status-event ownership against R7 section 2/3 (R11)
 
-Status: Coder analysis. Not a decision. R7 sections 1-6 are the CURRENT conditional design source for the isolated replica (not operational reliance).
+Status: PROPOSAL (Coder analysis). Not a decision. R7 sections 1-6 are the CURRENT conditional design source for the isolated replica (not operational reliance).
 Clause mapping (reviewer judgment; evidence = directly read R7 text and repo code):
 1. Semantic origin: authenticated originating evidence comes from the origin functions (R7 acceptance-origin for acceptance evidence; Tracker status facts originate in `tracker/chain_status.py` callers: materialization and designation steps). The origin cannot write HEAD or materialise.
 2. Sole canonical commit: replica-commit-service is the exclusive HEAD/transition writer. In the repo only `coordination/transition_record.py` + `object_store_journal.py` write; role lookup is `security/principals.replica_capabilities`.
