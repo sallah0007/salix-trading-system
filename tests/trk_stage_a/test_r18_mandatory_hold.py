@@ -35,7 +35,7 @@ class MandatoryDutiesHeldAtCertificationPath(unittest.TestCase):
         self.assertEqual(sorted(c for c, _ in o.admission.failed), sorted(MANDATORY_UNVERIFIED_DUTIES))
         self.assertIsNone(rig.claims.claim("CLAIM:REQ-1"))                                       # no claim was even reserved
     def test_held_outcome_limits_still_list_the_unverified_duties(self):
-        rig, o = run(package(), None); self.assertEqual({d for d, _ in o.limits}, set(MANDATORY_UNVERIFIED_DUTIES))
+        rig, o = run(package(), None); self.assertEqual({d for d, _ in o.limits}, set(MANDATORY_UNVERIFIED_DUTIES) | {"COMPOSER_PRODUCER_BINDING_ADMISSION"})      # R36: plus the labelled (non-mandatory) producer-binding duty
     def test_partial_evidence_holds_the_other_duty(self):
         for have, missing in ((CAP, GOV), (GOV, CAP)):
             rig, o = run(package(), lambda p, a, h=have: DutyEvidence(frozenset({h}), "SIMULATED:partial"))
@@ -53,7 +53,7 @@ class MandatoryDutiesHeldAtCertificationPath(unittest.TestCase):
             self.assertEqual(c.exception.code, "DUTY_EVIDENCE_WITHOUT_REF")
     def test_positive_control_accepts_only_with_both_duties_evidenced_and_limits_shrink(self):
         rig, o = run(package(), lambda p, a: SIM_DUTIES)
-        self.assertTrue(o.accepted_ok); self.assertEqual(list(dict(o.limits)), ["SIMULATION_NOT_QUALIFIED"]); self.assertIn("SIMULATED", o.duty_evidence.evidence_ref); self.assertTrue(o.simulation)
+        self.assertTrue(o.accepted_ok); self.assertEqual(list(dict(o.limits)), ["COMPOSER_PRODUCER_BINDING_ADMISSION", "SIMULATION_NOT_QUALIFIED"]); self.assertIn("SIMULATED", o.duty_evidence.evidence_ref); self.assertTrue(o.simulation)
     def test_no_quant_classification_is_not_affected(self):
         a = admit(package(None, quant=False, request_record=None), accepted_fit_generations={}); self.assertEqual(unresolved_mandatory(a, None), [])
     def test_refused_admission_is_not_masked_by_the_duty_hold(self):

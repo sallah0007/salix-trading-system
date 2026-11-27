@@ -23,7 +23,7 @@ class SourceInputs(unittest.TestCase):
         from stage_a.storage.keys import accepted_materialization_key
         from stage_a.storage.authority_class import _PREFIX
         mk = _PREFIX + accepted_materialization_key(self.body["materialization_hash"]); good = self.rig.raw_store._d[mk]; del self.rig.raw_store._d[mk]
-        self.assertEqual((self.v({})["overall"], self.v({})["reason"]), ("FAIL", "ACCEPTED_RECORD_ABSENT")); self.assertNotIn(mk, self.rig.raw_store._d); self.rig.raw_store._d[mk] = good
+        self.assertEqual((self.v({})["overall"], self.v({})["reason"]), ("FAIL", "ACCEPTED_RECORD_ABSENT_OR_UNBOUND")); self.assertNotIn(mk, self.rig.raw_store._d); self.rig.raw_store._d[mk] = good
         self.assertEqual(self.v({"close": {"ref": "r", "hash": H}}, lambda ref: H)["overall"], "VERIFIED")
         self.assertEqual(code(SI.verify_accepted_source_inputs, journal=self.j, store=self.rig.store, feature_key=self.fk, bindings="x"), "SOURCE_INPUT_BINDINGS_INVALID")
 class Legacy(unittest.TestCase):

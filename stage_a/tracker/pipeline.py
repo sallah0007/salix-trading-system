@@ -69,12 +69,13 @@ class Outcome:
         return self.accepted is not None
 
 class TrackerPipeline:
-    def __init__(self, *, store, claims, journals, clock, events, accepted_fit_generations=None, baseline=None, conformance_source=None, duty_source=None, simulation=False):
+    def __init__(self, *, store, claims, journals, clock, events, accepted_fit_generations=None, baseline=None, conformance_source=None, duty_source=None, simulation=False, producer_authority=None):
         self._store, self._claims, self._journals = store, claims, journals
         self._clock, self._events = clock, events
         self._fits = dict(accepted_fit_generations or {})
         self._baseline = baseline
         self._conformance_source = conformance_source
+        self._producer_authority = producer_authority        # SUPPLIED source-owned seven-field authority (None => the duty is labelled unverified, not invented)
         # AUTHORITY-CLASS BOUNDARY: the caller's simulation flag cannot choose where records land. Simulation needs a SIMULATION store/journals/claims; a qualified run needs QUALIFIED ones,
         # so a simulated acceptance can never be written into an ordinary namespace and the distinction survives restart/replay/rebuild/publication (it is a property of the store).
         want = SIMULATION if simulation else QUALIFIED
@@ -115,7 +116,7 @@ class TrackerPipeline:
     # -------------------------------------------------------------------- run
     def run(self, pkg: BuildPackage) -> Outcome:
         self._events.emit("INTAKE_STARTED", attempt=pkg.attempt_id, request=pkg.request_id)
-        adm = admit(pkg, accepted_fit_generations=self._fits, conformance=None if self._conformance_source is None else self._conformance_source(pkg))
+        adm = admit(pkg, accepted_fit_generations=self._fits, conformance=None if self._conformance_source is None else self._conformance_source(pkg), producer_authority=self._producer_authority)
         if adm.classification == NO_QUANT_FEATURE:
             lineage = self._claims.lineage(pkg.order_id, pkg.request_id)
             if lineage:                                       # a caller flag cannot erase governed requested-build lineage (TR-06 / D8): fail closed

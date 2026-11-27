@@ -11,3 +11,5 @@ class EventSink:
     def of_kind(self, kind):
         with self._lock:
             return [e for e in self.events if e["kind"] == kind]
+
+from .ops.jsonlog import JsonEventSink, STABLE    # E-08 structured JSON events (non-authoritative); the memory-only EventSink above is unchanged

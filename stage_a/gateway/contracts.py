@@ -60,6 +60,11 @@ class AbsenceApplied:
     request_id: str; feature_id: bytes; feature_version: str; absence_handling_applied_ref: Ref
 
 @dataclass(frozen=True)
+class LateEvidence:
+    """Immutable forensic evidence (V0.38 FORENSIC CLASSIFICATION) recorded BESIDE a stored outcome; it never rewrites the outcome. classification in GENUINE_LATE | SETTLEMENT_BREACH | RESOLVER_FAULT."""
+    request_id: str; consumer_id: Optional[str]; fence: int; classification: str; available_asof: int; publish_log_position: int; watermark_position: int
+
+@dataclass(frozen=True)
 class Binding:
     request_id: str; entry: O.DeliveredFeatureEntry; delivered_feature_hash: bytes; fence: int
 
@@ -72,16 +77,24 @@ class SimulatedGateway:
         self.allow_uncommitted_status = allow_uncommitted_status
         self.health_source = health_source                    # object with confirm_snapshot(snapshot)->bool (the Core that issued the snapshot); no source => Core snapshots are NOT confirmable and are denied
         self.allow_shape_only_health = allow_shape_only_health  # LEGACY shape-only harness switch: a plain HealthSnapshot proves nothing about any subject. Default False: denied.
+        self.cross_instrument = None                            # R36: optional gateway.cross_instrument.CrossInstrumentPolicy; with `target_instrument` given and no policy/grant the dependency is DENIED (default cross-instrument deny)
         self.final_store = None                                 # R35: optional v038.FinalResolutionStore; `resolve_window` is the ONLY path that uses it
-        self._window_outcome: Dict[object, object] = {}
+        self._window_outcome: Dict[object, object] = {}       # identity -> the durably CONFIRMED outcome object
+        self._window_issued: Dict[tuple, object] = {}         # (consumer_id, request_id) -> confirmed outcome; consumer-local namespace, never mixed with the legacy request-id cache
         self.rows: Dict[tuple, list] = {}
         self._outcomes: Dict[str, object] = {}
         self._later_lineage: Dict[str, list] = {}
+        self._late_evidence: Dict[tuple, list] = {}
     def publish(self, row: PublishedRow):
         k = (row.feature_id, row.feature_version, row.instrument_id, row.timeframe_id)
         self.rows.setdefault(k, []).append(row)
     def set_watermark(self, w: int): self.watermark = w
-    def outcome(self, request_id): return self._outcomes.get(request_id)
+    def outcome(self, request_id, consumer_id=None):
+        """Request-id keyed outcomes (legacy `resolve`) are global to this Gateway. WINDOW outcomes are consumer-local (H1: REQUEST_ID is consumer-local) and are visible only through a consumer-qualified read and only after the durable final store confirmed them."""
+        if consumer_id is not None:
+            o = self._window_issued.get((consumer_id, request_id))
+            if o is not None: return o
+        return self._outcomes.get(request_id)
     def later_lineage(self, request_id): return tuple(self._later_lineage.get(request_id, ()))
 
     def _store(self, request_id, outcome):
@@ -90,23 +103,32 @@ class SimulatedGateway:
 
     def resolve(self, request_id: str, entry: DependencyEntry, instrument_id: bytes, timeframe_id: bytes, step_index: int,
                 fence: int, health: HealthSnapshot, require_current: bool = True, data_vintage_mode: Optional[str] = None,
-                observed_at: Optional[int] = None):
+                observed_at: Optional[int] = None, target_instrument: Optional[bytes] = None, consumer_id: Optional[str] = None):
         done = self._outcomes.get(request_id)
         if done is not None:                                         # G4: retry returns the identical stored outcome
             return done
+        return self._compute(request_id, entry, instrument_id, timeframe_id, step_index, fence, health, require_current, data_vintage_mode, observed_at, self._store, target_instrument, consumer_id)
+
+    def _compute(self, request_id, entry, instrument_id, timeframe_id, step_index, fence, health, require_current, data_vintage_mode, observed_at, _sink, target_instrument=None, consumer_id=None):
+        """Pure evaluation of one dependency at a fence. `_sink(request_id, outcome)` is the ONLY place an outcome is published: `resolve` passes the request-id cache; `resolve_window` passes an identity function so a provisional outcome is NOT visible to any consumer until the durable final store has confirmed it (R36)."""
         def nd(reason):
-            return self._store(request_id, NonDeliveryResolution(request_id, entry.feature_id, entry.feature_version, reason, fence))
+            return _sink(request_id, NonDeliveryResolution(request_id, entry.feature_id, entry.feature_version, reason, fence))
+        if target_instrument is not None and target_instrument != instrument_id and not (self.cross_instrument is not None and self.cross_instrument.allows(consumer_id, target_instrument, instrument_id)):
+            return nd("CROSS_INSTRUMENT_DENIED")                       # DOCX s7A: default cross-instrument access = DENY; explicit grant only
         if self.watermark < fence:                                   # G7: stale currentness/revocation watermark
             return nd("STALE_WATERMARK")
         cands = [r for r in self.rows.get((entry.feature_id, entry.feature_version, instrument_id, timeframe_id), [])
                  if r.step_index == step_index and r.published_projection_name == entry.expected_projection]
         if not cands:
             if entry.requirement_class == OPTIONAL:                  # G9: only via the exact governed absence rule
-                return self._store(request_id, AbsenceApplied(request_id, entry.feature_id, entry.feature_version, entry.absence_rule_ref))
+                return _sink(request_id, AbsenceApplied(request_id, entry.feature_id, entry.feature_version, entry.absence_rule_ref))
             return nd("REQUIRED_DEPENDENCY_ABSENT")                  # G3
-        row = cands[-1]
+        eligible = [r for r in cands if r.available_asof < fence]     # R36 (DOCX s7A RESOLVER DETERMINISM): select among the CAUSALLY VALID candidates, never by registration order; the last-published row may be a later (excluded) one
+        distinct = list(dict.fromkeys(eligible))
+        if len(distinct) > 1: return nd("MULTIPLE_CANDIDATES")          # materially non-equivalent valid candidates and NO governed deterministic tie-break exists in any source read: REQUIRE_EXPLICIT_SELECTION, never a silent pick
+        row = distinct[0] if distinct else cands[-1]
         if row.available_asof >= fence:                              # G1: equality at the fence is excluded
-            return nd("NOT_AVAILABLE_BEFORE_FENCE") if entry.requirement_class == REQUIRED else self._store(
+            return nd("NOT_AVAILABLE_BEFORE_FENCE") if entry.requirement_class == REQUIRED else _sink(
                 request_id, AbsenceApplied(request_id, entry.feature_id, entry.feature_version, entry.absence_rule_ref))
         obs = fence if observed_at is None else observed_at         # V0.38: resolver observes at fence + SETTLEMENT_DELAY
         if row.visible_at >= obs:                                    # not visible to the resolver: causal set NOT widened
@@ -138,29 +160,44 @@ class SimulatedGateway:
         if health.resolved_at >= fence:
             return nd("HEALTH_NOT_RESOLVED_BEFORE_FENCE")
         d = B.build_delivered_entry(row, st.status, health.resolution_ref, health.resolved_at)
-        return self._store(request_id, Binding(request_id, d, O.delivered_hash(self.t, d), fence))
+        return _sink(request_id, Binding(request_id, d, O.delivered_hash(self.t, d), fence))
 
     def resolve_window(self, request_id: str, identity, entry: DependencyEntry, instrument_id: bytes, timeframe_id: bytes, step_index: int, fence: int, health,
-                       require_current: bool = True, data_vintage_mode: Optional[str] = None, observed_at: Optional[int] = None):
+                       require_current: bool = True, data_vintage_mode: Optional[str] = None, observed_at: Optional[int] = None, target_instrument: Optional[bytes] = None):
         """Window-level resolution (Contract V0.38 FINAL RESOLUTION IDENTITY, current 52-56): a NEW REQUEST_ID for the SAME final resolution identity reuses the stored outcome and is never re-evaluated. REQUEST_ID alone is not the identity.
         The identity (consumer_id, binding id, scope, window/fence id) is SUPPLIED and its string encoding is not defined by any source read, so it is not derived here; instead the FIRST evaluation pins the exact evaluation parameters to the identity
         and a later call that names the same identity with DIFFERENT parameters (dependency, version, instrument, timeframe, step, fence, vintage mode, observation time) is refused rather than silently answered with another window's outcome.
         Candidate/simulation only: the store is the single-process FinalResolutionStore (D10); `resolve` (request-id keyed) is unchanged and does NOT use the final store."""
         if self.final_store is None: raise Refusal("no final store", code="GATEWAY_FINAL_RESOLUTION_STORE_NOT_CONFIGURED")
         if not isinstance(request_id, str) or not request_id: raise Refusal("request_id", code="GATEWAY_REQUEST_ID_INVALID")
-        params = [x.hex() if isinstance(x, bytes) else x for x in (entry.feature_id, entry.feature_version, entry.requirement_class, entry.expected_projection, instrument_id, timeframe_id, step_index, fence, require_current, data_vintage_mode, observed_at)]
+        cid = getattr(identity, "consumer_id", None)
+        gov = [x.hex() if isinstance(x, bytes) else x for x in (entry.feature_id, entry.feature_version, entry.requirement_class, entry.expected_projection, instrument_id, timeframe_id, step_index, fence, require_current, data_vintage_mode, target_instrument)]
         prior = self.final_store.pin_of(identity)
-        if prior is not None and prior != params: raise Refusal(request_id, code="RESOLUTION_IDENTITY_PARAMETERS_DIFFER")
-        if request_id in self._outcomes and self.final_store.identity_of(getattr(identity, "consumer_id", None), request_id) is None: raise Refusal(request_id, code="REQUEST_ID_USED_OUTSIDE_THIS_WINDOW")
+        if prior is not None and prior != gov: raise Refusal(request_id, code="RESOLUTION_IDENTITY_PARAMETERS_DIFFER")        # governing parameters only; the retry's observation clock is NOT part of the identity
+        if request_id in self._outcomes: raise Refusal(request_id, code="REQUEST_ID_USED_OUTSIDE_THIS_WINDOW")                # the legacy global request-id cache already owns this id (misuse guard retained)
         def evaluate():
-            self.final_store.set_pin(identity, params)                                  # pinned BEFORE the outcome exists; a crash in between fails closed (a different-parameter request is refused)
-            o = self.resolve(request_id, entry, instrument_id, timeframe_id, step_index, fence, health, require_current, data_vintage_mode, observed_at)
-            self._window_outcome[identity] = o; return o
-        out = self.final_store.resolve(request_id, identity, evaluate)
+            if prior is None: self.final_store.set_pin(identity, gov, {"observed_at": observed_at, "watermark": self.watermark})   # facts of the FIRST evaluation: immutable, never compared
+            return self._compute(request_id, entry, instrument_id, timeframe_id, step_index, fence, health, require_current, data_vintage_mode, observed_at, lambda rid, o: o, target_instrument, cid)   # provisional: published nowhere
+        out = self.final_store.resolve(request_id, identity, evaluate)                    # COMMIT POINT: raises, with nothing published, unless the store durably holds this outcome
         canon = self._window_outcome.get(identity)
-        if canon is None: canon = self._window_outcome[identity] = out                  # restart/other process: adopt the STORED outcome (the store is the authority)
+        if canon is None: canon = self._window_outcome[identity] = out                  # first confirmation (or restart: adopt the STORED outcome, the store is the authority)
         elif canon != out: raise Refusal(request_id, code="WINDOW_OUTCOME_STORE_DISAGREES")
-        self._outcomes.setdefault(request_id, canon); return canon
+        self._window_issued.setdefault((cid, getattr(canon, "request_id", request_id)), canon)      # the outcome object names the request that first decided it; the identity record (not that request's binding) is the commit
+        return self._window_issued.setdefault((cid, request_id), canon)
+
+    def record_late_evidence(self, request_id: str, available_asof: int, publish_log_position: int, watermark, *, omitted_by_resolver: bool = True, consumer_id: Optional[str] = None) -> "LateEvidence":
+        """The emitter for `v038.classify_late`: when data with AVAILABLE_ASOF before the stored outcome's fence is observed to have become visible LATER than the outcome's visibility watermark, classify it (SETTLEMENT_BREACH when its publish-log position is past the watermark) and append immutable evidence beside the outcome.
+        The stored outcome is NOT rewritten, re-evaluated or widened. The SETTLEMENT_DELAY / certified lag themselves are not supplied here (no invented bound; `v038.check_settlement` takes them from a governed slot that stays held). Identical evidence is idempotent. `watermark` is the VisibilityWatermark the outcome was resolved under (supplied)."""
+        from . import v038 as V
+        o = self.outcome(request_id, consumer_id)
+        if o is None: raise Refusal(request_id, code="NO_OUTCOME_TO_ANNOTATE")
+        if not isinstance(watermark, V.VisibilityWatermark) or not all(type(x) is int for x in (available_asof, publish_log_position)): raise Refusal(request_id, code="LATE_EVIDENCE_INPUT_INVALID")
+        ev = LateEvidence(request_id, consumer_id, o.fence, V.classify_late(available_asof, o.fence, publish_log_position, watermark, omitted_by_resolver), available_asof, publish_log_position, watermark.status_log_position)
+        lst = self._late_evidence.setdefault((consumer_id, request_id), [])
+        if ev not in lst: lst.append(ev)
+        return ev
+    def late_evidence(self, request_id: str, consumer_id: Optional[str] = None): return tuple(self._late_evidence.get((consumer_id, request_id), ()))
+    def all_late_evidence(self): return tuple(e for k in sorted(self._late_evidence, key=repr) for e in self._late_evidence[k])
 
     def note_correction_after_bind(self, request_id: str, evidence: Ref):
         """Correction after bind: the stored binding is NOT rewritten; later lineage evidence is appended beside it."""

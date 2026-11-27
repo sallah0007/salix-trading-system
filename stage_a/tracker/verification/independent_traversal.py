@@ -110,7 +110,7 @@ def reference_evaluate(p, series):
     for nid in order:
         nd = by[nid]; op = nd["op"]
         if op == "input":
-            col[nid] = [_z(x) for x in series[nd["name"]]]
+            col[nid] = [_fin(x) for x in series[nd["name"]]]      # p90: an input must be finite BEFORE evaluation (defence in depth; verify_source_values also checks)
         elif op == "const":
             c = struct.unpack(">d", bytes.fromhex(nd["value"]))[0]
             if not math.isfinite(c):

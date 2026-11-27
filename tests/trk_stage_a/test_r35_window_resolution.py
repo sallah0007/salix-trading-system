@@ -19,7 +19,7 @@ class WindowLevelResolution(unittest.TestCase):
         g.set_watermark(20)                                                                                                       # the world moved on; the final outcome for the window must not
         self.assertIs(g.resolve_window("req1", W1, e, I, I, 3, 10, _health()), o1)                                               # same request retry
         o2 = g.resolve_window("req2", W1, e, I, I, 3, 10, _health()); self.assertIs(o2, o1); self.assertEqual(g.final_store.evaluations, 1)   # NEW request id, same identity: reused (the pre-R35 resolve() re-evaluated this)
-        self.assertIs(g.outcome("req2"), o1)
+        self.assertIs(g.outcome("req2", "FW"), o1); self.assertIsNone(g.outcome("req2")); self.assertIsNone(g.outcome("req2", "ML"))        # consumer-local namespace: not a global request-id cache entry
     def test_without_the_window_path_the_request_id_keyed_resolver_still_reevaluates_so_the_new_path_is_the_one_that_matters(self):
         g = _gw(); g.set_watermark(5); e = _entry(); a = g.resolve("r1", e, I, I, 3, 10, _health()); g.set_watermark(20); b = g.resolve("r2", e, I, I, 3, 10, _health()); self.assertNotEqual(a.reason, getattr(b, "reason", None))
     def test_same_identity_with_other_parameters_is_refused_and_a_new_window_is_evaluated_fresh(self):
@@ -38,7 +38,10 @@ class WindowLevelResolution(unittest.TestCase):
         b2 = g.resolve_window("req2", W1, e, I, I, 3, 10, _health()); assoc = a.associate_request("req2", W1); self.assertEqual(assoc, b1)                  # association over the SAME actual store and outcome
         self.assertIs(FWR.receive_verified(b2, e, I, I, T, g), b1)                                                                         # exact FW receive of the stored outcome (request id inside is req1: identity-preserved)
         from .test_boundaries import NONE_
-        self.assertTrue(MLR.build_row("r", R("gen"), [e], [b2], g, "ORIGINAL_AS_OBSERVED", NONE_, lambda o: NONE_, tables=g.t).included)
+        WM = FI("ML", "B2", "XAUUSD", "WINDOW-1"); m1 = g.resolve_window("req1", WM, e, I, I, 3, 10, _health())                  # an INDEPENDENT ML consumer reuses the same local request id "req1" (H1: REQUEST_ID is consumer-local)
+        self.assertIsInstance(m1, G.Binding); self.assertIsNot(m1, b1)
+        self.assertTrue(MLR.build_row("r", R("gen"), [e], [m1], g, "ORIGINAL_AS_OBSERVED", NONE_, lambda o: NONE_, tables=g.t).included)
+        self.assertEqual(code(MLR.build_row, "r", R("gen"), [e], [b1], g, "ORIGINAL_AS_OBSERVED", NONE_, lambda o: NONE_, tables=g.t), "BINDING_NOT_FROM_GATEWAY")   # the FW consumer's window outcome is not an ML-issued outcome
         a.record_return("E1", "req2", "EVIDENCE"); self.assertEqual(a.returns_for(W1)[0].resolution_identity, W1)
 class StoreHandlesAreDetached(unittest.TestCase):
     def test_outcomes_listing_is_a_detached_copy_and_a_pin_cannot_be_replaced(self):

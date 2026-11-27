@@ -112,6 +112,6 @@ class UnverifiedDutiesAreLabelled(unittest.TestCase):
         rig = Rig(conformance_source=lambda q: EV(False)); p = pk(); adm = admit(p, accepted_fit_generations={}, conformance=EV(False))
         rig.claims.issue_order(ConstructionOrder(p.order_id, adm.subject_key, "SRC-BINDING-1", "MANAGER")); o = rig.pipe.run(p)
         self.assertTrue(o.accepted_ok)
-        self.assertEqual(list(dict(o.limits)), ["SIMULATION_NOT_QUALIFIED"])         # the mandatory duties were verified ONLY by SIMULATED test evidence (R18)
+        self.assertEqual(list(dict(o.limits)), ["COMPOSER_PRODUCER_BINDING_ADMISSION", "SIMULATION_NOT_QUALIFIED"])         # the mandatory duties were verified ONLY by SIMULATED test evidence (R18)
         self.assertIn("SIMULATED", o.duty_evidence.evidence_ref)
 if __name__ == "__main__": unittest.main()

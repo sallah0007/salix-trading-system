@@ -15,10 +15,10 @@ def receive_verified(binding, expected: DependencyEntry, instrument_id: bytes, t
 def receive(binding, expected: DependencyEntry, instrument_id: bytes, timeframe_id: bytes, tables, require_current=True,
             gateway=None):
     if isinstance(binding, NonDeliveryResolution):
-        check_dependency_outcome(binding, expected, gateway)                  # a forged/foreign non-delivery is rejected as such before it can mean anything
+        check_dependency_outcome(binding, expected, gateway, "FW")                  # a forged/foreign non-delivery is rejected as such before it can mean anything
         raise Refusal(binding.reason, code="NON_DELIVERY")                    # settlement/non-delivery failure
     if isinstance(binding, AbsenceApplied):
-        check_dependency_outcome(binding, expected, gateway) if expected.requirement_class != REQUIRED else None
+        check_dependency_outcome(binding, expected, gateway, "FW") if expected.requirement_class != REQUIRED else None
         if expected.requirement_class == REQUIRED:
             raise Refusal("required dependency absent", code="REQUIRED_DEPENDENCY_ABSENT")
         return binding
@@ -37,7 +37,7 @@ def receive(binding, expected: DependencyEntry, instrument_id: bytes, timeframe_
         raise Refusal(e.chain_status_at_bind, code="CHAIN_STATUS_NOT_CURRENT")
     if e.canonical_transition_ref is None or e.bound_health_resolution_ref is None:
         raise Refusal("lineage", code="LINEAGE_MISSING")
-    if gateway is not None and gateway.outcome(binding.request_id) is not binding:
+    if gateway is not None and gateway.outcome(binding.request_id, "FW") is not binding:
         raise Refusal("not the stored Gateway binding", code="BINDING_NOT_FROM_GATEWAY")
     return binding        # exact preservation: same object, nothing re-derived
 

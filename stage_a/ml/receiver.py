@@ -39,7 +39,7 @@ def build_row(row_id, generation_binding_ref, entries, outcomes, gateway, reques
             raise Refusal("duplicate dependency", code="DUPLICATE_DEPENDENCY")
         keys.add(k)
         if isinstance(o, Binding):
-            if gateway.outcome(o.request_id) is not o:
+            if gateway.outcome(o.request_id, "ML") is not o:
                 raise Refusal(o.request_id, code="BINDING_NOT_FROM_GATEWAY")          # F4: no Gateway rebind -> rejected
             if o.entry.feature_id != e.feature_id or o.entry.feature_version != e.feature_version:
                 raise Refusal("binding for a different dependency", code="WRONG_VERSION")
@@ -53,10 +53,10 @@ def build_row(row_id, generation_binding_ref, entries, outcomes, gateway, reques
         elif isinstance(o, AbsenceApplied):
             if e.requirement_class != OPTIONAL or o.absence_handling_applied_ref != e.absence_rule_ref:
                 raise Refusal("absence only via the exact governed rule", code="ABSENCE_RULE_MISMATCH")
-            check_dependency_outcome(o, e, gateway)                                  # exact dependency + rule + actually issued immutable Gateway outcome
+            check_dependency_outcome(o, e, gateway, "ML")                                  # exact dependency + rule + actually issued immutable Gateway outcome
             absences.append(o)
         elif isinstance(o, NonDeliveryResolution):
-            check_dependency_outcome(o, e, gateway)                                  # a forged/foreign non-delivery cannot exclude a row
+            check_dependency_outcome(o, e, gateway, "ML")                                  # a forged/foreign non-delivery cannot exclude a row
             if e.requirement_class == REQUIRED:
                 return MLRow(row_id, generation_binding_ref, eligibility_reason, exclusion_reason_for_missing(o), tuple(bindings), tuple(absences))
             raise Refusal("optional dependency non-delivery must resolve to AbsenceApplied", code="OPTIONAL_NON_DELIVERY")
@@ -190,7 +190,7 @@ def check_fw_augmented(m: ConsumerManifest, aug: "AugmentedInput", target: bytes
     lane = classify(m, target, graph)
     if gateway is None:
         return AugmentedCheck(lane, False, "UNVERIFIED_SHAPE_ONLY")
-    if gateway.outcome(aug.gateway_rebind.request_id) is not aug.gateway_rebind:
+    if gateway.outcome(aug.gateway_rebind.request_id, "ML") is not aug.gateway_rebind:
         raise Refusal(aug.gateway_rebind.request_id, code="BINDING_NOT_FROM_GATEWAY")      # well-typed but never issued (or a different object): refused
     return AugmentedCheck(lane, True, "VERIFIED_ISSUED_BINDING")
 

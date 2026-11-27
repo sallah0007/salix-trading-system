@@ -37,10 +37,19 @@ class ReverseLink(unittest.TestCase):
         def j1(jj, **k): d = good(gr); d[SJ.JOINS[0]] = jj; return {n: st for n, st, _ in SJ.check_six_joins(d, gr, fence=10, **k).statuses}[SJ.JOINS[0]]
         self.assertEqual(j1(j, binding_to_manifest=r.binding_index(), dataset_manifests=r.manifest_index(), consumer_binding_id="B1"), SJ.VERIFIED_AGAINST_REGISTRY)
         self.assertEqual(j1(dict(j, dataset_manifest_id="D2", dataset_manifest_hash="h-D2"), binding_to_manifest=r.binding_index(), dataset_manifests=r.manifest_index(), consumer_binding_id="B1"), SJ.MISMATCH)      # D2 is known but is not THIS binding's manifest
-    def test_bind_time_health_comes_only_from_an_actual_binding_outcome(self):
-        r = reg(); r.register("w", ds()); r.link_binding("w", "B1", "D1"); g = _gw(); b = g.resolve("r1", _entry(), I, I, 3, 10, _health()); self.assertIsInstance(b, G.Binding)
-        h = r.bind_time_health("B1", b); self.assertEqual((h["dataset_manifest_id"], h["health_resolution_ref"], h["verified"]), ("D1", b.entry.bound_health_resolution_ref, False))
-        g.set_watermark(1); nd = _gw().resolve("r2", _entry(), I, I, 3, 200, _health()); self.assertIsNone(r.bind_time_health("B1", nd)); self.assertIsNone(r.bind_time_health("B-unlinked", b))
+    def test_bind_time_health_only_for_an_outcome_the_same_gateway_and_final_store_issued_for_this_binding(self):
+        r = reg(); r.register("w", ds()); r.register("w", ds("D2")); r.link_binding("w", "B1", "D1"); r.link_binding("w", "B2", "D2")
+        g = _gw(); g.final_store = FinalResolutionStore(); e = _entry(); w1 = FI("ML", "B1", "XAUUSD", "W1"); w2 = FI("ML", "B2", "XAUUSD", "W1")
+        b1 = g.resolve_window("req1", w1, e, I, I, 3, 10, _health()); b2 = g.resolve_window("req2", w2, e, I, I, 3, 10, _health()); self.assertIsInstance(b1, G.Binding)
+        kw = dict(gateway=g, final_store=g.final_store)
+        h = r.bind_time_health("B1", b1, request_id="req1", **kw); self.assertEqual((h["dataset_manifest_id"], h["health_resolution_ref"], h["verified"], h["issuance_checked"], h["window_identity"]), ("D1", b1.entry.bound_health_resolution_ref, False, True, w1))
+        self.assertEqual(code(r.bind_time_health, "B1", b1, request_id="req9", **kw), "DATASET_BINDING_REQUEST_NOT_ISSUED_FOR_BINDING")       # an unknown request id
+        self.assertEqual(code(r.bind_time_health, "B1", b2, request_id="req2", **kw), "DATASET_BINDING_REQUEST_NOT_ISSUED_FOR_BINDING")             # root repro: B2's issued Binding presented for B1 (R35 returned B1/D1/<B2 health>)
+        self.assertEqual(code(r.bind_time_health, "B1", b2, request_id="req1", **kw), "DATASET_BINDING_OUTCOME_NOT_THE_STORED_FINAL_OUTCOME")        # B1's request with B2's outcome
+        forged = G.Binding(b1.request_id, b1.entry, b1.delivered_feature_hash, b1.fence); self.assertEqual(forged, b1)
+        self.assertEqual(code(r.bind_time_health, "B1", forged, request_id="req1", **kw), "DATASET_BINDING_OUTCOME_NOT_GATEWAY_ISSUED")             # typed, equal, but never issued: not the confirmed object
+        fw = g.resolve_window("req3", FI("FW", "B1", "XAUUSD", "W1"), e, I, I, 3, 10, _health()); self.assertEqual(code(r.bind_time_health, "B1", fw, request_id="req3", **kw), "DATASET_BINDING_REQUEST_NOT_ISSUED_FOR_BINDING")   # foreign consumer
+        g.set_watermark(1); nd = _gw().resolve("r2", _entry(), I, I, 3, 200, _health()); self.assertIsNone(r.bind_time_health("B1", nd, request_id="r2", **kw)); self.assertIsNone(r.bind_time_health("B-unlinked", b1, request_id="req1", **kw))
 class RevocationTimeSemantics(unittest.TestCase):
     def test_revocation_is_effective_from_its_own_timestamp_and_the_ledger_cannot_go_backwards(self):
         r = reg(); r.register("w", ds()); r.register("w", ds("D2")); r.revoke("w", "D1", 5, "x", "A")

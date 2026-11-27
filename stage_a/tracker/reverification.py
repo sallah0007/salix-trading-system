@@ -64,12 +64,9 @@ def reverify_manifest(core, *, manifest, declared: dict, store, now: int, max_ag
     return res
 
 ACCEPTED_FIELDS = ("feature_key", "feature_version", "manifest_hash", "graph_hash", "program_hash", "materialization_hash")
-def reverify_accepted(core, *, journal, store, feature_key, now: int, max_age: int):
-    """Verifies the ACCEPTED materialization AS FOUND (R34). The subject is the journal's CANONICAL_ACCEPTED record for `feature_key` (identifiers.FeatureKey) and the exact verified materialization record it names by `materialization_hash`;
-    the three hashes the verifier compares against come from THAT accepted record, never from a caller manifest, so a different manifest under the same feature key/version cannot pass or be pinned. Nothing is rebuilt or overwritten: an absent,
-    unparseable, unbound (record hash / feature key / version differ from the acceptance) or altered record, or altered manifest bytes, is verified as found and yields FAIL evidence (NOT_HEALTHY), never repaired. No accepted record -> refusal (nothing to
-    bind). Evidence class stays COMPOSED_RECOMPUTATION_SIMULATION (verifier authored, same author, not an appointed L2). Returns (result, 'ACCEPTED_RECORD_AS_FOUND' | 'ACCEPTED_RECORD_UNBOUND_OR_ABSENT')."""
-    _require_class(core, store)
+def accepted_as_found(journal, store, feature_key):
+    """Shared AS-FOUND binding of the journal's CANONICAL_ACCEPTED record to the stored materialization record (R36: also used by source-input verification so no consumer follows `object_key` of an unbound record).
+    Returns (body, rec, state, declared); state is 'ACCEPTED_RECORD_AS_FOUND' only when the record's materialization_hash, feature key and version equal the acceptance. Nothing is rebuilt or overwritten."""
     st = replay(feature_key.namespace(), journal.read_from(1)).get(feature_key.feature_version)
     if st is None: raise Refusal(feature_key.key(), code="NO_ACCEPTED_RECORD")
     body = st.accepted_body
@@ -85,6 +82,15 @@ def reverify_accepted(core, *, journal, store, feature_key, now: int, max_age: i
         try: r = json.loads(got[0])
         except (ValueError, UnicodeDecodeError): r = None
         if isinstance(r, dict) and r.get("materialization_hash") == body["materialization_hash"] and r.get("feature_key") == feature_key.key() and r.get("feature_version") == feature_key.feature_version: rec, state = r, "ACCEPTED_RECORD_AS_FOUND"
+    return body, rec, state, declared
+
+def reverify_accepted(core, *, journal, store, feature_key, now: int, max_age: int):
+    """Verifies the ACCEPTED materialization AS FOUND (R34). The subject is the journal's CANONICAL_ACCEPTED record for `feature_key` (identifiers.FeatureKey) and the exact verified materialization record it names by `materialization_hash`;
+    the three hashes the verifier compares against come from THAT accepted record, never from a caller manifest, so a different manifest under the same feature key/version cannot pass or be pinned. Nothing is rebuilt or overwritten: an absent,
+    unparseable, unbound (record hash / feature key / version differ from the acceptance) or altered record, or altered manifest bytes, is verified as found and yields FAIL evidence (NOT_HEALTHY), never repaired. No accepted record -> refusal (nothing to
+    bind). Evidence class stays COMPOSED_RECOMPUTATION_SIMULATION (verifier authored, same author, not an appointed L2). Returns (result, 'ACCEPTED_RECORD_AS_FOUND' | 'ACCEPTED_RECORD_UNBOUND_OR_ABSENT')."""
+    _require_class(core, store)
+    body, rec, state, declared = accepted_as_found(journal, store, feature_key)
     res = verify_materialization(store_get=lambda key: (lambda g: None if g is None else g[0])(store.get(key)), record=rec, declared=declared, expect_scope_key=feature_key.key())
     l1, l2 = split_levels(res)
     core.record_verification(feature_key.key(), feature_key.feature_version, "REQUIRED", l2, l1, now, max_age, VERIFIER_ID, res.result_hash, evidence_class=COMPOSED_RECOMPUTATION, result=res)

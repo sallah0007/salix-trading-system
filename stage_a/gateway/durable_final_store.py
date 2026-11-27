@@ -37,53 +37,90 @@ def _ident_key(identity): return "final-resolution/id/" + hashlib.sha256(_dump(e
 def _pin_key(identity): return "final-resolution/pin/" + hashlib.sha256(_dump(encode(identity))).hexdigest()
 def _req_key(consumer_id, request_id): return "final-resolution/req/" + hashlib.sha256(_dump([consumer_id, request_id])).hexdigest()
 
+class FinalResolutionWriteNotCommitted(Exception):
+    """Internal: the durable write failed and a read-back PROVED the record is absent. The caller's original exception is chained."""
 class DurableFinalResolutionStore(V.FinalResolutionStore):
+    """Phase-aware write-through. Phases: (1) pin, (2) final-resolution identity record = THE COMMIT POINT of a final outcome, (3) request binding.
+    A failure BEFORE the commit point (read-back proves the record absent) rolls the provisional memory state back; the original error is re-raised and nothing was published.
+    A write that RAISED but whose read-back finds the exact record is treated as committed. If the read-back itself fails the identity is HELD (`FINAL_RESOLUTION_RECOVERY_REQUIRED`): no second evaluation, no outcome, until `recover()` rebuilds from the store.
+    A failure AFTER the commit point (request binding) keeps the committed identity and outcome in memory (a retry returns it, never re-evaluates) and removes only the request binding it created."""
     def __init__(self, store):
-        super().__init__(); self._o = store
-    def set_pin(self, identity, pin):
-        pb = _dump({"identity": encode(identity), "pin": pin}); k = _pin_key(identity)
+        super().__init__(); self._o = store; self._held = set()
+    def _put(self, key, rec, equal=None):
+        try:
+            if self._o.put_if_absent(key, rec): return
+            got = self._o.get(key)
+        except Exception as e:
+            try: got = self._o.get(key)
+            except Exception: raise Refusal(key, code="FINAL_RESOLUTION_RECOVERY_REQUIRED") from e                # unknown commit and no read-back: hold
+            if got is None: raise FinalResolutionWriteNotCommitted() from e
+        if got is None or not (equal(got[0]) if equal else got[0] == rec): raise IntegrityFailure("record differs from the stored one")
+    def _check_held(self, identity):
+        if identity in self._held: raise Refusal(identity, code="FINAL_RESOLUTION_RECOVERY_REQUIRED")
+    def set_pin(self, identity, pin, facts=None):
         with self._lock:
-            had = identity in self._pins
-            super().set_pin(identity, pin)
-            try:
-                if not self._o.put_if_absent(k, pb):
-                    got = self._o.get(k)
-                    if got is None or got[0] != pb: raise IntegrityFailure("pin differs from the stored one")
+            self._check_held(identity); had = identity in self._pins
+            super().set_pin(identity, pin, facts)
+            rec = _dump({"identity": encode(identity), "pin": self._pins[identity], "facts": self._facts[identity]}); k = _pin_key(identity)
+            def same(b): d = json.loads(b); return d["identity"] == encode(identity) and d["pin"] == pin
+            try: self._put(k, rec, same)
+            except FinalResolutionWriteNotCommitted as e:
+                if not had: self._pins.pop(identity, None); self._facts.pop(identity, None)
+                raise (e.__cause__ or e)
+            except Refusal:
+                if not had: self._pins.pop(identity, None); self._facts.pop(identity, None)
+                self._held.add(identity); raise
             except BaseException:
-                if not had: self._pins.pop(identity, None)          # R35 sweep: a failed durable check leaves no in-memory pin the store does not hold
+                if not had: self._pins.pop(identity, None); self._facts.pop(identity, None)
                 raise
     def resolve(self, request_id, identity, evaluate):
         with self._lock:
+            self._check_held(identity)
             had_id = identity in self._by_identity; had_rq = (identity.consumer_id, request_id) in self._req_ids
             out = super().resolve(request_id, identity, evaluate)
-            try:
-                rec = _dump({"identity": encode(identity), "outcome": encode(out)}); k = _ident_key(identity)
-                if not self._o.put_if_absent(k, rec):
-                    got = self._o.get(k)
-                    if got is None or got[0] != rec: raise IntegrityFailure("final resolution record differs from the stored one")
-                rb = _dump({"consumer_id": identity.consumer_id, "request_id": request_id, "identity_key": k}); rk = _req_key(identity.consumer_id, request_id)
-                if not self._o.put_if_absent(rk, rb):
-                    got = self._o.get(rk)
-                    if got is None or got[0] != rb: raise IntegrityFailure("request binding differs from the stored one")
-            except BaseException:
-                if not had_id: self._by_identity.pop(identity, None)          # R35 sweep: memory never holds a final outcome the durable store does not
+            def undo():
+                if not had_id: self._by_identity.pop(identity, None)
                 if not had_rq: self._req_ids.pop((identity.consumer_id, request_id), None)
-                raise
+            rec = _dump({"identity": encode(identity), "outcome": encode(out)}); k = _ident_key(identity)
+            try: self._put(k, rec)
+            except FinalResolutionWriteNotCommitted as e: undo(); raise (e.__cause__ or e)
+            except Refusal: undo(); self._held.add(identity); raise
+            except BaseException: undo(); raise
+            rb = _dump({"consumer_id": identity.consumer_id, "request_id": request_id, "identity_key": k}); rk = _req_key(identity.consumer_id, request_id)
+            try: self._put(rk, rb)
+            except FinalResolutionWriteNotCommitted as e:
+                raise (e.__cause__ or e)               # the identity IS committed: keep the identity, the outcome AND the in-memory request RESERVATION (a different-window rebind of this request id stays refused); the binding record is re-attempted on the same-identity retry
+            except Refusal:
+                raise          # binding write of unknown commit state and unreadable: the identity is ALREADY committed (no second decision is possible), the reservation is kept, and the same-identity retry re-attempts the binding (put_if_absent + byte compare)
             return out
     def recover(self):
-        """Rebuild the in-memory maps from the object store (restart). Does not evaluate anything."""
+        """Rebuild the in-memory maps from the object store (restart). Does not evaluate anything. TRANSACTIONAL: everything is read and validated into LOCAL maps first; only a fully validated recovery replaces the live maps and releases holds. A failed recovery changes nothing and keeps every hold.
+        A committed identity whose outcome names the request that decided it (`request_id`, same consumer) re-derives that request's reservation even if its binding record was never written (request-binding phase fault); conflicting associations are an IntegrityFailure. Old outcomes are never rewritten."""
         with self._lock:
-            ids = {}
+            by, ids, pins, facts, reqs = {}, {}, {}, {}, {}
             for k in self._o.list_prefix("final-resolution/id/"):
-                got = self._o.get(k); d = json.loads(got[0]); ident = decode(d["identity"])
+                got = self._o.get(k)
+                if got is None: raise IntegrityFailure("listed identity record unreadable")
+                d = json.loads(got[0]); ident = decode(d["identity"])
                 if _ident_key(ident) != k: raise IntegrityFailure("identity record key does not match its content")
-                self._by_identity[ident] = decode(d["outcome"]); ids[k] = ident
+                by[ident] = decode(d["outcome"]); ids[k] = ident
             for k in self._o.list_prefix("final-resolution/pin/"):
-                d = json.loads(self._o.get(k)[0]); ident = decode(d["identity"])
+                got = self._o.get(k)
+                if got is None: raise IntegrityFailure("listed pin record unreadable")
+                d = json.loads(got[0]); ident = decode(d["identity"])
                 if _pin_key(ident) != k: raise IntegrityFailure("pin record key does not match its content")
-                self._pins[ident] = d["pin"]
+                pins[ident] = d["pin"]; facts[ident] = d.get("facts")
             for k in self._o.list_prefix("final-resolution/req/"):
-                d = json.loads(self._o.get(k)[0]); ident = ids.get(d["identity_key"])
+                got = self._o.get(k)
+                if got is None: raise IntegrityFailure("listed request binding unreadable")
+                d = json.loads(got[0]); ident = ids.get(d["identity_key"])
                 if ident is None or _req_key(d["consumer_id"], d["request_id"]) != k or ident.consumer_id != d["consumer_id"]: raise IntegrityFailure("request binding without a matching identity record")
-                self._req_ids[(d["consumer_id"], d["request_id"])] = ident
+                reqs[(d["consumer_id"], d["request_id"])] = ident
+            for ident, out in by.items():
+                rid = getattr(out, "request_id", None)
+                if isinstance(rid, str) and rid:
+                    key = (ident.consumer_id, rid)
+                    if reqs.setdefault(key, ident) != ident: raise IntegrityFailure("request id associated with two identities")
+            self._by_identity, self._pins, self._facts, self._req_ids = by, pins, facts, reqs
+            self._held.clear()
         return len(self._by_identity)
