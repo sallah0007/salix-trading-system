@@ -28,6 +28,14 @@ class Intake(unittest.TestCase):
         self.assertEqual(codes(adm(build_output=dict(build_output_for(momentum_manifest()), UPSTREAM_MODEL_ID="m", UPSTREAM_GENERATION_ID="g"))), ["UPSTREAM_ANCESTRY_WITHOUT_LEARNED_DERIVATION"])
     def test_binding_into_package_hash(self):
         a = package(); b = dataclasses.replace(a, build_output=dict(a.build_output, BUILDER_BUILD_ID="other")); self.assertNotEqual(a.content_hash(), b.content_hash())
+class LearnedDerivedAtIntake(unittest.TestCase):
+    FITS = {2: "b" * 64}
+    def _m(self): return momentum_manifest(fit_refs=[{"generation": 2, "ref_hash": "b" * 64}])
+    def test_fit_refs_make_the_construct_learned_derived_and_upstream_identity_mandatory(self):
+        m = self._m(); bo = {k: v for k, v in build_output_for(m).items() if not k.startswith("UPSTREAM") and k != "GENERATION_AUTHORITY_CLASS"}
+        a = admit(package(m, build_output=bo), accepted_fit_generations=self.FITS)
+        self.assertEqual(codes(a), ["LEARNED_DERIVED_WITHOUT_UPSTREAM_GENERATION_IDENTITY"])
+        self.assertEqual(codes(admit(package(m), accepted_fit_generations=self.FITS)), [])
 class Direct(unittest.TestCase):
     OK = dict(order_id="O", creation_request_id="R")
     def test_learned_derived_requires_upstream_identity_each_field(self):

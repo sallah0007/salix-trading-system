@@ -58,3 +58,6 @@ Code: `stage_a/binding/`, `stage_a/coordination/provider_contract.py`; edits to 
 
 ## 10. R12 additions
 Code: `gateway/v038.py` (BOTH, consumer-local request keys), `gateway/contracts.py`, `tracker/status_projection.py`, `composer/expression/{ceilings,sqe_opset}.py`, `tracker/quant_intake_adapter.py`, `health/blast_radius.py`, `ml/receiver.py`. Tests `test_r12_*.py`, `test_r11_both.py`; sweeps `mutation_sweep_r11b.py` (17), `mutation_sweep_r12.py` (39). Return `coder_returns/TRK-STAGE-A-TRACKER-R12.md`.
+
+## 11. R13 additions
+Code: `tracker/{build_output_check,lifecycle_status_event}.py`, `context/news_hub_v2.py` (R13 section), `fw/return_lineage.py`, `ml/receiver.py`, `health/blast_radius.py`, `tracker/quant_intake_adapter.py`. Tests `test_r13_*.py`; sweep `mutation_sweep_r13.py` (38). Return `coder_returns/TRK-STAGE-A-TRACKER-R13.md`.
