@@ -54,8 +54,22 @@ M = [
  (TC, 'and h["version"] != versions[s]', 'and False'),
  ("stage_a/tracker/reverify_scheduler.py", '{k: b[0].feature_version for k, b in bindings.items()}', 'None'),
  (TF, 'if pid in seen and seen[pid][1] != complete: raise', 'if False: raise'),
+ ("stage_a/tracker/evidence_truth.py", 'if not claim.evidence_refs: return Verdict(INVALID, ("NO_EVIDENCE_REFERENCED",))', 'pass'),
+ ("stage_a/tracker/evidence_truth.py", 'if e.revoked: bad.append', 'if False: bad.append'),
+ ("stage_a/tracker/evidence_truth.py", 'if not e.current: bad.append', 'if False: bad.append'),
+ ("stage_a/tracker/evidence_truth.py", 'if e.available_at > now or now - e.available_at > e.max_age or e.max_age <= 0: bad.append', 'if now - e.available_at > e.max_age: bad.append'),
+ ("stage_a/tracker/evidence_truth.py", '("BATTERY", e.battery, claim.battery), ', ''),
+ ("stage_a/tracker/evidence_truth.py", '("DEPENDENCIES", tuple(e.dependencies), tuple(claim.dependencies)), ', ''),
+ ("stage_a/tracker/evidence_truth.py", '("APPROVAL", e.approval_state, claim.required_approval)', '("APPROVAL", claim.required_approval, claim.required_approval)'),
+ ("stage_a/tracker/evidence_truth.py", 'if e.ref != ref: bad.append("EVIDENCE_REF_MISMATCH:" + ref); continue', 'pass'),
+ ("stage_a/tracker/evidence_truth.py", 'if spec.direction != "CAUSAL": r.append', 'if False: r.append'),
+ ("stage_a/tracker/evidence_truth.py", 'if spec.fit_window_end > spec.fit_permitted_until: r.append', 'if False: r.append'),
+ ("stage_a/tracker/evidence_truth.py", 'if spec.fit_window_end >= spec.asof: r.append', 'if spec.fit_window_end > spec.asof: r.append'),
+ ("stage_a/tracker/evidence_truth.py", 'if spec.missingness_observable is not True or not', 'if not'),
+ (TC, 'if a is not None and a["status"] != "VALID": reasons.append', 'if False: reasons.append'),
+ (TC, 'if x is not None and x["status"] != "VALID": reasons.append', 'if False: reasons.append'),
 ]
-T = ["tests/trk_stage_a/test_r25_defects.py", "tests/trk_stage_a/test_r24_composed.py", "tests/trk_stage_a/test_verifier_independence.py", "tests/trk_stage_a/test_health_envelope.py", "tests/trk_stage_a/test_r24_core.py", "tests/trk_stage_a/test_r25_scheduler.py"]
+T = ["tests/trk_stage_a/test_r25_defects.py", "tests/trk_stage_a/test_r24_composed.py", "tests/trk_stage_a/test_verifier_independence.py", "tests/trk_stage_a/test_health_envelope.py", "tests/trk_stage_a/test_r24_core.py", "tests/trk_stage_a/test_r25_scheduler.py", "tests/trk_stage_a/test_r26_evidence_truth.py"]
 def run():
     try: return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", *[str(ROOT / t) for t in T]], cwd=ROOT, capture_output=True, text=True, timeout=90, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1")).returncode
     except subprocess.TimeoutExpired: return 99

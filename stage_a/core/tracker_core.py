@@ -51,7 +51,7 @@ class TrackerCore:
 
     # ---- replay: pure function of the journal up to a given sequence ---------------------------
     def _replay(self, upto=None):
-        st = dict(obs={}, cands={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={}, reviews={}, tasks={})
+        st = dict(obs={}, cands={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={}, reviews={}, tasks={}, authev={}, xform={})
         for r in self._j.read_from(0):
             if upto is not None and r.seq > upto: break
             b = json.loads(r.body_json); k = r.kind
@@ -85,6 +85,8 @@ class TrackerCore:
             elif k == "Q_REACTIVATE": st["q"][b["subject"]]["status"] = "ACTIVE"; st["reverify"][b["subject"]] = r.seq        # eligibility must be re-evidenced after reactivation
             elif k == "HEALTH": st["health"][b["subject"]] = dict(b, seq=r.seq)
             elif k == "FINDING": st["findings"].append(b)
+            elif k == "AUTH_EVIDENCE": st["authev"][b["subject"]] = b
+            elif k == "TRANSFORM_VERDICT": st["xform"][b["subject"]] = b
             elif k == "REVIEW_TASK": st["tasks"][b["task_origin"]] = b
         return st
 
@@ -428,6 +430,9 @@ class TrackerCore:
         st = self._replay(asof_seq); reasons = []
         if self._blocked(st, subject): reasons += self._blocked(st, subject)
         if self._health(st, subject, version, now) != "HEALTHY": reasons.append("RECORDING_HEALTH_NOT_HEALTHY")
+        a = st["authev"].get(subject); x = st["xform"].get(subject)
+        if a is not None and a["status"] != "VALID": reasons.append("AUTHORITY_TRANSITION_EVIDENCE_NOT_VALID")      # R26: a recorded non-VALID evidence verdict blocks; absence of a verdict is not a claim of validity
+        if x is not None and x["status"] != "VALID": reasons.append("TRANSFORM_NOT_CAUSAL_OR_UNPROVEN")
         if self._chain is not None and mv is not None and fence is not None:
             f = self._chain.status_at(mv, fence)
             if f is None or f.status != "CURRENT": reasons.append("CHAIN_STATUS_NOT_CURRENT")
@@ -435,6 +440,18 @@ class TrackerCore:
             return {"state": SIM_NOT_ELIGIBLE if reasons else SIM_ELIGIBLE, "eligible": False, "reasons": reasons, "mode": "SIMULATION_EVIDENCE_ONLY"}
         missing = list(QUALIFIED_PREREQS_UNBOUND) + ([] if self._chain is not None else ["BASELINE_LIFECYCLE_AUTHORITY_UNBOUND"])
         return {"state": HELD, "eligible": False, "reasons": reasons, "undetermined_inputs": missing, "mode": "QUALIFIED_HELD"}
+
+    def judge_transition_evidence(self, claim, index: dict, now: int):
+        """Candidate evidence-truth predicate (tracker.evidence_truth) with its verdict journaled; the caller-supplied index is NOT an admitted authority. Records the verdict; never advances authority."""
+        from ..tracker.evidence_truth import judge_transition_evidence
+        v = judge_transition_evidence(claim, index, now)
+        self._commit(lambda st: (None, ("AUTH_EVIDENCE", {"subject": claim.subject, "status": v.status, "reasons": list(v.reasons), "at": now})))
+        return v
+    def judge_transform(self, subject: str, spec):
+        from ..tracker.evidence_truth import judge_transform
+        v = judge_transform(spec)
+        self._commit(lambda st: (None, ("TRANSFORM_VERDICT", {"subject": subject, "status": v.status, "reasons": list(v.reasons)})))
+        return v
 
     # ---- composition output: the health the downstream Gateway actually consumes -------------------
     def gateway_health(self, subject: str, version: str, now: int, ref, resolved_at: int, *, asof_seq: int = None, binding=None):
