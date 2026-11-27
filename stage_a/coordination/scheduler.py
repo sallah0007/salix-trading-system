@@ -24,3 +24,22 @@ class ReplayScheduler:
         if cur:
             batches.append(cur)
         return batches
+
+    PRIORITY_ORDER = ("P0_LIVE_HEAD", "P1_LIVE_CRITICAL", "P2_HISTORICAL_REPLAY")
+
+    def plan_prioritized(self, pending: dict):
+        """pending: namespace -> (priority_class, items). Strict class order (Annex V1.2 §D PRIORITY_CLASS), round-robin within a class,
+        same budgets. A replay storm (P2) can never delay a live head (P0). Unknown class -> Refusal. (Policy hash/ref are scheduling
+        EVIDENCE and do not alter feature identity; they are not modelled here.)"""
+        by = {c: {} for c in self.PRIORITY_ORDER}
+        for ns, (cls, items) in pending.items():
+            if cls not in by:
+                raise Refusal(str(cls), code="UNKNOWN_PRIORITY_CLASS")
+            by[cls][ns] = items
+        if sum(len(i) for _, i in pending.values()) > self.max_total:
+            raise Refusal("budget", code="REPLAY_BUDGET_EXCEEDED")
+        flat = []
+        for c in self.PRIORITY_ORDER:
+            for b in self.plan(by[c]) if by[c] else []:
+                flat.extend(b)
+        return [flat[i:i + self.max_batch] for i in range(0, len(flat), self.max_batch)]

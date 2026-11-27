@@ -18,6 +18,8 @@ Hashes above are MANAGER_CLAIM (quoted from receipts). I did not recompute them.
 provider-feasibility R01/R04, V231 ledger, V232 41/100 register and 339 bodies (A07_Source_Review_Extract_R01.zip,
 1Avpm0dFCr5jH-ax6WhPXSXpV4jQMtY4m), V240 ZIP. Those remain INSUFFICIENT_EVIDENCE from my side.
 
+> **Update (rev 2):** the 'not opened' items above were subsequently opened/reproduced — see docs/a07/A07_PROPOSED_RESOLUTIONS_AND_RECORD_EDITS_R01.md §0 (extract hash and 203 locator hashes reproduced; V240 work register read in full). Proposed resolutions and exact record edits are in that file.
+
 ## 2. Posture (as recorded; I assert none of it)
 A07 OPEN · coding HELD per Manager record · R06 PROPOSED_NOT_FROZEN_NOT_ADOPTED · QC34 ALERT(HOLD) · A01 promotion NOT_ESTABLISHED ·
 no A08, no work order, no history waiver. Owner route: "Finish full A07 acceptance first." Staffing: Claude authors, Codex Manager/reviewer, no third party.
