@@ -50,3 +50,22 @@ def check_no_prohibited_merge(held: Iterable[str]) -> None:
     for a, b in PROHIBITED_MERGES:
         if a in held and b in held:
             raise Refusal("%s + %s" % (a, b), code="PROHIBITED_PRINCIPAL_MERGE")
+
+# ---- D2 evidence shape (R09). A role lookup above is NOT authentication and NOT a grant. -------------------------------------------
+LOOKUP_ONLY_NOT_AUTHENTICATION = True
+GRANT_EVIDENCE_FIELDS = ("principal_id", "role", "grant_generation", "bootstrap_trust_anchor_ref", "namespace_id", "operation_scope",
+                         "issued_by_record_ref", "validity/supersession")      # PROPOSED field set (R7 s3 'authority evidence'); not a source-defined schema
+
+def check_grant_evidence_shape(rec: dict) -> dict:
+    """Shape check of a candidate grant-evidence record. It appoints nobody and verifies nothing (no signature/anchor check exists):
+    passing means only that the record is complete enough to be submitted to the governed record for appointment."""
+    if not isinstance(rec, dict):
+        raise Refusal(type(rec).__name__, code="GRANT_EVIDENCE_NOT_A_RECORD")
+    for f in GRANT_EVIDENCE_FIELDS:
+        v = rec.get(f)
+        if type(v) is not str or not v.strip():
+            raise Refusal(f, code="GRANT_EVIDENCE_FIELD_MISSING")
+    if set(rec) - set(GRANT_EVIDENCE_FIELDS):
+        raise Refusal("extra", code="GRANT_EVIDENCE_UNKNOWN_FIELD")
+    capabilities(rec["role"])                                  # role must be an operative E-06 principal (R7 names refused)
+    return rec

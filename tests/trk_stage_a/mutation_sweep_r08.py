@@ -10,7 +10,7 @@ M = [
  ("stage_a/composer/request_classification.py", "if classification == A.FAILED_REQUESTED_BUILD:", "if False:"),
  ("stage_a/health/envelope.py", "if any(c and s != \"HEALTHY\" for s, c in members):", "if False:"),
  ("stage_a/health/envelope.py", "    if not members:\n        return \"UNKNOWN\"", "    if not members:\n        return \"AGGREGATE_HEALTHY\""),
- ("stage_a/health/envelope.py", "    if independent_local_evidence:\n        return \"LOCAL_FAILURE\"", "    if False:\n        return \"LOCAL_FAILURE\""),
+ ("stage_a/health/envelope.py", "    if independent_local_evidence:\n        causes.append", "    if False:\n        causes.append"),
  ("stage_a/health/envelope.py", "if all(s == \"HEALTHY\" for s, _ in members):", "if all(str(s).upper() == \"HEALTHY\" for s, _ in members):"),
  ("stage_a/fw/descriptor_crosswalk.py", "if b is None:", "if False:"),
  ("stage_a/fw/descriptor_crosswalk.py", "if st in (MISSING_EXACT_SOURCE_MAPPING, INTERNAL_DERIVATION_UNBOUND):", "if False:"),

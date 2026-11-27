@@ -1,8 +1,14 @@
 """FW ten-field descriptor crosswalk (documentary), from the finite mapping/dependency disposition (Drive 12h77ZuFRezmZr4_8Zrs1BDyYUtpnoMlI,
 61,967 B, text read this pass; its SHA-256 ea9e7949... is NOT recomputed here). It is documentary requirements/mapping, NOT a second FW/ML
 interface authority. Every actual payload binding is UNDECLARED in that source, so this module's only behaviour is fail-closed refusal:
-no descriptor value may be produced from a payload until an exact real binding exists. Nothing here selects a binding."""
+no descriptor value may be produced from a payload until an exact real binding exists. Nothing here selects a binding.
+
+BOUNDARY (R09): DOCUMENTARY_LOOKUP_ONLY. No authority-bearing consumer exists in this repository (checked by grep); this module must not be
+wired into admission/delivery. A caller-supplied binding is accepted only if it has the seven-field producer-binding SHAPE
+(stage_a.binding.producer_binding); shape is not admission, so a returned value is still unverified evidence, never an authorization."""
 from ..errors import Refusal
+from ..binding.producer_binding import check_shape
+DOCUMENTARY_LOOKUP_ONLY = True
 
 DIRECT_SCHEMA_FIELD_NOT_INSTANCE = "DIRECT_SCHEMA_FIELD_NOT_INSTANCE"
 DIRECT_SCHEMA_CARRIER_NOT_INSTANCE = "DIRECT_SCHEMA_CARRIER_NOT_INSTANCE"
@@ -33,7 +39,7 @@ def require_real_binding(field: str, bindings: dict = None) -> object:
         raise Refusal(field, code="UNDECLARED_REAL_PAYLOAD_BINDING")
     if st in (MISSING_EXACT_SOURCE_MAPPING, INTERNAL_DERIVATION_UNBOUND):
         raise Refusal(field, code="DERIVATION_NOT_VERIFIABLE")
-    return b
+    return check_shape(b)
 
 def require_all(bindings: dict = None) -> None:
     for f in FIELDS: require_real_binding(f, bindings)
