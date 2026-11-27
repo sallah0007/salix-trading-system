@@ -22,7 +22,7 @@ class MLRow:
     def included(self): return self.row_exclusion_reason is None
 
 def build_row(row_id, generation_binding_ref, entries, outcomes, gateway, requested_vintage_mode, eligibility_reason,
-              exclusion_reason_for_missing, tables=None, expected_request_ids=None):
+              exclusion_reason_for_missing, tables=None, expected_request_ids=None, allow_unverified_hash=False):
     """entries: declared DependencyEntry list; outcomes: gateway outcomes in the same order. R22: the issuing Gateway is REQUIRED (no unverified/None path yields an included row).
     expected_request_ids: optional {(feature_id, feature_version): request_id} - the consumer own request-id association; when given it is enforced. The canonical SOURCE slot that
     defines that association (request/resolution/generation) is UNBOUND, so without it only 'issued by this Gateway' is claimed, never 'issued for THIS consumer request'."""
@@ -43,6 +43,10 @@ def build_row(row_id, generation_binding_ref, entries, outcomes, gateway, reques
                 raise Refusal(o.request_id, code="BINDING_NOT_FROM_GATEWAY")          # F4: no Gateway rebind -> rejected
             if o.entry.feature_id != e.feature_id or o.entry.feature_version != e.feature_version:
                 raise Refusal("binding for a different dependency", code="WRONG_VERSION")
+            if tables is not None:
+                from ..gateway.binding import verify_delivered
+                verify_delivered(tables, o.entry, o.delivered_feature_hash)      # exact owned entry + independent hash re-derivation, read-only
+            elif not allow_unverified_hash: raise Refusal("no code tables supplied", code="DELIVERED_HASH_NOT_VERIFIABLE")   # fail closed on the unread
             if o.entry.data_vintage_mode != requested_vintage_mode:
                 raise Refusal(o.entry.data_vintage_mode, code="VINTAGE_MODE_MIXED_OR_SUBSTITUTED")   # EVENTUAL look-ahead / mixed era
             bindings.append(o)
@@ -106,6 +110,7 @@ class StandaloneCheck:
     lane: str
     union_closure: str            # never 'PROVEN': completeness of the supplied edge set has no witness in any source read
     reached: tuple = ()
+    closure_verdict: object = None   # ClosureVerdict (candidate, witness unadmitted) when a DEPENDENCY_CLOSURE_RECORD was supplied
 
 def union_closure(root: str, edges, taint_sources) -> tuple:
     """Traverse supplied (child, parent, class) edges from `root` over CONTENT_CARRYING edges only. Refuses: UNCLASSIFIED_EDGE (any class other than the two source-given ones, on an edge
@@ -128,6 +133,15 @@ def union_closure(root: str, edges, taint_sources) -> tuple:
             if parent not in seen:
                 seen.add(parent); stack.append(parent)
     return tuple(sorted(seen - {root}))
+
+def check_standalone_with_closure(m: ConsumerManifest, target: bytes, graph, kind: str, closure) -> StandaloneCheck:
+    """Linear structural lane + the Contract section X.1 closure record DERIVED over the union of content-carrying edges. FAIL_CLOSED (unknown/unresolved/missing edge, incomplete closure, FW taint, contradiction) refuses.
+    A candidate PASS is still never qualified (`require_standalone_qualified` holds: no accepted completeness witness/provider exists in any source read)."""
+    from . import closure as CL
+    lane = check_generation(m, target, graph, kind); v = CL.derive(closure)
+    if closure.subject_id != m.manifest_id: raise Refusal(closure.subject_id, code="CLOSURE_SUBJECT_NOT_THIS_MANIFEST")
+    if v.verdict != "PASS": raise Refusal(",".join(v.reasons), code="ML_STANDALONE_CLOSURE_FAIL_CLOSED")
+    return StandaloneCheck(lane, "CLOSURE_RECORD_DERIVED_CANDIDATE_WITNESS_UNADMITTED", v.reached, v)
 
 def check_standalone(m: ConsumerManifest, target: bytes, graph, kind: str, edges=None, taint_sources=()) -> StandaloneCheck:
     """The ML_STANDALONE boundary: the linear check (check_generation) plus, if edges are supplied, the union traversal. The result is NEVER qualified: see require_standalone_qualified."""

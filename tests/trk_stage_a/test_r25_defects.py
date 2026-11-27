@@ -1,5 +1,5 @@
 """R25 Codex-reproduced defects B1-B5, each with negatives that can fail (see mutation_sweep_r25.py)."""
-import unittest
+import unittest, dataclasses
 from stage_a.errors import Refusal
 from stage_a.storage.object_store import InMemoryObjectStore
 from stage_a.storage.authority_class import SimulationStore
@@ -10,7 +10,7 @@ from stage_a.health import envelope as HV
 from stage_a.tracker import reverification as RV
 from stage_a.tracker.verification import independent_hashing as ih
 from stage_a.tracker.verification.independent_encoding import enc_bytes
-from stage_a.tracker.verification.verification_result import make_result, SCOPE_MATERIALIZATION
+from stage_a.tracker.verification.verification_result import issue_result, make_result, SCOPE_MATERIALIZATION
 from stage_a.tracker.verification.stateful_verifier import verify_materialization, probe_for
 from stage_a.tracker.materialization.stateful_materializer import StatefulMaterializer
 from stage_a.composer.expression.canonical_encoding import encode_manifest
@@ -77,10 +77,10 @@ class B3ComposedProvenance(unittest.TestCase):
         self.assertIsNone(rec())                                                                                  # genuine positive
         self.assertEqual(rec(res=replace(r, result_hash="0" * 64)), "HEALTH_COMPOSED_RESULT_FORGED")
         self.assertEqual(rec(res=replace(r, checks=tuple((n, True) for n, _ in r.checks[:-1]))), "HEALTH_COMPOSED_RESULT_FORGED")
-        wrong_scope = make_result("PASS", "OTHER_SCOPE", dict(r.subject), r.checks, r.reasons); self.assertEqual(rec(res=wrong_scope, dg=wrong_scope.result_hash), "HEALTH_COMPOSED_RESULT_UNBOUND")
+        wrong_scope = issue_result("PASS", "OTHER_SCOPE", dict(r.subject), r.checks, r.reasons); self.assertEqual(rec(res=wrong_scope, dg=wrong_scope.result_hash), "HEALTH_COMPOSED_RESULT_UNBOUND")
         self.assertEqual(rec(subject="XAUUSD/H4/other/1"), "HEALTH_COMPOSED_RESULT_UNBOUND")                      # subject binding
         self.assertEqual(rec(dg="1" * 64), "HEALTH_COMPOSED_RESULT_UNBOUND"); self.assertEqual(rec(vid="not-the-verifier"), "HEALTH_COMPOSED_RESULT_UNBOUND")
-        fl = make_result("FAIL", SCOPE_MATERIALIZATION, dict(r.subject), (("record_field_set", False),), ["x"]); self.assertEqual(rec(res=fl, dg=fl.result_hash), "HEALTH_COMPOSED_RESULT_UNBOUND")   # claims PASS/PASS over a failing result
+        fl = issue_result("FAIL", SCOPE_MATERIALIZATION, dict(r.subject), (("record_field_set", False),), ["x"]); self.assertEqual(rec(res=fl, dg=fl.result_hash), "HEALTH_COMPOSED_RESULT_UNBOUND")   # claims PASS/PASS over a failing result
         self.assertEqual(rec(req="NOT_APPLICABLE_BY_GOVERNED_DEFINITION"), "HEALTH_COMPOSED_RESULT_UNBOUND")
     def test_result_on_caller_asserted_class_is_refused_and_honest_label_is_preserved(self):
         c = core(); self.assertEqual(code(c.record_verification, "S", "1", "REQUIRED", "PASS", "PASS", 10, 5, "v", "d", result=self.good()), "HEALTH_RESULT_WITHOUT_COMPOSED_CLASS")
@@ -173,7 +173,7 @@ class R26Defects(unittest.TestCase):
     """Codex R26 reproductions + wider negatives."""
     def mkres(self, status, names=None, key=KEY, **kw):
         from stage_a.tracker.verification.verification_result import PASS_PROFILE
-        return make_result(status, SCOPE_MATERIALIZATION, {"expect_scope_key": key}, [(n, True) for n in (names if names is not None else sorted(PASS_PROFILE))], kw.get("reasons", []))
+        return issue_result(status, SCOPE_MATERIALIZATION, {"expect_scope_key": key}, [(n, True) for n in (names if names is not None else sorted(PASS_PROFILE))], kw.get("reasons", []))
     def rec(self, c, r, version="1", l1="PASS", l2="PASS", key=KEY):
         from stage_a.tracker.verification.verification_result import COMPOSED_VERIFIER_ID
         return code(c.record_verification, key, version, "REQUIRED", l2, l1, 10, 5, COMPOSED_VERIFIER_ID, r.result_hash, evidence_class=COMPOSED_RECOMPUTATION, result=r)
@@ -207,3 +207,17 @@ class R26Defects(unittest.TestCase):
         self.assertEqual(TF.latest_visible_parent([("A", 5, True), ("A", 5, True)], 10).parent_id, "A")
 def world_pass():
     m, store, rec, get = world(); return verify(rec, get, declared(m))
+
+class R27AssertedResultIsNotAVerifierRun(unittest.TestCase):
+    """R27 defect 3 (Codex repro): a public PASS-shaped result with the full profile and a valid self-hash must NOT earn COMPOSED_RECOMPUTATION; the real verifier path keeps its positive control."""
+    def test_public_asserted_pass_profile_is_refused_not_labelled_composed(self):
+        from stage_a.tracker.verification.verification_result import PASS_PROFILE, COMPOSED_VERIFIER_ID
+        r = make_result("PASS", SCOPE_MATERIALIZATION, {"expect_scope_key": "XAUUSD/H4/mom3/1"}, [(n, True) for n in PASS_PROFILE], [])
+        c = core()
+        self.assertEqual(code(c.record_verification, "XAUUSD/H4/mom3/1", "1", "REQUIRED", "PASS", "PASS", 10, 5, COMPOSED_VERIFIER_ID, r.result_hash, evidence_class=COMPOSED_RECOMPUTATION, result=r), "HEALTH_COMPOSED_RESULT_NOT_FROM_VERIFIER_RUN")
+        self.assertEqual(c.recording_health("XAUUSD/H4/mom3/1", "1", 11).state, "UNKNOWN")                           # nothing was recorded: no composed/healthy label exists
+    def test_receipt_only_from_issue_path(self):
+        from stage_a.tracker.verification import verification_result as VR
+        r = make_result("PASS", SCOPE_MATERIALIZATION, {}, [("x", True)], []); self.assertFalse(VR.issued_by_verifier_run(r))
+        r2 = VR.issue_result("PASS", SCOPE_MATERIALIZATION, {}, [("x", True)], []); self.assertTrue(VR.issued_by_verifier_run(r2))
+        self.assertFalse(VR.issued_by_verifier_run(dataclasses.replace(r2, status="FAIL")))                       # edited after issue: hash no longer self-consistent

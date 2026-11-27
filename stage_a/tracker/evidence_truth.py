@@ -10,7 +10,7 @@ VALID, INVALID, UNPROVABLE = "VALID", "INVALID", "UNPROVABLE"
 @dataclass(frozen=True)
 class EvidenceRecord:
     ref: str; subject: str; version_or_hash: str; instrument: str; timeframe: str; battery: str; vintage: str; dependencies: Tuple[str, ...]
-    result: str; available_at: int; max_age: int; revoked: bool = False; current: bool = True; approval_state: str = "APPROVED"
+    result: str; available_at: int; max_age: int; revoked: object; current: object; approval_state: object      # R27: NO defaults - revocation/currentness/approval must be stated explicitly by the evidence source
 @dataclass(frozen=True)
 class TransitionClaim:
     subject: str; version_or_hash: str; instrument: str; timeframe: str; battery: str; vintage: str; dependencies: Tuple[str, ...]; expected_result: str
@@ -24,11 +24,18 @@ def judge_transition_evidence(claim: TransitionClaim, index: dict, now: int) -> 
     """VALID only if EVERY referenced evidence record resolves, is current and unrevoked, fresh, and matches the claim on every dimension; at least one reference is required. Anything missing/unreadable is INVALID/UNPROVABLE (fail closed)."""
     if not isinstance(claim, TransitionClaim) or not isinstance(index, dict) or isinstance(now, bool) or not isinstance(now, int) or now < 0: return Verdict(UNPROVABLE, ("INPUT_INVALID",))
     if not claim.evidence_refs: return Verdict(INVALID, ("NO_EVIDENCE_REFERENCED",))                       # signed/authorized with no evidence is never valid
+    if not all(isinstance(x, str) and x for x in (claim.subject, claim.version_or_hash, claim.instrument, claim.timeframe, claim.battery, claim.vintage, claim.expected_result, claim.required_approval)) \
+            or not isinstance(claim.evidence_refs, tuple) or not all(isinstance(r, str) and r for r in claim.evidence_refs) or not isinstance(claim.dependencies, tuple) or not all(isinstance(d, str) and d for d in claim.dependencies):
+        return Verdict(UNPROVABLE, ("CLAIM_MALFORMED",))
     bad = []
     for ref in claim.evidence_refs:
         e = index.get(ref)
         if not isinstance(e, EvidenceRecord): bad.append("EVIDENCE_MISSING:" + str(ref)); continue
         if e.ref != ref: bad.append("EVIDENCE_REF_MISMATCH:" + ref); continue
+        if (not all(isinstance(x, str) and x for x in (e.subject, e.version_or_hash, e.instrument, e.timeframe, e.battery, e.vintage, e.result)) or not isinstance(e.dependencies, tuple) or not all(isinstance(d, str) for d in e.dependencies)
+                or isinstance(e.available_at, bool) or not isinstance(e.available_at, int) or isinstance(e.max_age, bool) or not isinstance(e.max_age, int)
+                or not isinstance(e.revoked, bool) or not isinstance(e.current, bool) or not (isinstance(e.approval_state, str) and e.approval_state)):
+            bad.append("EVIDENCE_MALFORMED_OR_STATE_UNSTATED:" + ref); continue                    # unknown/unstated/mistyped states fail closed; nothing is inferred
         if e.revoked: bad.append("EVIDENCE_REVOKED:" + ref)
         if not e.current: bad.append("EVIDENCE_NOT_CURRENT:" + ref)
         if e.available_at > now or now - e.available_at > e.max_age or e.max_age <= 0: bad.append("EVIDENCE_STALE_OR_FUTURE:" + ref)
@@ -36,7 +43,17 @@ def judge_transition_evidence(claim: TransitionClaim, index: dict, now: int) -> 
                                 ("BATTERY", e.battery, claim.battery), ("VINTAGE", e.vintage, claim.vintage), ("DEPENDENCIES", tuple(e.dependencies), tuple(claim.dependencies)), ("RESULT", e.result, claim.expected_result),
                                 ("APPROVAL", e.approval_state, claim.required_approval)):
             if got != want: bad.append("EVIDENCE_%s_MISMATCH:%s" % (name, ref))
-    return Verdict(INVALID, tuple(bad)) if bad else Verdict(VALID, ())
+    if bad: return Verdict(INVALID, tuple(bad))
+    return Verdict(VALID, ())
+
+def valid_until(claim: TransitionClaim, index: dict):
+    """Last instant the referenced evidence is fresh (min over refs of available_at + max_age); None if any ref is unresolved/malformed. Used at USE time, not only when the verdict was made."""
+    ends = []
+    for r in claim.evidence_refs:
+        e = index.get(r)
+        if not isinstance(e, EvidenceRecord) or isinstance(e.available_at, bool) or not isinstance(e.available_at, int) or isinstance(e.max_age, bool) or not isinstance(e.max_age, int): return None
+        ends.append(e.available_at + e.max_age)
+    return min(ends) if ends else None
 
 KINDS = ("INTERPOLATION", "IMPUTATION", "FILL", "SCALER", "LEARNED_TRANSFORM")
 @dataclass(frozen=True)

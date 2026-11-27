@@ -31,8 +31,8 @@ def receive(binding, expected: DependencyEntry, instrument_id: bytes, timeframe_
         raise Refusal("scope", code="WRONG_SCOPE")
     if e.published_projection_name != expected.expected_projection:
         raise Refusal("projection", code="WRONG_PROJECTION")
-    if O.delivered_hash(tables, e) != binding.delivered_feature_hash:
-        raise Refusal("hash", code="HASH_MISMATCH")
+    from ..gateway.binding import verify_delivered
+    verify_delivered(tables, e, binding.delivered_feature_hash)          # exact owned entry + INDEPENDENT hash re-derivation (Build Plan 6.1A semantic coverage/order/presence)
     if require_current and e.chain_status_at_bind != "CURRENT":
         raise Refusal(e.chain_status_at_bind, code="CHAIN_STATUS_NOT_CURRENT")
     if e.canonical_transition_ref is None or e.bound_health_resolution_ref is None:
@@ -40,3 +40,9 @@ def receive(binding, expected: DependencyEntry, instrument_id: bytes, timeframe_
     if gateway is not None and gateway.outcome(binding.request_id) is not binding:
         raise Refusal("not the stored Gateway binding", code="BINDING_NOT_FROM_GATEWAY")
     return binding        # exact preservation: same object, nothing re-derived
+
+
+def receive_outcome_series(pkg, ctx):
+    """H3 outcome/target-series receipt: the Gateway-side validator decides; WITHHELD raises. Segment authorization and conditional applicability in `ctx` are caller-supplied and UNADMITTED (see gateway.outcome_series)."""
+    from ..gateway.outcome_series import require_delivery
+    return require_delivery(pkg, ctx)

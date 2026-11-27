@@ -3,6 +3,7 @@ import unittest
 from stage_a.errors import Refusal
 from stage_a.composer.expression.manifest import Manifest
 from stage_a.gateway import contracts as G
+from stage_a.core.tracker_core import TrackerCore
 from stage_a.tracker import reverify_scheduler as S
 from stage_a.storage.object_store import InMemoryObjectStore
 from stage_a.storage.authority_class import SimulationStore
@@ -10,6 +11,7 @@ from .fixtures import momentum_manifest
 from .test_boundaries import _entry, _gw, I, R
 from .test_r24_composed import core, declared, SIMS
 from .test_r24_core import code, ver
+from .strict_gateway import sgw, bind
 
 KEY = "XAUUSD/H4/mom3/1"
 class Scheduler(unittest.TestCase):
@@ -19,8 +21,8 @@ class Scheduler(unittest.TestCase):
         self.assertEqual([(i.subject, i.trigger, i.outcome, i.detail) for i in r], [(KEY, "ABSENT", "VERIFIED", "PASS")])
         self.assertEqual([r_.kind for r_ in c._j.read_from(0) if r_.kind == "REVERIFY_REQUESTED"], ["REVERIFY_REQUESTED"])            # the trigger is journaled before the verifier runs
         self.assertEqual(S.run_reverification_pass(c, self.b, [KEY], now=11, max_age=50), [])                    # fresh evidence: nothing due, nothing re-run
-        hs = c.gateway_health(KEY, "1", 12, R("hl"), 11, binding=G.HealthBinding(I, "1", I, I)); self.assertTrue(hs.acceptable); self.assertEqual(hs.evidence_class, "SIMULATION")
-        self.assertIsInstance(_gw(ver="1").resolve("o", _entry(ver="1"), I, I, 3, 20, hs), G.Binding)
+        hs = c.gateway_health(KEY, "1", 12, R("hl"), 11, binding=bind(c, KEY)); self.assertTrue(hs.acceptable); self.assertEqual(hs.evidence_class, "SIMULATION")
+        self.assertIsInstance(sgw(c).resolve("o", _entry(ver="1"), I, I, 3, 20, hs), G.Binding)
     def test_stale_future_epoch_and_unknown_l2_block_gateway_until_a_real_pass(self):
         c = core(); S.run_reverification_pass(c, self.b, [KEY], now=10, max_age=5)
         self.assertEqual([i.trigger for i in S.run_reverification_pass(c, self.b, [KEY], now=20, max_age=5)], ["STALE"])
@@ -54,23 +56,44 @@ class Scheduler(unittest.TestCase):
 if __name__ == "__main__": unittest.main()
 
 class GatewayHealthBinding(unittest.TestCase):
-    """R26: Core Health is bound to the exact dependency it speaks for; unknown binding is default-deny; external HealthSnapshot path unchanged (admitted external binding is a separate input)."""
-    def hs(self, binding, key=KEY, version="1"):
-        c = core(); S.run_reverification_pass(c, {KEY: (Manifest.from_dict(momentum_manifest()), declared(Manifest.from_dict(momentum_manifest())), SIMS())}, [KEY], now=10, max_age=50)
+    """R27: Core Health is journal-confirmed, bound to the exact dependency AND to an explicitly supplied subject association; plain/shape-only and forged snapshots are denied by default."""
+    def setUp(self):
+        self.c = core(); self.m = Manifest.from_dict(momentum_manifest())
+        S.run_reverification_pass(self.c, {KEY: (self.m, declared(self.m), SIMS())}, [KEY], now=10, max_age=50)
+    def hs(self, binding, assoc=True, c=None, key=KEY, version="1"):
+        c = c or self.c
+        if assoc and binding is not None: c.associate_subject(key, binding, "test-supplied-association")
         return c.gateway_health(key, version, 12, R("hl"), 11, binding=binding)
-    def out(self, hs, **kw): return _gw(ver="1").resolve("o", kw.get("entry") or _entry(ver="1"), kw.get("i", I), I, 3, 20, hs)
-    def test_matching_binding_delivers_unbound_and_mismatched_are_denied(self):
+    def out(self, hs, gw=None, entry=None): return (gw or sgw(self.c)).resolve("o", entry or _entry(ver="1"), I, I, 3, 20, hs)
+    def test_matching_associated_binding_delivers_unbound_and_mismatched_are_denied(self):
         self.assertIsInstance(self.out(self.hs(G.HealthBinding(I, "1", I, I))), G.Binding)
-        self.assertEqual(self.out(self.hs(None)).reason, "HEALTH_BINDING_UNBOUND")
+        self.assertEqual(self.out(self.hs(None)).reason, "HEALTH_SNAPSHOT_NOT_CONFIRMED")                                     # not journal-issued without a binding
         for b in (G.HealthBinding(bytes(16), "1", I, I), G.HealthBinding(I, "1", bytes(16), I), G.HealthBinding(I, "1", I, bytes(16))):
-            self.assertEqual(self.out(self.hs(b)).reason, "HEALTH_BINDING_MISMATCH")
-    def test_wrong_version_binding_refused_at_core_and_gateway(self):
+            self.assertEqual(self.out(self.hs(b), gw=sgw(self.c)).reason, "HEALTH_BINDING_MISMATCH")
+    def test_codex_r27_repro_unrelated_subject_cannot_certify_the_dependency(self):
+        c = core(); c.record_verification("unrelated-subject", "1", "REQUIRED", "PASS", "PASS", 10, 50, "v", "d")
+        hs = c.gateway_health("unrelated-subject", "1", 12, R("hl"), 11, binding=G.HealthBinding(I, "1", I, I))
+        self.assertFalse(hs.acceptable); self.assertEqual(hs.held_reason, "SUBJECT_ASSOCIATION_UNBOUND")
+        out = sgw(c).resolve("o", _entry(ver="1"), I, I, 3, 20, hs); self.assertNotIsInstance(out, G.Binding); self.assertEqual(out.reason, "HEALTH_UNACCEPTABLE")
+        self.assertEqual(code(c.associate_subject, "", G.HealthBinding(I, "1", I, I), "x"), "SUBJECT_ASSOCIATION_INVALID")
+    def test_association_is_per_subject_and_per_binding(self):
+        b = G.HealthBinding(I, "1", I, I); self.c.associate_subject("OTHER", b, "ref")
+        hs = self.c.gateway_health(KEY, "1", 12, R("hl"), 11, binding=b); self.assertEqual(hs.held_reason, "SUBJECT_ASSOCIATION_UNBOUND")                  # OTHER's association never covers KEY
+        self.c.associate_subject(KEY, G.HealthBinding(bytes(16), "1", I, I), "ref"); self.assertEqual(self.c.gateway_health(KEY, "1", 12, R("hl"), 11, binding=b).held_reason, "SUBJECT_ASSOCIATION_UNBOUND")
+    def test_plain_and_forged_snapshots_are_denied_by_default_and_legacy_needs_the_explicit_switch(self):
+        import dataclasses
+        plain = G.HealthSnapshot(R("hl"), 4, True); self.assertEqual(self.out(plain).reason, "HEALTH_SNAPSHOT_SHAPE_ONLY_NOT_ACCEPTED")
+        legacy = sgw(self.c); legacy.allow_shape_only_health = True; self.assertIsInstance(self.out(plain, gw=legacy), G.Binding)            # LEGACY harness only; proves nothing about any subject
+        good = self.hs(G.HealthBinding(I, "1", I, I))
+        for forged in (dataclasses.replace(good, binding=None), dataclasses.replace(good, acceptable=True, held_reason="x"), dataclasses.replace(good, resolved_at=1), dataclasses.replace(good, subject="OTHER"),
+                       dataclasses.replace(good, snapshot_id="0" * 64), dataclasses.replace(good, binding=G.HealthBinding(I, "1", I, bytes(16)))):
+            self.assertEqual(self.out(forged).reason, "HEALTH_SNAPSHOT_NOT_CONFIRMED")
+        self.assertEqual(self.out(good, gw=_gw(ver="1")).reason, "HEALTH_SNAPSHOT_NOT_CONFIRMED")                                                  # a gateway without the issuing Core cannot confirm
+        self.assertFalse(hasattr(good, "typed_internal"))                                                                                         # no optional public opt-out marker remains
+    def test_confirmation_survives_restart_and_wrong_version_is_refused(self):
+        good = self.hs(G.HealthBinding(I, "1", I, I)); c2 = TrackerCore(self.c._j, simulation=True); self.assertTrue(c2.confirm_snapshot(good)); self.assertIsInstance(self.out(good, gw=sgw(c2)), G.Binding)
         self.assertEqual(code(self.hs, G.HealthBinding(I, "999", I, I)), "HEALTH_BINDING_VERSION_MISMATCH")
-        hs = self.hs(G.HealthBinding(I, "1", I, I)); self.assertEqual(_gw(ver="2").resolve("o", _entry(ver="2"), I, I, 3, 20, hs).reason, "HEALTH_BINDING_MISMATCH")      # healthy feature A evidence never certifies feature/version B
-    def test_foreign_feature_health_is_not_borrowed(self):
-        hs = self.hs(G.HealthBinding(bytes(range(16, 32)), "1", I, I)); self.assertEqual(self.out(hs).reason, "HEALTH_BINDING_MISMATCH")
-    def test_plain_external_snapshot_path_is_unchanged(self):
-        self.assertIsInstance(self.out(G.HealthSnapshot(R("hl"), 4, True)), G.Binding)          # externally admitted binding/provenance is NOT modelled or claimed here
+        self.assertEqual(sgw(self.c, ver="2").resolve("o", _entry(ver="2"), I, I, 3, 20, good).reason, "HEALTH_BINDING_MISMATCH")
 
 class PinnedEvidence(unittest.TestCase):
     """R26: the scheduler verifies the EXISTING pinned candidate record; it never rebuilds/overwrites it."""

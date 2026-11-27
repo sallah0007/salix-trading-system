@@ -12,6 +12,7 @@ from stage_a.fw import receiver as FW
 from stage_a.ml import receiver as ML
 from stage_a.storage.byte_primitives import domain_hash
 from .test_boundaries import _entry, _gw, I, R, NONE_, T
+from .strict_gateway import sgw, bind
 def code(fn, *a, **k):
     try: fn(*a, **k)
     except Refusal as e: return e.code
@@ -185,11 +186,11 @@ class Composition(unittest.TestCase):
         c = mk(sim)
         if healthy: ver(c, "K", at=4, age=10)
         else: ver(c, "K", l2="UNAVAILABLE", at=4, age=10)
-        gw = _gw(ver="1"); e = _entry(ver="1"); hs = c.gateway_health("K", "1", 5, R("hl"), 4, binding=G.HealthBinding(I, "1", I, I)); return gw, e, hs, gw.resolve("o", e, I, I, 3, 10, hs)
+        gw = sgw(c); e = _entry(ver="1"); hs = c.gateway_health("K", "1", 5, R("hl"), 4, binding=bind(c, "K")); return gw, e, hs, gw.resolve("o", e, I, I, 3, 10, hs)
     def test_healthy_simulation_core_yields_typed_simulation_health_and_binding_consumed_downstream(self):
         gw, e, hs, out = self.path(True); self.assertIsInstance(hs, CoreHealthSnapshot); self.assertEqual(hs.evidence_class, "SIMULATION"); self.assertIsInstance(out, G.Binding)
         self.assertIs(FW.receive_verified(out, e, I, I, T, gw), out)
-        self.assertTrue(ML.build_row("r", R("gen"), [e], [out], gw, "ORIGINAL_AS_OBSERVED", NONE_, lambda o: NONE_).included)
+        self.assertTrue(ML.build_row("r", R("gen"), [e], [out], gw, "ORIGINAL_AS_OBSERVED", NONE_, lambda o: NONE_, tables=gw.t).included)
     def test_qualified_core_health_is_held_never_acceptable(self):
         gw, e, hs, out = self.path(True, sim=False); self.assertEqual((hs.acceptable, hs.evidence_class), (False, "QUALIFIED_HELD")); self.assertNotIsInstance(out, G.Binding)
     def test_unknown_health_blocks_and_historical_mode_is_unresolved(self):
@@ -197,7 +198,7 @@ class Composition(unittest.TestCase):
         self.assertEqual(code(mk().gateway_health, "K", "1", 5, R("hl"), 4, asof_seq=1), "HISTORICAL_HEALTH_MODE_UNRESOLVED")
     def test_quarantine_or_epoch_invalidation_blocks_delivery_downstream(self):
         for mut in (lambda c: c.quarantine("K", "R"), lambda c: (c.declare_dependency("K", "U"), c.advance_epoch("U", 2)), lambda c: c.advance_epoch("K", 2)):
-            c = mk(); ver(c, "K", at=4, age=10); mut(c); gw = _gw(ver="1"); out = gw.resolve("o", _entry(ver="1"), I, I, 3, 10, c.gateway_health("K", "1", 5, R("hl"), 4, binding=G.HealthBinding(I, "1", I, I))); self.assertNotIsInstance(out, G.Binding); self.assertEqual(out.reason, "HEALTH_UNACCEPTABLE")
+            c = mk(); ver(c, "K", at=4, age=10); mut(c); gw = sgw(c); out = gw.resolve("o", _entry(ver="1"), I, I, 3, 10, c.gateway_health("K", "1", 5, R("hl"), 4, binding=bind(c, "K"))); self.assertNotIsInstance(out, G.Binding); self.assertEqual(out.reason, "HEALTH_UNACCEPTABLE")
 
 
 from stage_a.storage.authority_class import approve_test_adapter, _APPROVED_TEST_ADAPTERS
