@@ -19,8 +19,8 @@ class Scheduler(unittest.TestCase):
         self.assertEqual([(i.subject, i.trigger, i.outcome, i.detail) for i in r], [(KEY, "ABSENT", "VERIFIED", "PASS")])
         self.assertEqual([r_.kind for r_ in c._j.read_from(0) if r_.kind == "REVERIFY_REQUESTED"], ["REVERIFY_REQUESTED"])            # the trigger is journaled before the verifier runs
         self.assertEqual(S.run_reverification_pass(c, self.b, [KEY], now=11, max_age=50), [])                    # fresh evidence: nothing due, nothing re-run
-        hs = c.gateway_health(KEY, "1", 12, R("hl"), 11); self.assertTrue(hs.acceptable); self.assertEqual(hs.evidence_class, "SIMULATION")
-        self.assertIsInstance(_gw().resolve("o", _entry(), I, I, 3, 20, hs), G.Binding)
+        hs = c.gateway_health(KEY, "1", 12, R("hl"), 11, binding=G.HealthBinding(I, "1", I, I)); self.assertTrue(hs.acceptable); self.assertEqual(hs.evidence_class, "SIMULATION")
+        self.assertIsInstance(_gw(ver="1").resolve("o", _entry(ver="1"), I, I, 3, 20, hs), G.Binding)
     def test_stale_future_epoch_and_unknown_l2_block_gateway_until_a_real_pass(self):
         c = core(); S.run_reverification_pass(c, self.b, [KEY], now=10, max_age=5)
         self.assertEqual([i.trigger for i in S.run_reverification_pass(c, self.b, [KEY], now=20, max_age=5)], ["STALE"])
@@ -52,3 +52,22 @@ class Scheduler(unittest.TestCase):
         self.assertEqual([(i.subject, i.outcome, i.detail) for i in r], [(KEY, "REFUSED", "REVERIFY_CARRIER_CLASS_MISMATCH")]); self.assertEqual(plain.list_prefix(""), [])
         self.assertEqual(c.recording_health("BASE", "1", 12).state, "HEALTHY")
 if __name__ == "__main__": unittest.main()
+
+class GatewayHealthBinding(unittest.TestCase):
+    """R26: Core Health is bound to the exact dependency it speaks for; unknown binding is default-deny; external HealthSnapshot path unchanged (admitted external binding is a separate input)."""
+    def hs(self, binding, key=KEY, version="1"):
+        c = core(); S.run_reverification_pass(c, {KEY: (Manifest.from_dict(momentum_manifest()), declared(Manifest.from_dict(momentum_manifest())), SIMS())}, [KEY], now=10, max_age=50)
+        return c.gateway_health(key, version, 12, R("hl"), 11, binding=binding)
+    def out(self, hs, **kw): return _gw(ver="1").resolve("o", kw.get("entry") or _entry(ver="1"), kw.get("i", I), I, 3, 20, hs)
+    def test_matching_binding_delivers_unbound_and_mismatched_are_denied(self):
+        self.assertIsInstance(self.out(self.hs(G.HealthBinding(I, "1", I, I))), G.Binding)
+        self.assertEqual(self.out(self.hs(None)).reason, "HEALTH_BINDING_UNBOUND")
+        for b in (G.HealthBinding(bytes(16), "1", I, I), G.HealthBinding(I, "1", bytes(16), I), G.HealthBinding(I, "1", I, bytes(16))):
+            self.assertEqual(self.out(self.hs(b)).reason, "HEALTH_BINDING_MISMATCH")
+    def test_wrong_version_binding_refused_at_core_and_gateway(self):
+        self.assertEqual(code(self.hs, G.HealthBinding(I, "999", I, I)), "HEALTH_BINDING_VERSION_MISMATCH")
+        hs = self.hs(G.HealthBinding(I, "1", I, I)); self.assertEqual(_gw(ver="2").resolve("o", _entry(ver="2"), I, I, 3, 20, hs).reason, "HEALTH_BINDING_MISMATCH")      # healthy feature A evidence never certifies feature/version B
+    def test_foreign_feature_health_is_not_borrowed(self):
+        hs = self.hs(G.HealthBinding(bytes(range(16, 32)), "1", I, I)); self.assertEqual(self.out(hs).reason, "HEALTH_BINDING_MISMATCH")
+    def test_plain_external_snapshot_path_is_unchanged(self):
+        self.assertIsInstance(self.out(G.HealthSnapshot(R("hl"), 4, True)), G.Binding)          # externally admitted binding/provenance is NOT modelled or claimed here

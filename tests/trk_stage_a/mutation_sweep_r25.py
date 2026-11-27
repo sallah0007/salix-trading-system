@@ -39,9 +39,21 @@ M = [
  ("stage_a/tracker/reverify_scheduler.py", '.key() != subject:', '.key() == subject:'),
  ("stage_a/tracker/reverify_scheduler.py", 'if n >= max_items:', 'if n > max_items:'),
  ("stage_a/tracker/reverify_scheduler.py", '            core.request_reverification(subject, trigger)\n', ''),
- ("stage_a/tracker/reverify_scheduler.py", 'core.due_for_reverification(list(subjects), now)', '[(s, "ABSENT") for s in subjects]'),
+ ("stage_a/tracker/reverify_scheduler.py", 'enumerate(core.due_for_reverification(list(subjects), now, {k: b[0].feature_version for k, b in bindings.items()}))', 'enumerate([(s, "ABSENT") for s in subjects])'),
  ("stage_a/tracker/reverify_scheduler.py", 'or max_items < 1: raise', ': pass; raise'),
  ("stage_a/tracker/reverify_scheduler.py", 'except Refusal as e:', 'except KeyError as e:'),
+ ("stage_a/gateway/contracts.py", 'if b is None: return nd("HEALTH_BINDING_UNBOUND")', 'pass'),
+ ("stage_a/gateway/contracts.py", 'if (b.feature_id, b.feature_version, instrument_id, timeframe_id)', 'if False and (b.feature_id, b.feature_version, instrument_id, timeframe_id)') if False else ("stage_a/gateway/contracts.py", '!= (entry.feature_id, entry.feature_version, instrument_id, timeframe_id): return nd("HEALTH_BINDING_MISMATCH")', '!= (b.feature_id, b.feature_version, b.instrument_id, b.timeframe_id): return nd("HEALTH_BINDING_MISMATCH")'),
+ ("stage_a/gateway/contracts.py", 'getattr(health, "typed_internal", False)', 'False'),
+ (TC, 'if binding is not None and getattr(binding, "feature_version", None) != version: raise', 'if False: raise'),
+ (TC, ' or (l1, l2_status) != split_levels(result)', ''),
+ (VR, 'if result.status == FAIL and (l1, l2) == ("PASS", "PASS"): return "FAIL", "FAIL"', 'pass'),
+ (VR, 'if result.status == PASS and not PASS_PROFILE <= set(names): return "FAIL", "UNAVAILABLE"', 'pass'),
+ (VR, 'or result.status not in (PASS, FAIL): return', ': return') if False else (VR, ' or result.status not in (PASS, FAIL): return "FAIL", "UNAVAILABLE"', ': return "FAIL", "UNAVAILABLE"'),
+ (TC, '.rsplit("/", 1)[-1] != version):', '.rsplit("/", 1)[-1] == version):'),
+ (TC, 'and h["version"] != versions[s]', 'and False'),
+ ("stage_a/tracker/reverify_scheduler.py", '{k: b[0].feature_version for k, b in bindings.items()}', 'None'),
+ (TF, 'if pid in seen and seen[pid][1] != complete: raise', 'if False: raise'),
 ]
 T = ["tests/trk_stage_a/test_r25_defects.py", "tests/trk_stage_a/test_r24_composed.py", "tests/trk_stage_a/test_verifier_independence.py", "tests/trk_stage_a/test_health_envelope.py", "tests/trk_stage_a/test_r24_core.py", "tests/trk_stage_a/test_r25_scheduler.py"]
 def run():

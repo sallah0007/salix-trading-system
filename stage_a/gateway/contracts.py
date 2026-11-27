@@ -45,6 +45,12 @@ class HealthSnapshot:
     resolution_ref: Ref; resolved_at: int; acceptable: bool
 
 @dataclass(frozen=True)
+class HealthBinding:
+    """INTERNAL candidate binding of a Core-produced Health reading to the exact dependency it speaks for, in the Gateway's own identifier vocabulary (no canonical field/layout is invented; an ADMITTED
+    external binding/provenance is a separate input and is not modelled here)."""
+    feature_id: bytes; feature_version: str; instrument_id: bytes; timeframe_id: bytes
+
+@dataclass(frozen=True)
 class NonDeliveryResolution:
     request_id: str; feature_id: bytes; feature_version: str; reason: str; fence: int
 
@@ -113,6 +119,10 @@ class SimulatedGateway:
             return nd("NO_STATUS_AUTHORITY_FACT")                    # fail closed on the unread
         if require_current and st.status != CURRENT:
             return nd("CHAIN_STATUS_NOT_CURRENT:" + st.status)       # CATCHING_UP where CURRENT required
+        if getattr(health, "typed_internal", False):                 # Core-produced snapshot: DEFAULT-DENY unless it is bound to exactly this feature/version/instrument/timeframe
+            b = getattr(health, "binding", None)
+            if b is None: return nd("HEALTH_BINDING_UNBOUND")
+            if (b.feature_id, b.feature_version, b.instrument_id, b.timeframe_id) != (entry.feature_id, entry.feature_version, instrument_id, timeframe_id): return nd("HEALTH_BINDING_MISMATCH")
         if not health.acceptable:
             return nd("HEALTH_UNACCEPTABLE")
         if health.resolved_at >= fence:

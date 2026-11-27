@@ -437,13 +437,15 @@ class TrackerCore:
         return {"state": HELD, "eligible": False, "reasons": reasons, "undetermined_inputs": missing, "mode": "QUALIFIED_HELD"}
 
     # ---- composition output: the health the downstream Gateway actually consumes -------------------
-    def gateway_health(self, subject: str, version: str, now: int, ref, resolved_at: int, *, asof_seq: int = None):
+    def gateway_health(self, subject: str, version: str, now: int, ref, resolved_at: int, *, asof_seq: int = None, binding=None):
+        """binding: gateway.contracts.HealthBinding naming the dependency this reading speaks for. Without it the Gateway DENIES (HEALTH_BINDING_UNBOUND); its version must equal the queried Health version."""
         from ..gateway.contracts import HealthSnapshot
         from dataclasses import dataclass
         if asof_seq is not None: raise Refusal("historical Health consistency mode has no source-correct rule here", code="HISTORICAL_HEALTH_MODE_UNRESOLVED")
         st = self._replay()
         ok = self.simulation and not self._blocked(st, subject) and self._health(st, subject, version, now) == "HEALTHY"
-        return CoreHealthSnapshot(ref, resolved_at, ok, "SIMULATION" if self.simulation else "QUALIFIED_HELD")
+        if binding is not None and getattr(binding, "feature_version", None) != version: raise Refusal("binding version != Health version", code="HEALTH_BINDING_VERSION_MISMATCH")
+        return CoreHealthSnapshot(ref, resolved_at, ok, "SIMULATION" if self.simulation else "QUALIFIED_HELD", binding=binding)
 
     # ---- reviewer / write-plane boundary ------------------------------------------------------------
     FINDING_FIELDS = ("finding_id", "task_origin", "summary", "author")
@@ -500,6 +502,8 @@ from ..gateway.contracts import HealthSnapshot as _HS
 class CoreHealthSnapshot(_HS):
     """A Health snapshot from Core that carries its evidence class. `acceptable` can be True ONLY for SIMULATION evidence; a qualified Core always reports QUALIFIED_HELD (acceptable=False)."""
     evidence_class: str = "SIMULATION"
+    binding: object = None
+    typed_internal: bool = True
 
 
 @dataclass(frozen=True)
