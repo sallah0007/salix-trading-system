@@ -8,6 +8,7 @@ from dataclasses import dataclass, field, replace
 from typing import Dict, Optional, Tuple
 from ..errors import Refusal
 from ..schema import objects as O
+from . import binding as B
 from ..schema.encoding import Ref, CodeTables
 from ..tracker.chain_status import ChainStatusAuthority, CURRENT
 
@@ -132,16 +133,7 @@ class SimulatedGateway:
             return nd("HEALTH_UNACCEPTABLE")
         if health.resolved_at >= fence:
             return nd("HEALTH_NOT_RESOLVED_BEFORE_FENCE")
-        d = O.DeliveredFeatureEntry(
-            feature_id=row.feature_id, feature_version=row.feature_version, quant_manifest_hash=row.quant_manifest_hash,
-            instrument_id=row.instrument_id, timeframe_id=row.timeframe_id, materialization_version=row.materialization_version,
-            step_index=row.step_index, event_time=row.event_time, logical_encoding_version=row.logical_encoding_version,
-            published_projection_name=row.published_projection_name, published_projection_bits=row.published_projection_bits,
-            published_projection_hash=row.published_projection_hash, fit_generation_ref=row.fit_generation_ref,
-            data_vintage_mode=row.data_vintage_mode, available_asof=row.available_asof, chain_status_at_bind=st.status,
-            source_or_causal_policy_ref=row.source_or_causal_policy_ref, bound_health_resolution_ref=health.resolution_ref,
-            bound_health_resolved_at=health.resolved_at, canonical_transition_ref=row.canonical_transition_ref,
-            omissions_exclusions_reason_codes=())
+        d = B.build_delivered_entry(row, st.status, health.resolution_ref, health.resolved_at)
         return self._store(request_id, Binding(request_id, d, O.delivered_hash(self.t, d), fence))
 
     def note_correction_after_bind(self, request_id: str, evidence: Ref):
