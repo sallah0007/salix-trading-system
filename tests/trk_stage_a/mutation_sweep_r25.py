@@ -27,8 +27,16 @@ M = [
  (EN, 'json.dumps(si, sort_keys=True, allow_nan=False)', 'json.dumps(si, allow_nan=False)'),
  (EN, 'json.dumps(si, sort_keys=True, allow_nan=False)', 'json.dumps(si, sort_keys=True)'),
  (EN, 'e.get("SUBJECT_VERSION_OR_HASH"))\n', '0)\n'),
+ (TC, 'if t is None: raise Refusal(c["task_origin"], code="REVIEW_TASK_NOT_BOUND")', 'pass'),
+ (TC, 'if c["framing_hash"] != t["framing_hash"] or c["context_hash"] != t["context_hash"]: raise', 'if c["framing_hash"] != t["framing_hash"]: raise'),
+ (TC, 'if sorted(c["forbidden_inputs"]) != sorted(t["forbidden_inputs"]): raise', 'if False: raise'),
+ (TC, 'if used: raise Refusal(",".join(sorted(used)), code="REVIEW_FORBIDDEN_INPUT_USED")', 'pass'),
+ (TC, 'raise Refusal(c["finding_id"], code="FINDING_ID_REUSED")', 'return None, ("FINDING", dict(c))'),
+ (TC, 'raise Refusal(finding["finding_id"], code="FINDING_ID_REUSED")', 'break'),
+ (TC, 'raise Refusal(task["task_origin"], code="REVIEW_TASK_REBOUND")', 'return None, ("REVIEW_TASK", dict(task))'),
+ (TC, 'or not c["evidence_refs"]:', ':'),
 ]
-T = ["tests/trk_stage_a/test_r25_defects.py", "tests/trk_stage_a/test_r24_composed.py", "tests/trk_stage_a/test_verifier_independence.py", "tests/trk_stage_a/test_health_envelope.py"]
+T = ["tests/trk_stage_a/test_r25_defects.py", "tests/trk_stage_a/test_r24_composed.py", "tests/trk_stage_a/test_verifier_independence.py", "tests/trk_stage_a/test_health_envelope.py", "tests/trk_stage_a/test_r24_core.py"]
 def run():
     try: return subprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-x", *[str(ROOT / t) for t in T]], cwd=ROOT, capture_output=True, text=True, timeout=90, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1")).returncode
     except subprocess.TimeoutExpired: return 99

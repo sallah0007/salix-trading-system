@@ -130,3 +130,41 @@ class B5AntiReplaySubject(unittest.TestCase):
         import pathlib; hits = [p for p in pathlib.Path("stage_a").rglob("*.py") if "AntiReplay" in p.read_text() and p.name != "envelope.py"]
         self.assertEqual(hits, [])          # no Health boundary in this repository consumes packets: AntiReplay is a pure validator (REFERENCE_ONLY)
 if __name__ == "__main__": unittest.main()
+
+class B22ReviewerCarrier(unittest.TestCase):
+    T = dict(task_origin="T1", framing_hash="f" * 64, context_hash="c" * 64, forbidden_inputs=["prior-verdict", "owner-hint"])
+    def carrier(self, **kw):
+        c = dict(finding_id="F1", reviewer_role="CODER", reviewer_version="1", implementation="MODEL", topology="SINGLE", context_hash="c" * 64, task_origin="T1", framing_hash="f" * 64,
+                 evidence_refs=["doc:A#p3"], affected_scope="XAUUSD/H4", proposed_investigation="re-derive", forbidden_inputs=["prior-verdict", "owner-hint"], author="codex"); c.update(kw); return c
+    def mk(self, bind=True):
+        c = core(); bind and c.bind_review_task(self.T); return c
+    def test_positive_records_finding_and_is_idempotent_and_mutates_nothing_else(self):
+        c = self.mk(); before = dict(c._replay()["health"]); c.accept_review_finding(self.carrier()); c.accept_review_finding(self.carrier())
+        st = c._replay(); self.assertEqual(len(st["findings"]), 1); self.assertEqual(st["health"], before)
+    def test_unbound_task_framing_context_and_denylist_guards(self):
+        self.assertEqual(code(self.mk(False).accept_review_finding, self.carrier()), "REVIEW_TASK_NOT_BOUND")
+        c = self.mk()
+        self.assertEqual(code(c.accept_review_finding, self.carrier(framing_hash="0" * 64)), "REVIEW_FRAMING_MISMATCH")
+        self.assertEqual(code(c.accept_review_finding, self.carrier(context_hash="0" * 64)), "REVIEW_FRAMING_MISMATCH")
+        self.assertEqual(code(c.accept_review_finding, self.carrier(forbidden_inputs=[])), "REVIEW_FORBIDDEN_INPUTS_MISMATCH")
+        self.assertEqual(code(c.accept_review_finding, self.carrier(evidence_refs=["doc:A#p3", "owner-hint"])), "REVIEW_FORBIDDEN_INPUT_USED")
+        self.assertEqual(c._replay()["findings"], [])
+    def test_malformed_carriers_refused(self):
+        c = self.mk()
+        for bad in (dict(extra="x"), dict(evidence_refs=[]), dict(evidence_refs="doc"), dict(reviewer_role=""), dict(author=1)):
+            self.assertEqual(code(c.accept_review_finding, self.carrier(**bad)), "REVIEW_CARRIER_VALUES_INVALID" if "extra" not in bad else "REVIEW_CARRIER_FIELDS_INVALID")
+        self.assertEqual(code(c.accept_review_finding, {k: v for k, v in self.carrier().items() if k != "framing_hash"}), "REVIEW_CARRIER_FIELDS_INVALID")
+    def test_same_finding_id_with_different_task_or_content_is_refused_for_both_carriers(self):
+        c = self.mk(); c.bind_review_task(dict(self.T, task_origin="T2")); c.accept_review_finding(self.carrier())
+        self.assertEqual(code(c.accept_review_finding, self.carrier(task_origin="T2")), "FINDING_ID_REUSED")
+        self.assertEqual(code(c.accept_review_finding, self.carrier(summary_x=1)), "REVIEW_CARRIER_FIELDS_INVALID")
+        self.assertEqual(code(c.accept_review_finding, self.carrier(proposed_investigation="different")), "FINDING_ID_REUSED")
+        d = core(); f = dict(finding_id="F9", task_origin="R1", summary="s", author="a"); d.accept_finding(f); d.accept_finding(f)
+        self.assertEqual(code(d.accept_finding, dict(f, task_origin="R2")), "FINDING_ID_REUSED"); self.assertEqual(len(d._replay()["findings"]), 1)
+    def test_task_rebinding_refused_and_identical_rebind_idempotent(self):
+        c = self.mk(); c.bind_review_task(self.T)
+        self.assertEqual(code(c.bind_review_task, dict(self.T, framing_hash="9" * 64)), "REVIEW_TASK_REBOUND")
+        self.assertEqual(code(c.bind_review_task, dict(self.T, forbidden_inputs="x")), "REVIEW_TASK_INVALID")
+    def test_survives_restart_replay(self):
+        c = self.mk(); c.accept_review_finding(self.carrier()); j = c._j; c2 = TrackerCore(j, simulation=True)
+        self.assertEqual(code(c2.accept_review_finding, self.carrier(proposed_investigation="x")), "FINDING_ID_REUSED")

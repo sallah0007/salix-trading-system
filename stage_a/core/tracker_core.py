@@ -51,7 +51,7 @@ class TrackerCore:
 
     # ---- replay: pure function of the journal up to a given sequence ---------------------------
     def _replay(self, upto=None):
-        st = dict(obs={}, cands={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={}, reviews={})
+        st = dict(obs={}, cands={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={}, reviews={}, tasks={})
         for r in self._j.read_from(0):
             if upto is not None and r.seq > upto: break
             b = json.loads(r.body_json); k = r.kind
@@ -85,6 +85,7 @@ class TrackerCore:
             elif k == "Q_REACTIVATE": st["q"][b["subject"]]["status"] = "ACTIVE"; st["reverify"][b["subject"]] = r.seq        # eligibility must be re-evidenced after reactivation
             elif k == "HEALTH": st["health"][b["subject"]] = dict(b, seq=r.seq)
             elif k == "FINDING": st["findings"].append(b)
+            elif k == "REVIEW_TASK": st["tasks"][b["task_origin"]] = b
         return st
 
     # ---- atomic semantic operation: validate against the EXACT committed head, append with that head, revalidate on any race -----
@@ -447,7 +448,49 @@ class TrackerCore:
     def accept_finding(self, finding: dict):
         if not isinstance(finding, dict) or set(finding) != set(self.FINDING_FIELDS) or any(not isinstance(finding[k], str) or not finding[k] for k in self.FINDING_FIELDS):
             raise Refusal("finding carries non-finding fields or lacks task origin", code="REVIEW_INPUT_NOT_FINDING_ONLY")
-        self._commit(lambda st: (None, ("FINDING", dict(finding))))            # recorded only; mutates no state, authorizes nothing
+        def d(st):
+            for f in st["findings"]:
+                if f["finding_id"] == finding["finding_id"]:
+                    if {k: v for k, v in f.items() if k != "plane"} == finding: return None, None                                                  # identical re-submission: idempotent, nothing appended
+                    raise Refusal(finding["finding_id"], code="FINDING_ID_REUSED")                      # same id, different content/task_origin: never two findings under one id
+            return None, ("FINDING", dict(finding))
+        self._commit(d)            # recorded only; mutates no state, authorizes nothing. LEGACY minimal carrier: no bound task/framing/denylist - use accept_review_finding for the §15 carrier
+
+    # B22 (frozen Tracker DOCX section 15 reviewer boundary): Tracker-side carrier + guards. No SALIX AI is built or invoked; the carrier is recorded, never acted on.
+    REVIEW_TASK_FIELDS = ("task_origin", "framing_hash", "context_hash", "forbidden_inputs")
+    REVIEW_CARRIER_FIELDS = ("finding_id", "reviewer_role", "reviewer_version", "implementation", "topology", "context_hash", "task_origin", "framing_hash",
+                             "evidence_refs", "affected_scope", "proposed_investigation", "forbidden_inputs", "author")
+    _LISTS = ("evidence_refs", "forbidden_inputs")
+    @staticmethod
+    def _strs(v): return isinstance(v, list) and all(isinstance(x, str) and x for x in v)
+    def bind_review_task(self, task: dict):
+        """Binds a review task (origin, framing hash, context hash, forbidden-input denylist) BEFORE any finding may cite it. The framing/denylist are supplied by the task owner, never by the reviewer."""
+        if not isinstance(task, dict) or set(task) != set(self.REVIEW_TASK_FIELDS) or not all(isinstance(task[k], str) and task[k] for k in ("task_origin", "framing_hash", "context_hash")) or not self._strs(task["forbidden_inputs"]):
+            raise Refusal("review task shape", code="REVIEW_TASK_INVALID")
+        def d(st):
+            old = st["tasks"].get(task["task_origin"])
+            if old is not None:
+                if {k: old[k] for k in self.REVIEW_TASK_FIELDS} == task: return None, None
+                raise Refusal(task["task_origin"], code="REVIEW_TASK_REBOUND")                          # a task's framing is never silently replaced
+            return None, ("REVIEW_TASK", dict(task))
+        self._commit(d)
+    def accept_review_finding(self, c: dict):
+        if not isinstance(c, dict) or set(c) != set(self.REVIEW_CARRIER_FIELDS): raise Refusal("carrier fields", code="REVIEW_CARRIER_FIELDS_INVALID")
+        if any(not isinstance(c[k], str) or not c[k] for k in self.REVIEW_CARRIER_FIELDS if k not in self._LISTS) or not all(self._strs(c[k]) for k in self._LISTS) or not c["evidence_refs"]:
+            raise Refusal("carrier values", code="REVIEW_CARRIER_VALUES_INVALID")
+        def d(st):
+            t = st["tasks"].get(c["task_origin"])
+            if t is None: raise Refusal(c["task_origin"], code="REVIEW_TASK_NOT_BOUND")
+            if c["framing_hash"] != t["framing_hash"] or c["context_hash"] != t["context_hash"]: raise Refusal("framing/context", code="REVIEW_FRAMING_MISMATCH")
+            if sorted(c["forbidden_inputs"]) != sorted(t["forbidden_inputs"]): raise Refusal("forbidden inputs", code="REVIEW_FORBIDDEN_INPUTS_MISMATCH")
+            used = set(c["evidence_refs"]) & set(t["forbidden_inputs"])
+            if used: raise Refusal(",".join(sorted(used)), code="REVIEW_FORBIDDEN_INPUT_USED")
+            for f in st["findings"]:
+                if f["finding_id"] == c["finding_id"]:
+                    if {k: v for k, v in f.items() if k != "plane"} == c: return None, None
+                    raise Refusal(c["finding_id"], code="FINDING_ID_REUSED")
+            return None, ("FINDING", dict(c))
+        self._commit(d)
 
 from dataclasses import dataclass as _dc
 from ..gateway.contracts import HealthSnapshot as _HS
