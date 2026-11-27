@@ -75,3 +75,24 @@ def may_clear(recovery_class: str, evidence_kind: str) -> bool:
     if recovery_class == "EVIDENCE_REVALIDATION_REQUIRED":
         return evidence_kind == "REVALIDATION_PROOF"
     return evidence_kind in ("FRESH_QUALIFYING_EVIDENCE", "REVALIDATION_PROOF")
+
+# ---- Master Health V3 invariants (sections 5, 10): aggregate masking and upstream-vs-local attribution -------------------------
+def aggregate_state(members) -> str:
+    """AGGREGATE_HEALTHY cannot mask a critical member. members = iterable of (producer_reported_state, is_critical).
+    Only the literal 'HEALTHY' counts as healthy; any other, missing or unknown state is not healthy (state vocabulary is not
+    enumerated in the sources read, so none is invented). Empty input is UNKNOWN, never HEALTHY. Critical-set MEMBERSHIP is supplied
+    by the caller (its registry is DEFERRED, D18)."""
+    members = list(members)
+    if not members:
+        return "UNKNOWN"
+    if any(c and s != "HEALTHY" for s, c in members):
+        return "BLOCKED_BY_CRITICAL_MEMBER"
+    if all(s == "HEALTHY" for s, _ in members):
+        return "AGGREGATE_HEALTHY"
+    return "NON_CRITICAL_MEMBER_NOT_HEALTHY"
+
+def attribute_failure(independent_local_evidence: bool, upstream_unhealthy: bool) -> str:
+    """BLOCKED_BY_UPSTREAM != local failure unless independent local evidence exists (Master Health V3 s10)."""
+    if independent_local_evidence:
+        return "LOCAL_FAILURE"
+    return "BLOCKED_BY_UPSTREAM" if upstream_unhealthy else "NO_FAILURE_ATTRIBUTED"
