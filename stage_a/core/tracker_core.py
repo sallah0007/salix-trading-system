@@ -1,212 +1,361 @@
-"""TrackerCore: ONE composition path for source-backed Core mechanics over a single fenced journal (reuses ObjectStoreJournal, canonical_bytes/domain_hash, half-open fence; no second registry or lifecycle).
+"""TrackerCore: ONE composition path for source-backed Core mechanics over a single fenced journal (reuses ObjectStoreJournal, canonical_bytes/domain_hash, the half-open fence, and - for eligibility -
+the ONE existing Tracker chain-status authority; it creates no second registry, lifecycle or eligibility source).
 
-SOURCE-BACKED (registry 1eZThdek... s5; frozen DOCX s5/s6/s9/s21): observation idempotence / conflict quarantine; exactly-one source-contract match + freshness; half-open snapshot fence, MIXED_VINTAGE invalid,
-MIXED_DECLARED default-deny; semantic-epoch dependent invalidation; multi-reason quarantine with reopen != reactivation and reconstructability; as-of eligibility from QUALIFIED journals only;
-L2_REQUIREMENT / L2_STATUS / RECORDING_HEALTH; reviewer-input guard (finding-only, creator != certifier).
-CANDIDATE / UNBOUND (never defaulted): the observation identity BYTE encoding (fact NAMES are source-present; `OBS_FACTS_CANDIDATE` + canonical_bytes is an internal carrier, NOT a production key), manifest bytes,
-DATA_VINTAGE_MODE values, calendar/DST segmentation, per-provider contract instances, L2 appointment. Nothing here qualifies a provider or authorizes any gate."""
+HONEST STATUS (R22): these are INTERNAL CANDIDATE mechanics. Journal kinds, observation facts, verification results and health are CALLER-ASSERTED until the exact admitted schemas, authority, role, policy and
+actual verifier bindings exist (all source-owned, unbound). Therefore:
+  * simulation=True  -> explicit SIMULATION evidence: positive controls run and may report SIMULATION_EVIDENCE_* states; the Gateway health they produce is typed `CoreHealthSnapshot(evidence_class=SIMULATION)`.
+  * simulation=False -> mechanics that need no external authority work (observation admission, contract resolution, quarantine opening, snapshot sealing), but anything that would ASSERT eligibility, health,
+    reconstruction or a mixed-declared view returns typed HELD/UNDETERMINED with the exact missing prerequisites. An ordinary store keyspace is NOT semantic/source/provider qualification.
+Unassigned slots (never defaulted): observation byte encoding (fact NAMES are source-present; `OBS_FACTS_CANDIDATE` + canonical_bytes is an internal carrier), manifest bytes, DATA_VINTAGE_MODE values,
+calendar/DST, per-provider contract instances, L2 appointment/profile/interval, governed mixed-declared policy, definition-proof for NOT_APPLICABLE, reconstruction-proof, D25 clear/retry policy."""
 import json
-from ..errors import Refusal
+from ..errors import Refusal, UnknownCommit
 from ..storage.byte_primitives import canonical_bytes, domain_hash
 from ..storage.authority_class import authority_class_of, QUALIFIED
+from tracker_component.journal_port import HeadMismatch
 
 OBS_FACTS_CANDIDATE = ("instrument", "timeframe", "bar_identity", "broker_time", "utc_time", "broker_utc_rule", "source_provider", "raw_source_version", "schema_version")
 REQ = ("REQUIRED", "NOT_APPLICABLE_BY_GOVERNED_DEFINITION")
 L2_ST = ("PASS", "FAIL", "UNAVAILABLE")
 L1_ST = ("PASS", "FAIL")
-HEALTH = ("HEALTHY", "NOT_HEALTHY", "UNKNOWN")
 NEW, REPEAT, CONFLICT = "NEW", "IDEMPOTENT_REPEAT", "CONFLICT_QUARANTINED"
+HELD = "HELD"
+SIM_ELIGIBLE, SIM_NOT_ELIGIBLE = "SIMULATION_EVIDENCE_ELIGIBLE", "SIMULATION_EVIDENCE_NOT_ELIGIBLE"
+QUALIFIED_PREREQS_UNBOUND = ("OBSERVATION_ADMISSION_SCHEMA_UNBOUND", "VERIFIER_BINDING_UNBOUND", "GOVERNED_THRESHOLD_UNBOUND", "L2_APPOINTMENT_PROFILE_UNBOUND")
 
 def _s(x): return json.loads(canonical_bytes(x).decode("ascii"))
+def _int(x): return isinstance(x, int) and not isinstance(x, bool)
 
 class TrackerCore:
-    def __init__(self, journal, *, simulation: bool):
-        self._j = journal; self.simulation = bool(simulation)
+    def __init__(self, journal, *, simulation: bool, chain_status=None):
+        self._j = journal; self.simulation = bool(simulation); self._chain = chain_status
         cls = authority_class_of(journal)
         if (cls == QUALIFIED) == self.simulation:
             raise Refusal("journal class %s vs simulation=%s" % (cls, simulation), code="AUTHORITY_CLASS_MISMATCH")
 
-    # ---- replay: pure function of the journal -------------------------------------------------
+    # ---- replay: pure function of the journal up to a given sequence ---------------------------
     def _replay(self, upto=None):
-        st = dict(obs={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, inval={}, q={}, qlog=[], health={}, findings=[], quar_raw={})
+        st = dict(obs={}, amb={}, contracts={}, snaps={}, policies={}, epoch={}, deps={}, ups={}, inval={}, q={}, health={}, findings=[], quar_raw={}, reverify={})
         for r in self._j.read_from(0):
             if upto is not None and r.seq > upto: break
             b = json.loads(r.body_json); k = r.kind
-            if k == "OBS_ADMITTED": st["obs"][b["key"]] = b["digest"]
+            if k == "OBS_ADMITTED": st["obs"][b["key"]] = b
             elif k == "OBS_AMBIGUOUS": st["amb"][b["key"]] = sorted(set(st["amb"].get(b["key"], []) + b["digests"]))
-            elif k == "OBS_AMBIGUITY_RESOLVED": st["amb"].pop(b["key"], None); st["obs"][b["key"]] = b["digest"]
+            elif k == "OBS_AMBIGUITY_RESOLVED": st["amb"].pop(b["key"], None); st["obs"][b["key"]] = dict(st["obs"][b["key"]], digest=b["digest"]) if b["key"] in st["obs"] else b
             elif k == "CONTRACT_REGISTERED": st["contracts"][(b["id"], b["version"])] = b
             elif k == "CONTRACT_QUARANTINED": st["quar_raw"][b["raw_digest"]] = b["why"]
             elif k == "SNAPSHOT_SEALED": st["snaps"][b["hash"]] = b
             elif k == "MIXED_POLICY": st["policies"][b["id"]] = b
-            elif k == "DEPENDENCY": st["deps"].setdefault(b["upstream"], []).append(b["dependent"])
-            elif k == "EPOCH": 
-                st["epoch"][b["key"]] = b["epoch"]
-                stack = list(st["deps"].get(b["key"], []))
+            elif k == "MIXED_POLICY_REVOKED": st["policies"][b["id"]] = dict(st["policies"].get(b["id"], {}), revoked=True)
+            elif k == "DEPENDENCY":
+                st["deps"].setdefault(b["upstream"], []).append(b["dependent"]); st["ups"].setdefault(b["dependent"], []).append(b["upstream"])
+            elif k == "EPOCH":
+                st["epoch"][b["key"]] = b["epoch"]; stack = list(st["deps"].get(b["key"], []))
+                st["reverify"][b["key"]] = r.seq
                 while stack:
                     d = stack.pop()
-                    if d not in st["inval"]: st["inval"][d] = b["key"]; stack += st["deps"].get(d, [])
+                    if d not in st["inval"]: st["inval"][d] = (b["key"], r.seq); st["reverify"][d] = r.seq; stack += st["deps"].get(d, [])
             elif k == "RERESOLVED": st["inval"].pop(b["key"], None)
+            elif k == "REVERIFY_REQUESTED": st["reverify"][b["key"]] = r.seq
             elif k == "Q_REASON": st["q"].setdefault(b["subject"], {"reasons": set(), "status": "QUARANTINED"})["reasons"].add(b["reason"]); st["q"][b["subject"]]["status"] = "QUARANTINED"
             elif k == "Q_CLEAR": st["q"][b["subject"]]["reasons"].discard(b["reason"])
             elif k == "Q_REOPEN": st["q"][b["subject"]]["status"] = "REOPENED"
             elif k == "Q_REACTIVATE": st["q"][b["subject"]]["status"] = "ACTIVE"
-            elif k == "HEALTH": st["health"][b["key"]] = b
+            elif k == "HEALTH": st["health"][b["subject"]] = dict(b, seq=r.seq)
             elif k == "FINDING": st["findings"].append(b)
         return st
 
-    def _app(self, kind, body):
-        self._j.append(self._j.head(), kind, _s(body))
+    # ---- atomic semantic operation: validate against the EXACT committed head, append with that head, revalidate on any race -----
+    def _commit(self, decide):
+        for _ in range(8):
+            head = self._j.head(); st = self._replay(head.seq)
+            out, rec = decide(st)
+            if rec is None: return out
+            try:
+                self._j.append(head, rec[0], _s(rec[1])); return out
+            except (HeadMismatch, UnknownCommit):
+                continue                                   # another writer (or an unknown commit) moved the head: re-read and revalidate, never overwrite
+        raise Refusal("core commit contention", code="CORE_COMMIT_CONTENTION")
 
-    # ---- B01 observation identity ---------------------------------------------------------------
+    # ---- B01 observation identity -----------------------------------------------------------------
     @staticmethod
     def obs_key(facts: dict) -> str:
-        if set(facts) != set(OBS_FACTS_CANDIDATE) or any(not isinstance(v, str) or not v for v in facts.values()):
+        if not isinstance(facts, dict) or set(facts) != set(OBS_FACTS_CANDIDATE) or any(not isinstance(v, str) or not v for v in facts.values()):
             raise Refusal("observation facts", code="OBSERVATION_FACTS_INVALID")
         return domain_hash("TRK/OBS_CANDIDATE", canonical_bytes({k: facts[k] for k in OBS_FACTS_CANDIDATE}))
 
-    def admit_observation(self, facts: dict, payload: bytes) -> str:
-        key, dg = self.obs_key(facts), domain_hash("TRK/PAYLOAD", payload); st = self._replay()
-        if key in st["amb"]:
-            if dg not in st["amb"][key]: self._app("OBS_AMBIGUOUS", {"key": key, "digests": [dg]})
-            return CONFLICT
-        if key in st["obs"]:
-            if st["obs"][key] == dg: return REPEAT
-            self._app("OBS_AMBIGUOUS", {"key": key, "digests": sorted({st["obs"][key], dg})}); return CONFLICT   # never overwritten
-        self._app("OBS_ADMITTED", {"key": key, "digest": dg}); return NEW
+    def admit_observation(self, facts: dict, payload: bytes, available_asof: int, vintage: str) -> str:
+        key = self.obs_key(facts)
+        if not _int(available_asof) or available_asof < 0 or not isinstance(vintage, str) or not vintage or not isinstance(payload, bytes):
+            raise Refusal("observation fields", code="OBSERVATION_FIELDS_INVALID")
+        dg = domain_hash("TRK/PAYLOAD", payload)
+        rec = {"key": key, "digest": dg, "facts": dict(facts), "available_asof": available_asof, "vintage": vintage, "payload_hex": payload.hex()}
+        def decide(st):
+            if key in st["amb"]:
+                return CONFLICT, (None if dg in st["amb"][key] else ("OBS_AMBIGUOUS", {"key": key, "digests": [dg]}))
+            if key in st["obs"]:
+                o = st["obs"][key]
+                if o["digest"] == dg and o["available_asof"] == available_asof and o["vintage"] == vintage: return REPEAT, None
+                return CONFLICT, ("OBS_AMBIGUOUS", {"key": key, "digests": sorted({o["digest"], dg})})     # never overwritten
+            return NEW, ("OBS_ADMITTED", rec)
+        return self._commit(decide)
 
     def resolve_ambiguity(self, key: str, chosen_digest: str, creator: str, certifier: str):
         if not creator or not certifier or creator == certifier: raise Refusal("creator!=certifier", code="CREATOR_IS_CERTIFIER")
-        st = self._replay()
-        if key not in st["amb"] or chosen_digest not in st["amb"][key]: raise Refusal(key, code="NOT_A_PENDING_CANDIDATE")
-        self._app("OBS_AMBIGUITY_RESOLVED", {"key": key, "digest": chosen_digest, "certifier": certifier})
+        def decide(st):
+            if key not in st["amb"] or chosen_digest not in st["amb"][key]: raise Refusal(key, code="NOT_A_PENDING_CANDIDATE")
+            return None, ("OBS_AMBIGUITY_RESOLVED", {"key": key, "digest": chosen_digest, "certifier": certifier})
+        self._commit(decide)
 
     def observation_usable(self, key: str) -> bool:
         st = self._replay(); return key in st["obs"] and key not in st["amb"]
 
-    # ---- B04 source contract: exactly one match + freshness -------------------------------------
+    @staticmethod
+    def _payload_reconstructs(o) -> bool:
+        try: return domain_hash("TRK/PAYLOAD", bytes.fromhex(o["payload_hex"])) == o["digest"]
+        except Exception: return False
+
+    # ---- B04 source contract: exactly one match + freshness ---------------------------------------
     @staticmethod
     def derive_fingerprint(envelope: dict) -> str:       # derived from structure, never from the provider's own label
         shape = {k: type(v).__name__ for k, v in envelope.items() if k not in ("label", "contract_label", "watermark")}
         return domain_hash("TRK/ENVELOPE_SHAPE", canonical_bytes(shape))
 
     def register_contract(self, cid: str, version: str, fingerprint: str, max_staleness: int, battery_passed: bool):
-        self._app("CONTRACT_REGISTERED", {"id": cid, "version": version, "fingerprint": fingerprint, "max_staleness": max_staleness, "battery_passed": bool(battery_passed)})
+        self._commit(lambda st: (None, ("CONTRACT_REGISTERED", {"id": cid, "version": version, "fingerprint": fingerprint, "max_staleness": max_staleness, "battery_passed": bool(battery_passed)})))
 
     def resolve_contract(self, envelope: dict, raw: bytes, now: int):
-        st = self._replay(); fp = self.derive_fingerprint(envelope); rd = domain_hash("TRK/RAW", raw)
-        hits = [c for c in st["contracts"].values() if c["fingerprint"] == fp]
-        if len(hits) != 1:
-            self._app("CONTRACT_QUARANTINED", {"raw_digest": rd, "why": "ZERO_MATCH" if not hits else "MULTI_MATCH", "raw_hex": raw.hex()}); return ("QUARANTINED", "ZERO_MATCH" if not hits else "MULTI_MATCH")
-        c = hits[0]
-        if not c["battery_passed"]: return ("NOT_USABLE", "CHALLENGE_BATTERY_NOT_PASSED")
-        wm = envelope.get("watermark")
-        if not isinstance(wm, int) or isinstance(wm, bool) or now - wm > c["max_staleness"]: return ("HELD", "STALE_OR_MISSING_WATERMARK")
-        return ("RESOLVED", (c["id"], c["version"]))
+        fp = self.derive_fingerprint(envelope); rd = domain_hash("TRK/RAW", raw); out = {}
+        def decide(st):
+            hits = [c for c in st["contracts"].values() if c["fingerprint"] == fp]
+            if len(hits) != 1:
+                why = "ZERO_MATCH" if not hits else "MULTI_MATCH"; out["r"] = ("QUARANTINED", why)
+                return None, ("CONTRACT_QUARANTINED", {"raw_digest": rd, "why": why, "raw_hex": raw.hex()})
+            c = hits[0]
+            if not c["battery_passed"]: out["r"] = ("NOT_USABLE", "CHALLENGE_BATTERY_NOT_PASSED"); return None, None
+            wm = envelope.get("watermark")
+            if not _int(wm) or now - wm > c["max_staleness"]: out["r"] = ("HELD", "STALE_OR_MISSING_WATERMARK"); return None, None
+            out["r"] = ("RESOLVED", (c["id"], c["version"])); return None, None
+        self._commit(decide); return out["r"]
 
-    # ---- B03 snapshot: half-open fence, vintage, default-deny -----------------------------------
-    def register_mixed_policy(self, pid: str, declared_by: str):
-        if not pid or not declared_by: raise Refusal("policy", code="POLICY_INCOMPLETE")
-        self._app("MIXED_POLICY", {"id": pid, "declared_by": declared_by})
+    # ---- B03 snapshot: members come from STORED observation facts, never from the caller -----------
+    def register_mixed_policy(self, pid: str, declared_by: str, expires_at: int):
+        """SIMULATION-ONLY convenience: a governed MIXED_DECLARED policy (identity, owner, freshness, revocation) is source-owned and UNBOUND; this records a candidate for simulation evidence only."""
+        if not self.simulation: raise Refusal("governed MIXED_DECLARED policy source unbound", code="MIXED_DECLARED_POLICY_UNBOUND_HELD")
+        if not pid or not declared_by or not _int(expires_at): raise Refusal("policy", code="POLICY_INCOMPLETE")
+        self._commit(lambda st: (None, ("MIXED_POLICY", {"id": pid, "declared_by": declared_by, "expires_at": expires_at, "revoked": False})))
 
-    def seal(self, instrument: str, query_asof: int, fence: int, members: list, mixed_policy_id=None):
-        st = self._replay()
-        if query_asof > fence: raise Refusal("query_asof after fence", code="ASOF_AFTER_FENCE")
-        inc = []
-        for m in members:
-            if m["instrument"] != instrument: raise Refusal(m["key"], code="CROSS_INSTRUMENT_MEMBER")
-            if m["key"] in st["amb"] or m["key"] not in st["obs"]: raise Refusal(m["key"], code="MEMBER_NOT_USABLE_OBSERVATION")
-            if m["available_asof"] < fence: inc.append(m)                  # half-open: equality excluded
-        by_tf = {}
-        for m in inc: by_tf.setdefault(m["timeframe"], set()).add(m["vintage"])
-        if len({v for vs in by_tf.values() for v in vs}) > 1 or any(len(v) > 1 for v in by_tf.values()):
-            if mixed_policy_id is None or mixed_policy_id not in st["policies"]: return ("MIXED_VINTAGE_REFUSED", None)
-        body = {"instrument": instrument, "query_asof": query_asof, "fence": fence, "members": sorted(({k: m[k] for k in ("key", "timeframe", "vintage", "available_asof")} for m in inc), key=lambda x: x["key"]),
-                "mixed_policy": mixed_policy_id}
-        h = domain_hash("TRK/SNAPSHOT_CANDIDATE", canonical_bytes(body))
-        if h not in st["snaps"]: self._app("SNAPSHOT_SEALED", dict(body, hash=h))
-        return ("SEALED", h)
+    def revoke_mixed_policy(self, pid: str):
+        self._commit(lambda st: (None, ("MIXED_POLICY_REVOKED", {"id": pid})))
 
-    def verify_snapshot(self, h: str, instrument, query_asof, fence, members, mixed_policy_id=None) -> bool:
-        st = self._replay(); return h in st["snaps"] and st["snaps"][h]["fence"] == fence and h == self._hash_only(instrument, query_asof, fence, members, mixed_policy_id)
+    @staticmethod
+    def _members_from_store(st, instrument, member_keys, claims):
+        out = []
+        for k in member_keys:
+            o = st["obs"].get(k)
+            if o is None or k in st["amb"]: raise Refusal(k, code="MEMBER_NOT_USABLE_OBSERVATION")
+            f = o["facts"]
+            if f["instrument"] != instrument: raise Refusal(k, code="CROSS_INSTRUMENT_MEMBER")
+            m = {"key": k, "timeframe": f["timeframe"], "vintage": o["vintage"], "available_asof": o["available_asof"], "digest": o["digest"], "schema_version": f["schema_version"]}
+            c = (claims or {}).get(k)
+            if c is not None and any(c.get(n) != m[n] for n in c):
+                raise Refusal(k, code="MEMBER_CLAIM_MISMATCH")                  # a caller's replacement scope/timeframe/vintage/availability is refused
+            out.append(m)
+        return out
 
-    def _hash_only(self, instrument, query_asof, fence, members, mixed_policy_id):
-        inc = [m for m in members if m["available_asof"] < fence]
-        body = {"instrument": instrument, "query_asof": query_asof, "fence": fence, "members": sorted(({k: m[k] for k in ("key", "timeframe", "vintage", "available_asof")} for m in inc), key=lambda x: x["key"]), "mixed_policy": mixed_policy_id}
-        return domain_hash("TRK/SNAPSHOT_CANDIDATE", canonical_bytes(body))
+    def seal(self, instrument: str, query_asof: int, fence: int, member_keys: list, mixed_policy_id=None, claims=None):
+        res = {}
+        def decide(st):
+            if not _int(query_asof) or not _int(fence) or query_asof > fence: raise Refusal("query_asof after fence", code="ASOF_AFTER_FENCE")
+            mem = self._members_from_store(st, instrument, member_keys, claims)
+            for m in mem:
+                if self._blocked(st, m["key"]): raise Refusal(m["key"], code="MEMBER_BLOCKED")
+            inc = [m for m in mem if m["available_asof"] < fence]                # half-open: equality excluded
+            tfs = {}
+            for m in inc: tfs.setdefault(m["timeframe"], set()).add(m["vintage"])
+            mixed = len({v for vs in tfs.values() for v in vs}) > 1 or any(len(v) > 1 for v in tfs.values())
+            kind = "SEALED"
+            if mixed:
+                if not self.simulation: res["r"] = ("MIXED_DECLARED_POLICY_UNBOUND_HELD", None); return None, None
+                p = st["policies"].get(mixed_policy_id)
+                if p is None or p.get("revoked") or query_asof >= p["expires_at"]: res["r"] = ("MIXED_VINTAGE_REFUSED", None); return None, None
+                kind = "SIMULATION_MIXED_VIEW"                                    # NOT a single causal snapshot
+            body = {"kind": kind, "instrument": instrument, "query_asof": query_asof, "fence": fence, "members": sorted(inc, key=lambda x: x["key"]), "mixed_policy": mixed_policy_id if mixed else None}
+            h = domain_hash("TRK/SNAPSHOT_CANDIDATE", canonical_bytes(body)); res["r"] = (kind, h)
+            return None, (None if h in st["snaps"] else ("SNAPSHOT_SEALED", dict(body, hash=h)))
+        self._commit(decide); return res["r"]
+
+    def verify_snapshot(self, h: str, instrument, query_asof, fence, member_keys, mixed_policy_id=None) -> bool:
+        st = self._replay(); s = st["snaps"].get(h)
+        if s is None: return False
+        try:
+            mem = self._members_from_store(st, instrument, member_keys, None)
+        except Refusal: return False
+        inc = sorted([m for m in mem if m["available_asof"] < fence], key=lambda x: x["key"])
+        body = {"kind": s["kind"], "instrument": instrument, "query_asof": query_asof, "fence": fence, "members": inc, "mixed_policy": mixed_policy_id if s["kind"] != "SEALED" else None}
+        return domain_hash("TRK/SNAPSHOT_CANDIDATE", canonical_bytes(body)) == h
 
     # ---- B05 semantic epoch / dependent invalidation ----------------------------------------------
     def declare_dependency(self, dependent: str, upstream: str):
         if dependent == upstream: raise Refusal(dependent, code="SELF_DEPENDENCY")
-        self._app("DEPENDENCY", {"dependent": dependent, "upstream": upstream})
+        def decide(st):
+            if self._reaches(st, upstream, dependent): raise Refusal(dependent, code="DEPENDENCY_CYCLE")
+            return None, ("DEPENDENCY", {"dependent": dependent, "upstream": upstream})
+        self._commit(decide)
+
+    @staticmethod
+    def _reaches(st, start, target):                      # does `start` already depend (transitively) on `target`?
+        seen, stack = set(), [start]
+        while stack:
+            c = stack.pop()
+            if c == target: return True
+            if c in seen: continue
+            seen.add(c); stack += st["ups"].get(c, [])
+        return False
 
     def advance_epoch(self, key: str, epoch: int):
-        if epoch <= self._replay()["epoch"].get(key, 0): raise Refusal(key, code="EPOCH_NOT_ADVANCING")
-        self._app("EPOCH", {"key": key, "epoch": epoch})
+        def decide(st):
+            if not _int(epoch) or epoch <= st["epoch"].get(key, 0): raise Refusal(key, code="EPOCH_NOT_ADVANCING")
+            return None, ("EPOCH", {"key": key, "epoch": epoch})
+        self._commit(decide)
 
     def reresolve(self, key: str):
-        st = self._replay()
-        if key not in st["inval"]: raise Refusal(key, code="NOT_INVALIDATED")
-        self._app("RERESOLVED", {"key": key})
+        """Clears an invalidation only with a FRESH witness (a verification recorded after the invalidation) and only when every recorded upstream is itself valid. The witness is caller-asserted
+        evidence, so a QUALIFIED core holds this (verifier binding unbound)."""
+        if not self.simulation: raise Refusal("fresh permitted witness/materialization binding unbound", code="VERIFIER_BINDING_UNBOUND_HELD")
+        def decide(st):
+            if key not in st["inval"]: raise Refusal(key, code="NOT_INVALIDATED")
+            if any(u in st["inval"] or self._blocked(st, u) for u in st["ups"].get(key, [])): raise Refusal(key, code="UPSTREAM_STILL_INVALID")
+            h = st["health"].get(key)
+            if h is None or h["seq"] <= st["inval"][key][1]: raise Refusal(key, code="NO_FRESH_WITNESS")
+            return None, ("RERESOLVED", {"key": key})
+        self._commit(decide)
 
     # ---- quarantine: multi-reason, retry suppression, reopen != reactivation ------------------------
-    def quarantine(self, subject: str, reason: str): self._app("Q_REASON", {"subject": subject, "reason": reason})
+    def quarantine(self, subject: str, reason: str):
+        self._commit(lambda st: (None, ("Q_REASON", {"subject": subject, "reason": reason})))
     def clear_reason(self, subject: str, reason: str, certifier: str, creator: str):
         if not certifier or certifier == creator: raise Refusal("creator!=certifier", code="CREATOR_IS_CERTIFIER")
-        if reason not in self._replay()["q"].get(subject, {"reasons": set()})["reasons"]: raise Refusal(reason, code="REASON_NOT_OPEN")
-        self._app("Q_CLEAR", {"subject": subject, "reason": reason})
+        def decide(st):
+            if reason not in st["q"].get(subject, {"reasons": set()})["reasons"]: raise Refusal(reason, code="REASON_NOT_OPEN")
+            return None, ("Q_CLEAR", {"subject": subject, "reason": reason})
+        self._commit(decide)
     def retry_allowed(self, subject: str) -> bool:
         q = self._replay()["q"].get(subject); return q is None or (not q["reasons"] and q["status"] == "ACTIVE")
     def reopen(self, subject: str):
-        if subject not in self._replay()["q"]: raise Refusal(subject, code="NOT_QUARANTINED")
-        self._app("Q_REOPEN", {"subject": subject})               # reopen alone never reactivates
-    def reactivate(self, subject: str, upstream_keys: list):
-        st = self._replay(); q = st["q"].get(subject)
-        if q is None or q["reasons"]: raise Refusal(subject, code="REASONS_STILL_OPEN")
-        bad = [k for k in upstream_keys if k not in st["obs"] or k in st["amb"]]
-        if bad: raise Refusal(",".join(bad), code="NOT_RECONSTRUCTABLE")
-        self._app("Q_REACTIVATE", {"subject": subject})
-    def blocked(self, key: str) -> list:
-        st = self._replay(); out = []
-        q = st["q"].get(key)
+        def decide(st):
+            if subject not in st["q"]: raise Refusal(subject, code="NOT_QUARANTINED")
+            return None, ("Q_REOPEN", {"subject": subject})                   # reopen alone never reactivates
+        self._commit(decide)
+
+    def _closure(self, st, subject):
+        seen, stack = set(), list(st["ups"].get(subject, []))
+        while stack:
+            c = stack.pop()
+            if c in seen: continue
+            seen.add(c); stack += st["ups"].get(c, [])
+        return sorted(seen)
+
+    def _reconstructable(self, st, up) -> bool:
+        o = st["obs"].get(up)
+        if o is not None: return up not in st["amb"] and self._payload_reconstructs(o)     # a stored digest alone is not reconstruction: the persisted payload must reproduce it
+        h = st["health"].get(up)
+        return h is not None and not self._blocked(st, up) and h["l1"] == "PASS" and h["l2"] != "FAIL"
+
+    def reactivate(self, subject: str):
+        """The closure is the RECORDED dependency closure (the caller supplies no list). Dependency identity recorded != dependency reconstructable: every ancestor must reproduce from persisted
+        material. Current source/code/environment/contract/raw reconstruction PROOF has no bound source, so a QUALIFIED core holds reactivation."""
+        if not self.simulation: raise Refusal("reconstruction proof binding unbound", code="RECONSTRUCTION_PROOF_BINDING_UNBOUND_HELD")
+        def decide(st):
+            q = st["q"].get(subject)
+            if q is None or q["reasons"]: raise Refusal(subject, code="REASONS_STILL_OPEN")
+            bad = [u for u in self._closure(st, subject) if not self._reconstructable(st, u)]
+            if bad: raise Refusal(",".join(bad), code="NOT_RECONSTRUCTABLE")
+            return None, ("Q_REACTIVATE", {"subject": subject})
+        self._commit(decide)
+
+    def _blocked(self, st, key) -> list:
+        out = []; q = st["q"].get(key)
         if q and (q["reasons"] or q["status"] != "ACTIVE"): out.append("QUARANTINED")
         if key in st["inval"]: out.append("EPOCH_INVALIDATED")
         if key in st["amb"]: out.append("OBSERVATION_AMBIGUOUS")
+        for u in self._closure(st, key):                                     # reverse-dependency propagation: a blocked ancestor blocks the dependent
+            uq = st["q"].get(u)
+            if (uq and (uq["reasons"] or uq["status"] != "ACTIVE")) or u in st["inval"] or u in st["amb"]:
+                out.append("UPSTREAM_BLOCKED"); break
         return out
+    def blocked(self, key: str) -> list: return self._blocked(self._replay(), key)
 
-    # ---- B14 verification / Recording Health --------------------------------------------------------
-    def record_verification(self, key: str, l2_requirement: str, l2_status: str, l1: str, at: int, max_age: int):
+    # ---- B14 verification / Recording Health (caller-asserted evidence until a verifier is bound) ------
+    def record_verification(self, subject: str, version: str, l2_requirement: str, l2_status: str, l1: str, at: int, max_age: int, verifier_id: str, result_digest: str, definition_ref: str = None):
         if l2_requirement not in REQ or l2_status not in L2_ST or l1 not in L1_ST: raise Refusal("vocabulary", code="HEALTH_VOCABULARY_UNKNOWN")
-        self._app("HEALTH", {"key": key, "req": l2_requirement, "l2": l2_status, "l1": l1, "at": at, "max_age": max_age})
-    def recording_health(self, key: str, now: int) -> str:
-        h = self._replay()["health"].get(key)
-        if h is None or now - h["at"] > h["max_age"]: return "UNKNOWN"          # absent / stale health can never certify
+        if not _int(at) or at < 0 or not _int(max_age) or max_age <= 0: raise Refusal("interval", code="HEALTH_INTERVAL_INVALID")
+        if not all(isinstance(x, str) and x for x in (subject, version, verifier_id, result_digest)): raise Refusal("binding", code="HEALTH_BINDING_INCOMPLETE")
+        if l2_requirement == "NOT_APPLICABLE_BY_GOVERNED_DEFINITION" and not definition_ref: raise Refusal("definition proof", code="NOT_APPLICABLE_NEEDS_DEFINITION_PROOF")
+        self._commit(lambda st: (None, ("HEALTH", {"subject": subject, "version": version, "req": l2_requirement, "l2": l2_status, "l1": l1, "at": at, "max_age": max_age,
+                                                    "verifier_id": verifier_id, "result_digest": result_digest, "definition_ref": definition_ref or "", "evidence_class": "CALLER_ASSERTED"})))
+
+    def reverify(self, subject: str, version: str, verifier, now: int, l2_requirement: str, max_age: int, definition_ref: str = None):
+        """Re-verification trigger path: RUNS the supplied verifier (callable(subject, version) -> (l1, l2, result_digest)) and records its result. Binding this to the real L2 recomputation
+        (stateful_verifier / independent_traversal over a materialization) is NOT wired: the qualified pipeline holds before materialization."""
+        l1, l2, dg = verifier(subject, version)
+        self.record_verification(subject, version, l2_requirement, l2, l1, now, max_age, getattr(verifier, "__name__", "verifier"), dg, definition_ref)
+
+    def request_reverification(self, subject: str, trigger: str):
+        if trigger not in ("STALE", "ABSENT", "EPOCH_ADVANCED", "QUARANTINE_CLEARED", "SCHEDULED"): raise Refusal(trigger, code="UNKNOWN_REVERIFY_TRIGGER")
+        self._commit(lambda st: (None, ("REVERIFY_REQUESTED", {"key": subject, "trigger": trigger})))
+
+    def due_for_reverification(self, subjects, now: int) -> list:
+        st = self._replay(); due = []
+        for s in subjects:
+            h = st["health"].get(s)
+            if h is None: due.append((s, "ABSENT"))
+            elif h["at"] > now or now - h["at"] > h["max_age"]: due.append((s, "STALE"))
+            elif st["reverify"].get(s, 0) >= h["seq"]: due.append((s, "EPOCH_ADVANCED"))
+        return due
+
+    def _health(self, st, subject, version, now) -> str:
+        h = st["health"].get(subject)
+        if h is None or h["version"] != version: return "UNKNOWN"
+        if h["at"] > now or now - h["at"] > h["max_age"]: return "UNKNOWN"                # future or stale evidence never certifies
+        if st["reverify"].get(subject, 0) >= h["seq"]: return "UNKNOWN"                   # a later epoch/reverification request supersedes this evidence
         if h["l1"] == "FAIL" or h["l2"] == "FAIL": return "NOT_HEALTHY"
         if h["req"] == "REQUIRED": return "HEALTHY" if h["l2"] == "PASS" else "UNKNOWN"   # UNAVAILABLE L2 never falls back to L1
         return "HEALTHY"
+    def recording_health(self, subject: str, version: str, now: int) -> str: return self._health(self._replay(), subject, version, now)
 
-    # ---- as-of eligibility (qualified journals only) ----------------------------------------------
-    def eligible_asof(self, key: str, asof_seq: int, now: int) -> dict:
-        if self.simulation: return {"eligible": False, "reasons": ["SIMULATION_NOT_ELIGIBLE"], "mode": "SIMULATION_EVIDENCE_ONLY"}
+    # ---- as-of eligibility: bound to the ONE existing chain-status authority; qualified use is HELD -----
+    def eligible_asof(self, subject: str, version: str, asof_seq: int, now: int, *, mv=None, fence=None) -> dict:
         st = self._replay(asof_seq); reasons = []
-        q = st["q"].get(key)
-        if q and (q["reasons"] or q["status"] != "ACTIVE"): reasons.append("QUARANTINED")
-        if key in st["inval"]: reasons.append("EPOCH_INVALIDATED")
-        if key in st["amb"]: reasons.append("OBSERVATION_AMBIGUOUS")
-        h = st["health"].get(key)
-        if h is None or now - h["at"] > h["max_age"] or h["l1"] == "FAIL" or h["l2"] == "FAIL" or (h["req"] == "REQUIRED" and h["l2"] != "PASS"): reasons.append("RECORDING_HEALTH_NOT_HEALTHY")
-        return {"eligible": not reasons, "reasons": reasons, "mode": "QUALIFIED"}
+        if self._blocked(st, subject): reasons += self._blocked(st, subject)
+        if self._health(st, subject, version, now) != "HEALTHY": reasons.append("RECORDING_HEALTH_NOT_HEALTHY")
+        if self._chain is not None and mv is not None and fence is not None:
+            f = self._chain.status_at(mv, fence)
+            if f is None or f.status != "CURRENT": reasons.append("CHAIN_STATUS_NOT_CURRENT")
+        if self.simulation:
+            return {"state": SIM_NOT_ELIGIBLE if reasons else SIM_ELIGIBLE, "eligible": False, "reasons": reasons, "mode": "SIMULATION_EVIDENCE_ONLY"}
+        missing = list(QUALIFIED_PREREQS_UNBOUND) + ([] if self._chain is not None else ["BASELINE_LIFECYCLE_AUTHORITY_UNBOUND"])
+        return {"state": HELD, "eligible": False, "reasons": reasons, "undetermined_inputs": missing, "mode": "QUALIFIED_HELD"}
 
-    # ---- composition output: the health decision the downstream Gateway actually consumes ----------------
-    def gateway_health(self, key: str, now: int, ref, resolved_at: int, *, asof_seq: int = None):
+    # ---- composition output: the health the downstream Gateway actually consumes -------------------
+    def gateway_health(self, subject: str, version: str, now: int, ref, resolved_at: int, *, asof_seq: int = None):
         from ..gateway.contracts import HealthSnapshot
-        blocked = self.blocked(key); health = self.recording_health(key, now)
-        ok = not blocked and health == "HEALTHY"
-        return HealthSnapshot(ref, resolved_at, ok)
+        from dataclasses import dataclass
+        if asof_seq is not None: raise Refusal("historical Health consistency mode has no source-correct rule here", code="HISTORICAL_HEALTH_MODE_UNRESOLVED")
+        st = self._replay()
+        ok = self.simulation and not self._blocked(st, subject) and self._health(st, subject, version, now) == "HEALTHY"
+        return CoreHealthSnapshot(ref, resolved_at, ok, "SIMULATION" if self.simulation else "QUALIFIED_HELD")
 
     # ---- reviewer / write-plane boundary ------------------------------------------------------------
     FINDING_FIELDS = ("finding_id", "task_origin", "summary", "author")
     def accept_finding(self, finding: dict):
-        if set(finding) != set(self.FINDING_FIELDS) or any(not isinstance(finding[k], str) or not finding[k] for k in self.FINDING_FIELDS):
+        if not isinstance(finding, dict) or set(finding) != set(self.FINDING_FIELDS) or any(not isinstance(finding[k], str) or not finding[k] for k in self.FINDING_FIELDS):
             raise Refusal("finding carries non-finding fields or lacks task origin", code="REVIEW_INPUT_NOT_FINDING_ONLY")
-        self._app("FINDING", dict(finding))                                   # recorded only; mutates no state, authorizes nothing
+        self._commit(lambda st: (None, ("FINDING", dict(finding))))            # recorded only; mutates no state, authorizes nothing
+
+from dataclasses import dataclass as _dc
+from ..gateway.contracts import HealthSnapshot as _HS
+@_dc(frozen=True)
+class CoreHealthSnapshot(_HS):
+    """A Health snapshot from Core that carries its evidence class. `acceptable` can be True ONLY for SIMULATION evidence; a qualified Core always reports QUALIFIED_HELD (acceptable=False)."""
+    evidence_class: str = "SIMULATION"

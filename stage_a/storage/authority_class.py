@@ -22,9 +22,15 @@ class SimulationStore:
     def put_if_match(self, key, data, etag): return self._i.put_if_match(_PREFIX + key, data, etag)
     def list_prefix(self, prefix): return [k[len(_PREFIX):] for k in self._i.list_prefix(_PREFIX + prefix)]
 
+_APPROVED_TEST_ADAPTERS = []          # explicit registry for approved fault-injection/test adapters; each entry is an exact type added under review (NOT a Python security sandbox)
+
+def approve_test_adapter(t):
+    if not isinstance(t, type): raise Refusal(repr(t), code="UNKNOWN_CARRIER")
+    _APPROVED_TEST_ADAPTERS.append(t)
+
 def _qualified_store_types():
     from .object_store import InMemoryObjectStore
-    return (InMemoryObjectStore,)
+    return (InMemoryObjectStore,) + tuple(_APPROVED_TEST_ADAPTERS)
 
 def _root_class(obj, depth=0) -> str:
     if depth > 4:
@@ -35,7 +41,7 @@ def _root_class(obj, depth=0) -> str:
     t = type(obj)                                                       # TYPE-level dispatch: instance attributes cannot shadow it
     if t is SimulationStore:
         return SIMULATION
-    if t in _qualified_store_types() or any(t is q or issubclass(t, q) for q in _qualified_store_types()):
+    if t in _qualified_store_types():                                    # EXACT type only: a subclass/wrapper of an approved adapter is an UNKNOWN carrier (no inheritance of class)
         return QUALIFIED
     if t is ObjectStoreJournal:
         return _root_class(obj._s, depth + 1)
