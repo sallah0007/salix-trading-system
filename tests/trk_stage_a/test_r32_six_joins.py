@@ -61,3 +61,17 @@ class Correlation(unittest.TestCase):
             rep = SJ.check_six_joins(d, r, fence=10, request_snapshot=bad); self.assertEqual((self.corr(rep)["REQUEST_SNAPSHOT_SAME_GENERATION"], rep.complete), (SJ.MISMATCH, False))
     def test_unlinkable_joins_are_reported_not_invented_and_never_qualified(self):
         r = reg("M1"); rep = SJ.check_six_joins(good(r), r, fence=10); self.assertEqual(self.corr(rep)["J1_J2_J3_J6_TO_GENERATION"], SJ.PRESENT_UNVERIFIED); self.assertFalse(rep.qualified)
+
+class ReverseJ1AndFamily(unittest.TestCase):
+    def st(self, rep): return {j: s for j, s, _ in rep.statuses}
+    def test_j1_is_a_reverse_reference_verified_only_against_supplied_binding_and_index(self):
+        r = reg("M1"); d = good(r); idx = {"dm1": "h1"}
+        self.assertEqual(self.st(SJ.check_six_joins(d, r, fence=10, dataset_manifests=idx, consumer_binding_id="b1"))["J1_DATASET_MANIFEST"], SJ.VERIFIED_AGAINST_REGISTRY)
+        self.assertEqual(self.st(SJ.check_six_joins(d, r, fence=10, dataset_manifests=idx))["J1_DATASET_MANIFEST"], SJ.PRESENT_UNVERIFIED)           # index alone: no consumer binding => not verified
+        for kw in ({"dataset_manifests": {"dm1": "other"}, "consumer_binding_id": "b1"}, {"dataset_manifests": {}, "consumer_binding_id": "b1"}, {"dataset_manifests": idx, "consumer_binding_id": "b-other"}):
+            rep = SJ.check_six_joins(d, r, fence=10, **kw); self.assertEqual((self.st(rep)["J1_DATASET_MANIFEST"], rep.complete), (SJ.MISMATCH, False))
+    def test_hypothesis_family_must_resolve_to_exactly_the_j6_family(self):
+        r = reg("M1"); d = good(r)
+        self.assertEqual(self.st(SJ.check_six_joins(d, r, fence=10, family_map={"h": "fam"}, hypothesis_family_id="h"))["J6_RESEARCH_FAMILY_EXPOSURE"], SJ.PRESENT_UNVERIFIED)
+        for kw in ({"family_map": {"h": "other"}, "hypothesis_family_id": "h"}, {"family_map": {"h": "fam"}, "hypothesis_family_id": "unknown"}, {"family_map": {"h": "fam"}}):
+            self.assertEqual(self.st(SJ.check_six_joins(d, r, fence=10, **kw))["J6_RESEARCH_FAMILY_EXPOSURE"], SJ.MISMATCH)
