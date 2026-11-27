@@ -93,3 +93,8 @@ class R22EraAndSearchBounds(unittest.TestCase):
     def test_malformed_normalization_yields_nothing(self):
         lk, store = lookup(self.rows()); bad = dict(T.subject()); bad["feature_id"] = None
         self.assertEqual(TI.subject_terminal_identities(bad, store.all(), T.normalizer(), active_era_id="ERA_1"), ())
+
+class R22UnsupportedActiveEra(unittest.TestCase):
+    def test_active_era_other_than_era_1_with_era_1_only_scope_asserts_nothing(self):
+        rows = [X(A("b"), era_id="ERA_2"), X(rec("b", state="REJECTED_INVALID"), era_id="ERA_2")]; lk, store = lookup(rows)
+        self.assertEqual(TI.subject_terminal_identities(dict(T.subject(), lookup_era_scope="ERA_1_ONLY"), store.all(), T.normalizer(), active_era_id="ERA_2"), ())
