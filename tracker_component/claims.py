@@ -1,6 +1,6 @@
 from .journal_port import HeadMismatch
 from .order import (ConstructionOrder, TrustAnchor, CLAIM_BOUND, CLAIM_CONSUMED,
-                    CLAIM_RELEASED, ORDER_ISSUED, ORDER_REVOKED)
+                    CLAIM_RELEASED, ORDER_ISSUED, ORDER_REVOKED, ORDER_PROVENANCE)
 from .projection import Projection
 from .lookup_adapter import construction_gate, PROCEED, INCOMPLETE_LOOKUP, DUPLICATE_OR_NEAR
 
@@ -19,7 +19,7 @@ class ClaimService:
         self._max = max_fence_retries
 
     # -- verification, always against the synced journal view ---------------
-    def _verify_order(self, order_id: str, subject_key: str, head_seq: int) -> ConstructionOrder:
+    def _verify_order(self, order_id: str, subject_key, head_seq: int) -> ConstructionOrder:
         raw = self._p.orders.get(order_id)
         if raw is None:
             raise Refusal("NO_ORDER", order_id)
@@ -30,7 +30,7 @@ class ClaimService:
             raise Refusal("ISSUER_NOT_ANCHORED", order.issued_by)
         if order.source_binding_hash != self._anchor.source_binding_hash:
             raise Refusal("SOURCE_BINDING_MISMATCH")
-        if order.subject_key != subject_key:
+        if subject_key is not None and order.subject_key != subject_key:
             raise Refusal("ORDER_SUBJECT_MISMATCH")
         if order.valid_until_seq is not None and head_seq > order.valid_until_seq:
             raise Refusal("ORDER_EXPIRED", order_id)
@@ -61,6 +61,29 @@ class ClaimService:
                 raise Refusal("ORDER_ID_EXISTS", order.order_id)
             return ORDER_ISSUED, order.to_body()
         return self._commit(build)
+
+    def attach_provenance(self, order_id: str, entry: dict):
+        """Appends ORDER_PROVENANCE: another requester/consumer asked for the same candidate. Never changes the order or its constraints."""
+        def build(head):
+            if order_id not in self._p.orders:
+                raise Refusal("NO_ORDER", order_id)
+            return ORDER_PROVENANCE, dict(entry, order_id=order_id)
+        return self._commit(build)
+
+    def order(self, order_id: str):
+        """Fresh-synced copy of the journaled order row, or None. Reading is not verification."""
+        self._p.sync(self._j)
+        o = self._p.orders.get(order_id)
+        return None if o is None else dict(o)
+
+    def order_provenance(self, order_id: str):
+        self._p.sync(self._j)
+        return [dict(x) for x in self._p.order_prov.get(order_id, [])]
+
+    def verified_order(self, order_id: str):
+        """The order if it verifies NOW on the synced journal (anchored issuer, anchored source binding, not revoked, not expired); raises Refusal otherwise. Subject is not checked: the content subject is not yet known at build start."""
+        self._p.sync(self._j)
+        return self._verify_order(order_id, None, self._j.head().seq)
 
     def revoke_order(self, order_id: str, reason: str):
         def build(head):

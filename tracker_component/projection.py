@@ -14,6 +14,7 @@ class Projection:
         self.claims = {}
         self.subject_claim = {}
         self.request_claim = {}
+        self.order_prov = {}
 
     def apply(self, rec):
         if rec.seq != self.seq + 1 or rec.prev_hash != self.hash:
@@ -27,6 +28,10 @@ class Projection:
             if b["order_id"] in self.orders:
                 raise ProjectionDrift("duplicate order id")
             self.orders[b["order_id"]] = dict(b, issued_seq=rec.seq)
+        elif rec.kind == O.ORDER_PROVENANCE:
+            if b["order_id"] not in self.orders:
+                raise ProjectionDrift("provenance for unknown order")
+            self.order_prov.setdefault(b["order_id"], []).append(dict(b, seq=rec.seq))
         elif rec.kind == O.ORDER_REVOKED:
             if b["order_id"] not in self.orders:
                 raise ProjectionDrift("revocation of unknown order")
@@ -54,7 +59,7 @@ class Projection:
     def state(self):
         return {"seq": self.seq, "hash": self.hash, "orders": self.orders, "revoked": self.revoked,
                 "claims": self.claims, "subject_claim": self.subject_claim,
-                "request_claim": self.request_claim}
+                "request_claim": self.request_claim, "order_prov": self.order_prov}
 
     def verify_against(self, journal):
         fresh = Projection()
