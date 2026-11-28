@@ -1,0 +1,171 @@
+sha	first_branch_containing	subject
+ccae4271ac4e16206662522b9f1720af0ef8a2f3	stage-a/tracker/repair-r46	R46: decision pack revision (withdraws R45 shape-typing claim and B11 text; H1/H3 audit; options and recommend
+6f49641fa4e05727fa5ab3d8d64abce8c41c58d3	stage-a/tracker/repair-r46	R46: H3 outcome/target-label delivery decision (whole interval inside authorized segments; sealed holdout need
+723aba9e0fc5c344badb9475b5bd301d7e0ccb1a	stage-a/tracker/repair-r46	R46: A07 actual R06 member read (11/11 recomputed) and exact V03 reconciliation/readback proposal
+b94491b8482e70dffe3e4175a1f70345a19c9dc6	stage-a/tracker/repair-r46	R46: typed fixed-shape candidate operators (state schema typing, vector/matrix elementwise, FIXED_SUM, FIXED_D
+f2c956b8e4830f1f55190af7c0fa1d34d1b5c85b	stage-a/tracker/repair-r46	R46: ShadowLedger expected-trigger interface (p325-p329): expected denominator, one terminal, provisional abst
+bf40eb13823e7b94ab592e7de2428732fd854091	stage-a/tracker/repair-r46	R46: EventContext correction visible only with confirmed lineage (intent->fact->lineage); partial/unknown phas
+08fc897ac5c8bb35e9ebf7d28e0ca72e48ce723a	stage-a/tracker/repair-r46	R46: J2 must list the features the consumer actually consumed (exact id+version); real-path negative + baselin
+cd3e90bc565ef3fff4ef5d146610258b46b1b493	stage-a/tracker/repair-r46	R46: lazy evaluator requests only indices read by lag/rolling; reference first-undefined ordering; parity test
+e6aca610906369777d5b336b12f1a468f6034b44	stage-a/tracker/repair-r45	R45: decision pack challenge + closeout section 24 (honest not-done list)
+8c8c58c2c26871ab845ed1711c2cced06f3be817	stage-a/tracker/repair-r45	R45: ML shadow-live ledger (idempotent ids, outcome enum, per-key counters, fencing visible, no retroactive ba
+9b23c98c3986177bf9fd48359141a06fca26a176	stage-a/tracker/repair-r45	R45: comparison + lazy bounded select in expression evaluator, schema typing, branch ceiling, independent refe
+b37d72e6d4edb32f09f075a4d85fd3a8b52719bb	stage-a/tracker/repair-r44	R44: mutation sweep, closeout section 23
+d6b3fa7aa0e64c574bfb65cf438b414b45394ef7	stage-a/tracker/repair-r44	R44: reconciliation register updated for both Manager packs
+36642789aaef52a5eac90cdf61ac86ecf7f6a751	stage-a/tracker/repair-r44	R44: ONE decision pack with concrete proposals (not adopted)
+0e94af4ec87c88510a5f443acb6b9047d7dc38bb	stage-a/tracker/repair-r44	R44: D14 half-open boundary guard
+90df5beeac16c20d9cca1e1d9b35ba5a4c2ea412	stage-a/tracker/repair-r44	R44: plane identity across restart on the separated path's journal
+4844438cd17c9ba4a8c8e04fc6869b466fe9ec06	stage-a/tracker/repair-r44	R44: E05 read-model rebuild on the separated path's durable final-resolution objects
+39bbb70e386025c1ed1eabb57edcc21ebb9e5664	stage-a/tracker/repair-r44	R44: snapshot carrier derives the manifest from Core records; watermark source-owned slot
+41c3a7702c6416a42ec23362da750bba42a78d08	stage-a/tracker/repair-r44	R44: A07 qualifier/unit wording corrected; R06 V240 recorded (not adopted)
+8bf4b6b65eb53c89f4efa965113864ad5fffc3a5	stage-a/tracker/repair-r43	R43: kill 8 sweep survivors with tests; name 1 equivalent; closeout evidence
+10874176b8fdb8ba0ea23d219a67d613385f2574	stage-a/tracker/repair-r43	R43: mutation sweep file
+ae34a090c75a2d6e32c649eca271907dde279167	stage-a/tracker/repair-r43	R43: five-status clause reconciliation (D10/TR-10 corrected), closeout 22, regenerated R38 table
+9faa6add548732f562e7cb837e05317bee840b01	stage-a/tracker/repair-r43	R43: EventContext immutable fact store on a supplied encoding interface + E05 source (HELD without the interfa
+f4a70f3fc3fa97a0a22a3936168858882b09a334	stage-a/tracker/repair-r43	R43: A07 oracle-level association of the 100 qualifiers to V230/V232/V235 (no awards; 21-qualifier adjudicatio
+ffbe910bc12ad1792c1f3c5d10b38939311b63ec	stage-a/tracker/repair-r43	R43: stored-value L2 all-segment maintenance, quarantine/restoration and restart on the same separated->Core->
+83bc08c7c3a24cd8b303b89282983bca965278b7	stage-a/tracker/repair-r43	R43: ML consumer path integrates writer/finalizer, dataset manifest->union->request->reverse-H1 and six joins 
+27447f1962460f11f5c322bd31a66a05b581f3f8	stage-a/tracker/repair-r43	R43: historical eligibility refuses missing tail/false endpoint/epoch holes; trust checks completeness; lifecy
+b74252f132bd7e3bb500afdd64292ba9a0af0f71	stage-a/tracker/repair-r42	R42: closeout section 21, 30/30 mutation sweep, survivor-killing tests, regenerated table
+7a23402e2005bd7562da12cc0a5b5c2a49ab0880	stage-a/tracker/repair-r42	R42: clause-level status table + guard, mutation sweep (WIP)
+eb955a2534e839230508652cfd6f01f3ffe53e3b	stage-a/tracker/repair-r42	R42: separated acceptance carried into BOTH FW and ML consumers; partial-observation boundary over the SIM pub
+59f1fe852f1dd3d726b9eb1b01f1e7f08efd6304	stage-a/tracker/repair-r42	R42: owning-source adapters for final resolutions, sequences (fit/pending/Health) and the HELD event-context s
+45bf3df2cb6bc16ee7c08022739e331d586eacf9	stage-a/tracker/repair-r42	R42: historical eligibility/present trust over the actual lifecycle journal + lagging E05 index; ledger_source
+402e93cd87c9d17226d86b3d7a7cf2727cdb2d74	stage-a/tracker/repair-r42	R42: per-qualifier A07 reading from the recovered extract's exact wording (R41 unit-level table withdrawn)
+3488e579f6e2adaaf682534cdd74be04560fc547	stage-a/tracker/repair-r42	R42: expectation resolves the admitted instance and correlates full payload/currentness (known ref is not auth
+a046f994c127c323b1bd17f09ad64267cb4460bf	stage-a/tracker/repair-r42	R42: composition binds the registry report to the accepted feature/version/request/currentness
+c237cb10390b524710048a437772ff2d8b3632e1	stage-a/tracker/repair-r41	R41: forgery cross-binding tests, sweep r41, closeout section 20, regenerated table
+40ea7731f5cf4b7b6a7e46c8dcde296c399ccb1a	stage-a/tracker/repair-r41	R41: bounded actual separated caller wired through Composition(accept_fn) to committed SIM status/Core/Gateway
+a2742e981f9af36c715711ca19445106e2ec38d6	stage-a/tracker/repair-r41	R41: E05 object-prefix/queue source adapters (manifest, scheduler/replay) with rebuild/drift/concurrent-head t
+623fa9c4fd8e2b8497880c25801adc88fb1a77cb	stage-a/tracker/repair-r41	R41: historical eligibility oracle and atomic publish/read candidate with negative tests
+116e302ea3f0da4625f027ea1b91d90613805a22	stage-a/tracker/repair-r41	R41: A07 native-paragraph reconciliation (R40 coordinates withdrawn); 100 range hashes re-verified; semantic u
+634a8e425233a8eefc236c3c40ada165b75d88bc	stage-a/tracker/repair-r41	R41: acceptor re-derives record/artifact/receipt bindings (no fabricated PASS or post-verify tamper); supervis
+1f17b3067cfff390acc7a0dfea7e768884ade4ab	stage-a/tracker/repair-r40	R40: A07 authority reconciliation, mutation sweep, handler guard tests, closeout section 19, regenerated table
+9545c5a63f43f714c90c36ea7fed31fde0bcef51	stage-a/tracker/repair-r40	R40: health expectation assertion module, file object store without urllib, row 48 correction
+6ba83ea5b34ef128dee031b66036fa5114e9a8f0	stage-a/tracker/repair-r40	R40: registry integrity checker, composition registry_gate, same-object denial/baseline route
+c5e299ce6282ef1f693206fe8d99502b3c42afdb	stage-a/tracker/repair-r40	R40: actual separated materializer/verifier/acceptor handlers over a shared file store (crash/duplicate/stale-
+b07291450fd7d4356c36f289c1438bd03d8462ed	stage-a/tracker/repair-r40	R40: E05 eleven-table logical index + canonical journal source adapters (sqlite rehearsal)
+1740cc294b773c6d4386a5689558ad77ea097bcb	stage-a/tracker/repair-r40	R40 A/B: L2 scope resolver slot (flag is not a governed NA); lineage bound to the package's own attempt + acce
+b6251de1416893705741abb6fbc43519f08b93cd	stage-a/tracker/repair-r39	R39: lifecycle apply hook, lineage resolves on caller path, registry entry fields, mutation sweep r39, E03 lit
+8f1196a273a22e593c9cc8d61c05bd431bad38f4	stage-a/tracker/repair-r39	R39 findings 1-6: relationship store bound to compute path; composition L2 UNAVAILABLE/HELD scope; supervisor 
+445008b5328f2614cf1ff8bf347c1a0ec98c6ab6	stage-a/tracker/repair-r38	R38: TR DoD probes, mutation sweep r38 (60/0 + 2 named equivalents), combined CURRENT requirement table, close
+a658e71a46ee402e9773f7b1dc2601826f81e8e1	stage-a/tracker/repair-r38	R38: stored-values per-segment L2 scope, as-found all-segment comparison, due/trigger pass
+17748d43d5c603d8cb80859f01cc405fffff6a72	stage-a/tracker/repair-r38	R38: composition caller, lifecycle framework, research lineage, relationship store+Health adapter, snapshot bi
+4e7e40999453952d9a0eaa6c11c688422d0e1cfb	stage-a/tracker/repair-r38	R38: real worker process supervisor + B19 evidence resolver
+c6910073d43355b68620791dcb50c2335a77f215	stage-a/tracker/repair-r38	R38 findings 1-3: source-HEAD-bound sim publication path, carrier-derived projection class, stored-values same
+94c7e6ef3b3cf3efac3d4d68af1bb5175af6427b	stage-a/tracker/repair-r37	R37: record CI checkout evidence correction (runner provisioner commit is not the checkout)
+4e591aae35b7157812f62bf9f6282b0560fa0efb	stage-a/tracker/repair-r37	R37: closeout section 16 (held findings, two paths, Registry-applied additions, row audit, remaining work)
+2db11b822eaba502623e2fd7deafd208a8c82328	stage-a/tracker/repair-r37	R37: version diff engine/ledger, registry semantics (snapshot manifest, merge direction, lifecycle vocab), gen
+c502dd1a0b35b8bb419df548174fca1ddff3fad9	stage-a/tracker/repair-r37	R37: fix four held findings; add SIM committed publication path and stored-value L2 maintenance
+2510ee343875c592175a3d6be2f15ae895792828	stage-a/tracker/repair-r36	R36: supplied-mapping status decoder (record -> StatusFact) through the real StatusProjection/Gateway; closeou
+c9c8e818e27458f89527d23d7aa1d9ef8df77c54	stage-a/tracker/repair-r36	R36: closeout section 15 (live E-04..E-10 audit with controlling overlays, row deltas, held/external, pre-exis
+3dc01756b44f7a3675b018c179bc28b43b449559	stage-a/tracker/repair-r36	R36: mutation_sweep_r36 (31 mutants, 1 named equivalent), sharper tests for survivors, kills for three pre-exi
+fc4cf1c5982c6ed6d968d9ee004c5fbf0bb0c65b	stage-a/tracker/repair-r36	R36: Tracker->FW outcome-series request/return desk (issued FW window correlation, immutable H3 structural ret
+8c488f32b8b4a8aa7b5fbfd3778ed3a7add517c2	stage-a/tracker/repair-r36	R36: Composer 27/28 seven-field producer-binding admission wired into admit() and TrackerPipeline (supplied au
+6b2db72678800566fb95ae03060ac74b9303e43b	stage-a/tracker/repair-r36	R36: composed accepted-receipt -> Core -> window Gateway (durable final store) -> FW/ML path with required unk
+dadf716cf815a9b261cb62fe51bab12f4bdf3752	stage-a/tracker/repair-r36	R36: dataset authority test proves the Gateway-issuance refusal precedes any write (mutant killed); M3 undecla
+acd58cf0b8edd91da410ea200e49b7d0fcf0c4ca	stage-a/tracker/repair-r36	R36: ML dataset request/union-lineage/claim caller (issued-binding-only link, append-only acyclic union, fail-
+f831d47d00f3dd73e47cbab0fe64ca285c19ca3a	stage-a/tracker/repair-r36	R36: reconcile E-04..E-10 reference modules with the live Build Plan paras 2104-2305 and the controlling R3 ov
+c708ae66c349bb46f283b5e7ae83277798a315da	stage-a/tracker/repair-r36	R36: repair root-reproduced defects - failed recover keeps holds (transactional), request reservation survives
+7c4e21616be452bbfa79d308c74c61693f4387a4	stage-a/tracker/repair-r36	R36: E-04..E-10 generic reference package (json log, worker separation, queue recovery, rebuildable read model
+e0f185b454b638d9b8ddf63d1f8ae2d22e20598c	stage-a/tracker/repair-r36	R36: Health adapters for QUANT_MANIFEST_PROFILE, FIT_GENERATION, REPLAY_BACKLOG, ML_FW_AUGMENTED, coordination
+fddecd6b09a9207a2eb3f681e9015ded1ae42fdb	stage-a/tracker/repair-r36	R36: default cross-instrument deny with explicit grants (TR-15)
+5023bcd4bcb04ff186004b54c7a23f38d97957d3	stage-a/tracker/repair-r36	R36: deterministic candidate selection in Gateway (DOCX s7A): earlier valid row not hidden by later excluded r
+4c9dc3b0d5c9813677dfc4f6a13cb132a2d8745c	stage-a/tracker/repair-r36	R36: cite exact existing ML negative tests
+de9a5ebc9339e9cc854032e34647cccb564ece62	stage-a/tracker/repair-r36	R36: late/settlement evidence emitter + Health adapter; corrected Annex XV coverage claim
+e18cd8ffb0409fee87dad7075d4a54b478e0d7d3	stage-a/tracker/repair-r36	R36: dataset bind-time health requires same-gateway/final-store issuance for this binding; Health observations
+c102e58fb38cfa189514e44ef746af0b549a8291	stage-a/tracker/repair-r36	R36: source inputs verified only after accepted receipt->record->artifact binding; generic source-value indepe
+adc7df7f5b08f4a260a59fc202e33e16bdd7b365	stage-a/tracker/repair-r36	R36: durable window commit point (no consumer-visible outcome before durable confirmation), phase-aware durabi
+0d0fe74e566ccd2bb3bbfc3e18824b8b30b88916	stage-a/tracker/repair-r35	R35: closeout rewrite (sections 12-14: register, TR DoD evaluation, mechanical E03 presence table, unaudited r
+8dc6a0741e3bba5fd95b57cded4ed7b9d8c59875	stage-a/tracker/repair-r35	R35: mutation sweep (37 mutants), durable store rolls back memory on integrity failure, row evidence generator
+3ce6c7600baaaef4a31279dd1421e2ebbe9ca4af	stage-a/tracker/repair-r35	R35: accepted source-input binding verification (generic; stream proof unbound)
+a9d65341833fa5f0df92129d7459d875b39cbfd8	stage-a/tracker/repair-r35	R35: ML dataset provenance manifest registry, reverse binding link, bind-time health, revoked-data ancestry ga
+a5f96d4e27cb0b18083fbf520638defc4b6bb8a3	stage-a/tracker/repair-r35	R35: generic Health evidence adapters (facts only, B0 slots held, supplied unadmitted policy) wired into subje
+5a9a8824e91dfc16c0cfe72c19358616be9024d5	stage-a/tracker/repair-r35	R35: Typed Annex XV/XVI end-to-end acceptance and cross-consumer consistency tests
+8c50c4b38002e48314a16259a1f238296b33dce6	stage-a/tracker/repair-r35	R35: window-level Gateway resolution over the one FinalResolutionStore (resolve_window), durable/restartable f
+64ed20dd8b8f004c9ad1aee91ccc635df6014a27	stage-a/tracker/repair-r35	R35: legacy accepted bodies stay replayable (maintenance hold), final outcomes detached on write and every rea
+a19582e9994124a8dea604c00c47c5a8c60061c1	stage-a/tracker/repair-r34	R34: closeout updated (one current file; R33 register moved to history), honest row re-audit status
+bf73c58e7b567b56e9cfeed403d1d868e5506bf1	stage-a/tracker/repair-r34	R34: 25-mutant sweep for R34 modules; restore lost altered-retry assertion; direct-registered finalize and for
+a5a1bc7bbe51cd165e04fd3c4418d4c6bac32190	stage-a/tracker/repair-r34	R34: composed path continues to exact FW receive and ML row build of the same stored Gateway outcome
+9240e6b5112e81e6d14750ddc49b0d134048d0b1	stage-a/tracker/repair-r34	R34: ML Integration Addendum s5 family-ledger binding and s7 era/revocation (generic, unqualified)
+c791c1c5b65083d5f09ac1a194ee02c71626d53b	stage-a/tracker/repair-r34	R34: seven-field producer admission against a supplied authority lookup (distinct from 27/28 conformance)
+9793f2d2442563ef836044d5512c8871394e69bb	stage-a/tracker/repair-r34	R34: Tracker-owned FW request/outcome/return association over the one FinalResolutionStore (payload fields HEL
+72b0f5ca84c1118d1be1aa75466ec41e4a1466cd	stage-a/tracker/repair-r34	R34: exact-receipt finalize correlation, idempotent identical write retry, Health coverage checks requested ve
+8f7cfa01c06f7fb3fed94f4b27d1dd2e43290755	stage-a/tracker/repair-r34	R34: ML writer/finalizer facade (principal HELD), Health subject coverage (BP14/14A)
+878ac84b5f1c43c83cdae1962f4496a0d9b1103d	stage-a/tracker/repair-r34	R34: persist the accepted materialization record, reverify_accepted (accepted record as found, no rebuild), Ac
+6458e27a54914e89c37b6a6e6c6645a3c907334c	stage-a/tracker/repair-r34	R34: reverse J1 is an explicit supplied relation (binding -> exactly one manifest), not two membership checks
+8d511d6d9726f3754c8bbfad145a4f00ee937a06	stage-a/tracker/repair-r33	R33: E-02 artifact sidecar candidate, 14A local-state assertion, closeout section 13 rewritten as the R33 regi
+50028bf96dc2ce429ff990f76545588e72e7a13f	stage-a/tracker/repair-r33	R33: mutation sweep for R32/R33 code (28 mutants, 26 killed, 2 named equivalents), tests for the two real surv
+5eceef0901361725d90874cfbb941e7778aba886	stage-a/tracker/repair-r33	R33: composed order->pipeline->Core->Gateway candidate test; baseline resolved at the Gateway
+c78b4e1f376635c92f4297202be4dbb726e25678	stage-a/tracker/repair-r33	R33: correct source attribution (FW Universal V1.2 N-2; Matrix 1068-1096 content), ML reverse J1 / family map 
+6696ce23a6e18e2401c74a064fbfb7f2a3ed2069	stage-a/tracker/repair-r33	R33: six-join J4/J5/request-snapshot same-generation correlation (finding 3), proven failing against a broken 
+0a0da1d2256e28a9cb79f82ed2ef1ae73729c6d2	stage-a/tracker/repair-r32	R32: ONE current combined closeout rewrite (R24-R31 file kept as provenance), Parent manifest field coverage, 
+b26535643ae6b28cb48fd3a785862deb725fbbe2	stage-a/tracker/repair-r32	R32: bounded event-trigger pass with governed policy slots (unadmitted), Gateway required-ancestry consumer te
+527f891b580e1e5e42a828fde94d22cfab095fcb	stage-a/tracker/repair-r32	R32: ML six-join candidate (J4/J5 verified against GenerationRegistry), FW10/H3 descriptor reader with exact h
+be3174ee37b7d9266b7b39bab0ca96e638698d05	stage-a/tracker/repair-r32	R32: detached order/provenance reads; resolved-snapshot candidate manifest hash (base seal explicit); News doc
+32a37e36473fe276b26cf0b61e68fbe1f72a8bb4	stage-a/tracker/repair-r31	R31: closeout section 18, sweep anchor fix (125 mutants author-run)
+6327f5a640e9974eca6284752c690246562e61c4	stage-a/tracker/repair-r31	R31: NewsHub ACTUAL comparator explicit (DECISION_CUTOFF <= vs SNAPSHOT_FENCE strict), no assumed relation; te
+c934449670ca865404d657fea22464927a76f7d6	stage-a/tracker/repair-r31	R31: sealed-snapshot resolution callpath (seal -> per-TF selection from sealed records), durable reverify pass
+15eeafa6add53d4000e0d9ee7c2fb3b264766a61	stage-a/tracker/repair-r31	R31 A/B/C: prefixed local contract bound at build gate, field-set changes reviewed, SUPERSEDED->REVOKED allowe
+f866b75b544febb6ffdcf124046b9f7a5c7903ad	stage-a/tracker/repair-r30	R30: required-ancestry Health gate (unadmitted completeness), 103-mutant sweep, closeout section 17
+00dac01fb9190ed31d31f0890d9294f34e8bb177	stage-a/tracker/repair-r30	R30: mutation sweep re-anchored (98 mutants author-run, 0 survivors); redundant post-equality manifest check r
+18a1c97b8e150a1d3f4273da1b15342f5036436f	stage-a/tracker/repair-r30	R30 findings 5/6: ONE order authority (ClaimService journal) with full order constraints, provenance, build ga
+465c398de00dd5984c4c439f15ea384586b6f8e7	stage-a/tracker/repair-r30	R30 WIP checkpoint: H3 coverage anchored on requested interval + strict booleans; ML lifecycle revival refused
+3f784cd05e331e4161d8e506e9de2507a13bc6d7	stage-a/tracker/repair-r29	R29: closeout section 16, locator pointers, 88-mutant sweep
+831f1697cfcabd975c65b12b20b5fdd4240fd299	stage-a/tracker/repair-r29	R29: Health blast_radius (declared edges), B22 model/version + permitted evidence context
+011f09346d55702377ad8de232e8aae444113866	stage-a/tracker/repair-r29	R29: ML generation manifest/lifecycle/atomic fenced publish candidate, Composer intake disposition + Tracker-j
+58842b97546ff7a5cb9bc1b7e88b11985840a266	stage-a/tracker/repair-r29	R29 A-E: private verifier-run issuer, closure unknown/augmented/version linkage, H3 without chosen convention 
+287c72559ecabf93e7cca58e55f98e0d8418f355	stage-a/tracker/repair-r27	R28 docs: withdraw R26 gateway overclaim, relabel static reachability, add section 15
+4e4ae8dc20d43a11f64efec0b42d7a6c22b87a2b	stage-a/tracker/repair-r27	R28 C: Contract section X.1 closure record (derived, witness unadmitted), H3 outcome-series validator, FW rece
+b89656b8d48acb91d6a672bc44ed6cd2d0445a62	stage-a/tracker/repair-r27	R28: mutation sweep r28 (18/18 killed), snapshot identity/at-use tests, ML corrupt-entry negative; drop redund
+3ad086ccc1a67e6cde738b0e43c7aeb65e90f2ac	stage-a/tracker/repair-r27	R28 defects 1-4: unambiguous replay keys, snapshot currentness at use, verifier-run receipts for composed labe
+8aea2ecd34603ab399b80231cf06d9c82b69eb3c	stage-a/tracker/repair-r27	R27 C: gateway/binding.py single owner of exact DeliveredFeatureEntry; resolve builds via it
+9722eed3823fe0c0427d0e16b47e3cdab66374d7	stage-a/tracker/repair-r27	R27 A1-A4: journal-confirmed Core snapshots by type, explicit subject association, shape-only denied by defaul
+a4a626d18d583926d4492d2654ba253dd0af1535	stage-a/tracker/repair-r26	R26: clause audit vs Build Plan, source locator note, NL-0187 wording, closeout s14
+10224fade69154acb92b28919e1e2dde51229c10	stage-a/tracker/repair-r26	R26: pinned candidate recording evidence verified in place; per-timeframe snapshot resolution with Core callpa
+89ea25a505fdb1f217319618762936bb3c4c1816	stage-a/tracker/repair-r26	R26: evidence-truth and causal-fit candidate predicates with Core callpath
+0a7eef4a296b28dfba6f56056aa6f15c690429ff	stage-a/tracker/repair-r26	R26: Gateway health-to-feature binding (default-deny for Core snapshots), more mutants
+c5c06ecbcc76dbfd02342101bdf8d4e0e29d87b7	stage-a/tracker/repair-r26	R26 defects 1-3: typed status wins, version binding, scheduler expected-version due, conflicting completeness 
+9f02fba67359a9a13eb5f86e3fc54e9f1d7aba68	stage-a/tracker/repair-r25	R25 D: code-derived E03 callpath audit, TR-01(d) correction, R25 section
+66d7ddb9cd4cff0d0964953d5d4a702c4afcb940	stage-a/tracker/repair-r25	R25 C: bounded re-verification pass (due -> request -> real verifier -> Core Health -> Gateway) with negatives
+7cb6e27ca5fa66df9f23ac4ff7cb43f0014d6ef3	stage-a/tracker/repair-r25	R25-E: NL-0187 proposed bounded delta (non-governing)
+d80c29b214410befe89a58da93b96f19d3502ad6	stage-a/tracker/repair-r25	R25 B22: reviewer carrier + bound task/framing/denylist guards, duplicate finding_id refusal
+e94f58f24bea4437851def809d0f6d1dbb774894	stage-a/tracker/repair-r25	R25 B1-B5: verify materialization_hash, carrier-class check before write, composed evidence bound to verifier 
+a06270bf18e16b5b71c75f1114226b1007760b7a	stage-a/tracker/repair-r24	R24: combined closeout rewritten once around current scope with per-row audit; R17-R23 provenance moved verbat
+46cf80a820b99b22d469832fd308a745cb1cd8fc	stage-a/tracker/repair-r24	R24: optional governed timeframe registry at Core admission
+b95c249a940f3c1399eefd450b8d506cb119f852	stage-a/tracker/repair-r24	R24 checkpoint 3: accepted-manifest read-back (journal record -> stored bytes, independent re-derivation, fail
+18c09a7146ad3f393976bcd1c2f42785c0e265d0	stage-a/tracker/repair-r24	R24 checkpoint 2: Core health from the real materializer + independent verifier (composed, simulation-labelled
+ed6dabbfa5794b331f38c2c7cc41aa57ccc6e754	stage-a/tracker/repair-r24	R24 checkpoint 1: plane identity both directions + read-only identity, fail-closed safety integration (review 
+ebe4421028dc3b8871c420abeb9f1de33a3d5a4e	stage-a/tracker/repair-r23	R23: core corrections, plane identity, safety actions, closeout 0E/0F/4C, r23 mutants, A07 V03 wording
+95718ab2889b2ce4b9fc0afdff6b4304799f3cf0	stage-a/tracker/repair-r23	R23 (wip): D1 asserted admission never releases; candidate-preserving conflict resolution; full-closure epoch 
+46df665fa388ff04b17230df92f2382b1a6d604f	stage-a/tracker/repair-r22	R22: core corrections, D1 binding (not installed), A07 V03 reconciliation proposal, closeout rows rewritten, r
+895d3501ef6cb140550d38410c152fcc0177d366	stage-a/tracker/repair-r22	R22 (wip): Core held-unless-bound eligibility, stored-fact snapshot members, atomic admission, reconstructabil
+68e36169ba6dcf24fef1ba0e32bc7d3caaa5c5fd	stage-a/tracker/repair-r21	R21: Core ports + one composition path, appendix/closeout corrections (B01-B04, B09, B14, D4, D14), r21 mutati
+a27b754919372d140d7d7e5dabb0c4df29724f75	stage-a/tracker/repair-r21	R21: D14 strict half-open snapshot fence for NEWS-02/03; decision-cutoff-vs-fence relationship left open
+729cdc7d2a70535f3ab5636ab022180aabf87a39	stage-a/tracker/repair-r21	R21 (wip): structural authority class, subject-bound terminal identities, absence/non-delivery binding
+720a49fe53dfc2d6d67e9415ded81aea046a18ad	stage-a/tracker/repair-r20	R20: simulation authority-class boundary, qualified no-quant hold, scoped terminal identity, engineering appen
+5cea89ea3f0af78882e507501a67a6a45e599891	stage-a/tracker/repair-r20	R20 (wip): simulation authority-class boundary, qualified no-quant hold, scoped deterministic terminal identit
+7223f00fa6101b3ccaebaa0793adde6ada61e768	stage-a/tracker/repair-r19	R19: mandatory Health closure proof, qualified-vs-simulation duties, no-quant lineage, terminal identity, ML u
+8de5b0b1c2dda5ac84f884cbfe55e4007500c053	stage-a/tracker/repair-r18	R18 (2/2): version-relationship validators, baseline connection-limit pins, core baseline obligations closeout
+ab610dd11e28b11ce5919de3238aff6335330f5b	stage-a/tracker/repair-r18	R18 (1/2): consumer-specific Health incompleteness + graph-key binding, ML augmented SUPPORT, mandatory-duty h
+baa83e1dd30d17ddbc2e5b1653c1383600fac802	stage-a/tracker/repair-r17	R17: ORDER_READY outcome-access declaration bound to order, unverified-duty labels, feature lineage, E-01 harn
+6a8f102c227c35b6d516659362b2ee586af125da	stage-a/tracker/repair-r16	R16: transitive ML ancestry, verified-or-unverified augmented rebind, conformance evidence wired to intake/pip
+1b9c99d2a9aae37aae86d382c0dd35907851ef1b	stage-a/tracker/full-pass-r15	R15: non-authoritative revision selection, typed resolver verdict, integration ledger, combined closeout draft
+5b00e88212d73fdbbeb3e2b1dc112c39ba4c189a	stage-a/tracker/continue-r14	R14: News Hub resolver causal gate, daily-record validation, explicit revision rule
+a48fecdcf9b03ffdcabec688459f2fec2ca884cf	stage-a/tracker/continue-r13	R13: docs, return, sweep
+dceb20cf7076ab77d54c6d70d6af564dd58b0c7f	stage-a/tracker/continue-r13	R13: FW return classes (singular names; repo dependency guard)
+638a48c0b87223824178340a1aec48a4fbde4b73	stage-a/tracker/continue-r13	R13: ML augmented preservation fields, FW return classes, consumer use of blast-radius verdicts
+2aee3112b1a388c9d6b18dd61160be39a94f9b88	stage-a/tracker/continue-r13	R13: status-event mapper, News Hub event/daily validators and context resolver
+301cf04e23a6308056c25fb4b21fc43698721b3f	stage-a/tracker/continue-r13	R13: Composer s27/s28 build-output conformance wired into intake
+6c3c989d320b45ef34e63bf9d4ab6f2da3eea1f1	stage-a/tracker/continue-r12	R12: blast radius, augmented lineage check, sweeps, docs and return
+c705c097b48a8bfa81ea31638046e050295e063e	stage-a/tracker/continue-r12	R12: blast radius over supplied lineage (OB2, proven/undetermined)
+f95ca62e88c6d121158759bf16837489ca47979b	stage-a/tracker/continue-r12	R12: status projection over committed journal; gateway refuses non-committed status source
+724bcfbf1690ea88e7fc7cd7eb9775a3ca2ab767	stage-a/tracker/continue-r12	R12: SQE_OPSET_V1_1 reference semantics library (comparison, SELECT, elementwise, FIXED_SUM/DOT)
+a94839c07e83c09d801439fb453c8df51e17ff11	stage-a/tracker/continue-r12	R12: source-bound resource ceilings + capability declaration at intake; remove silent MAX_NODES/MAX_WINDOW
+896fdbcaad5ac8296ae286c969d2ac50ad0aac03	stage-a/tracker/continue-r12	R12: BOTH per-lane consumer identity, binding/identity agreement, consumer-local request keys (no alias namesp
+d2a232bef51924d99a5828d5a5ba0b757f003aa8	stage-a/tracker/continue-r11	R11: label status-event doc as PROPOSAL (fixes drift guard)
+d585b7a0f465054eb02061b3bacd891a6e2e3e76	stage-a/tracker/continue-r11	R11: return and preservation index
+909088195705166191a4af296515650f0c62116a	stage-a/tracker/continue-r11	R11 docs: A02 trace and remaining-input groups
+7521d1baf87e435617c6e8836aa874afeb13c60e	stage-a/tracker/continue-r11	R11 docs: E-03 responsibility map, status-event ownership
+88221c1d0268ae140638163e987c94c1f8dadb7b	stage-a/tracker/continue-r11	R11: wire s7A request record into Tracker intake; enforce BOTH lane separation at Gateway v038
+31a2509c6cd97cf57211f8d4037a69696ceaab60	stage-a/tracker/continue-r11	R11: align expression arithmetic to SQE_OPSET_V1_1 (remove log, domain refusals, canonical zero)

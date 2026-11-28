@@ -704,3 +704,26 @@ A02 Class B HOLD; A07/COVERAGE OPEN; A07/P12/N2 UNSATISFIED; QC34 ALERT(HOLD); A
 ### 24.4 Evidence
 AUTHOR-RUN. Full suite run locally before PR; CI checkout SHA: see PR.
 
+## 25. R46 current view (from origin/main 3cbefb40ff70d7b877732898c91515358eb16479; branch `stage-a/tracker/repair-r46`; sections 12-24 are HISTORY where they differ; nothing here is a gate, acceptance or appointment; the full Tracker is NOT complete)
+### 25.1 Root reproductions fixed (each with a real-path negative that was shown to FAIL on the pre-fix code)
+| # | Before (root-reproduced on e6aca61) | After | Test |
+|---|---|---|---|
+| 1 | lazy evaluator demanded index t for lag/rolling before warm-up: DOMAIN_DIV_ZERO vs independent [None] | lag/rolling request only the indices they read; reference uses first-undefined ordering; select-free programs keep eager semantics in BOTH evaluators (documented) | `test_r46_lazy_parity.py` (root cases, nested select/lag/reduction, materializer/verifier world, 600-DAG seeded differential, both outcomes exercised) |
+| 2 | J2 naming another known feature passed on the real separated path | `consume` passes the ACTUAL consumed set (bindings + declared absences); J2 must list each exact id+version; unrelated baseline still delivers | `test_r46_ml_j2.py` |
+| 3 | correction fact visible, lineage absent after a lineage-phase failure | intent -> fact -> lineage; any failed/unknown phase hidden from get/E05/corrections_of; exact retry completes; legacy facts readable | `test_r46_event_context_correction.py` |
+| 4 | ShadowLedger divided by recorded outcomes | expected-trigger interface (p325-p329); expected 2 / published 1 = 1/2; missing stays in denominator; provisional abstention superseded by fence; no backfill | `test_r45_shadow_ledger.py` (13 mutants: 13 killed) |
+Residuals named: no caller invokes ShadowLedger (the publication path is not in this repository); extra J2 entries are permitted pending a source choice; a pre-R46 correction fact without lineage is indistinguishable from a normal fact.
+### 25.2 New source-supported engineering
+- Typed fixed-shape candidate operators (`typed_shapes.py`): state-schema validation, vector/matrix elementwise, FIXED_SUM, FIXED_DOT (product rounded first), NOT_ADMITTED names refused. NOT wired into the manifest DAG (grammar/opcode codes unsupplied). The R45 statement "no source gives shape typing" is WITHDRAWN.
+- H3 outcome/target-label delivery decision (`gateway/outcome_delivery.py`), not yet wired into the Gateway resolve path.
+- R06 original members: 11/11 dependency hashes recomputed; exact V03 proposal in `docs/a07/A07_R46_V03_AND_R06_MEMBER_READ.md`.
+- Decision pack revision `docs/proposals/R46_DECISION_PACK_REVISION.md` (B11 text corrected; branch-ceiling wording; H1 token audit; options with recommendations).
+### 25.3 Preservation
+`git rev-list --all --reflog --not --remotes` listed 170 commits not on any remote ref (R43 reported 143); no stash; no untracked work. They are enumerated in `docs/PRESERVATION_R46_LOCAL_ONLY_SHAS.tsv` and made reachable from one remote ref (`preserve/r46-local-only-anchor`, an anchor commit with no content change). Custom `refs/preserve/*` pushes were refused (HTTP 403). No branch deleted. This proves remote reachability of the SHAs, not their review.
+### 25.4 NOT done in R46 (named)
+BuildPlan 11-14/14A/27/29A + R7 comparison; V235/V230/V232 oracle adjudication of the 21 + 12 qualifiers (all 100 UR and the four A07 obligations remain); the combined clause table was NOT regenerated (the R43 register does not yet reflect R45/R46 code); FW/ML before/after path checks beyond the R46 items; snapshot per-TF watermark, all-segment L2, quarantine/restoration items stay as in the R43/R44 register; typed H1 record and the Annex IX status-event surfaces not built. V10 whole-domain history remains genuinely held.
+### 25.5 Holds unchanged
+A02 Class B HOLD; A07/COVERAGE OPEN; A07/P12/N2 UNSATISFIED; QC34 ALERT(HOLD); A08 READY_TO_CODE NO; Stage A HOLD. A merge or test clears none.
+### 25.6 Evidence
+AUTHOR-RUN; full suite 1767 passed locally; CI checkout SHA: see PR.
+
