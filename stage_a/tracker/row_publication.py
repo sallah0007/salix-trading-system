@@ -5,7 +5,8 @@ The typed transition hash is RECOMPUTED here from the record's fields by the ind
 SUPPLIED and HELD (not invented): status token (through the path's own status_map; PUBLISHABLE is never read as CURRENT), sequence, VISIBLE_AT, the projection HASH (no hash rule is defined), data vintage mode, the source/causal policy ref.
 Not claimed: that the acceptance is qualified, any gate/hold clearance, a per-row A1 SUBJECT_STATUS_EVENT (the lifecycle-kind vocabulary does not cover ROW_ACCEPTED; no mapping is invented)."""
 import json
-from ..errors import Refusal
+from ..errors import Refusal, UnknownCommit
+from tracker_component.journal_port import HeadMismatch, GENESIS_HEAD
 from ..schema import objects as O, independent as X
 from ..schema.encoding import Ref
 from . import accepted_manifest as AM
@@ -45,12 +46,34 @@ class RowPublication:
                                 published_projection_hash, row.fit_generation_ref, data_vintage_mode, b["available_asof"], visible_at, source_or_causal_policy_ref, tref)
         return sup, {"row_accepted_seq": rec.seq, "row_accepted_hash": rec.record_hash, "row_content_hash": row_hash, "token_basis": b["currentness_state_at_acceptance"]}
 
-    def publish(self, feature_key, row_hash, token, *, sequence, visible_at, published_projection_hash, data_vintage_mode, source_or_causal_policy_ref):
-        """ONE SIM_STATUS_FACT append derived from the accepted row. An exact replay returns the existing side record and appends nothing; a different token for an already-published row is refused."""
-        sup, origin = self._derive(feature_key, row_hash, visible_at, published_projection_hash, data_vintage_mode, source_or_causal_policy_ref)
-        for r in self._path._sj.read_from(1):
-            bd = json.loads(r.body_json)
-            if bd.get("origin", {}).get("row_content_hash") == row_hash:
-                if bd[self._path._spec["status_field"]] != token: raise Refusal(row_hash, code="ROW_PUBLICATION_REPLAY_DIFFERS")
-                return r
-        return self._path.commit(feature_key, sup, token, sequence=sequence, origin=origin)
+    def publish(self, feature_key, row_hash, token, *, sequence, visible_at, published_projection_hash, data_vintage_mode, source_or_causal_policy_ref, attempts=4):
+        """ONE SIM_STATUS_FACT append derived from the accepted row. The side HEAD is PINNED before the replay lookup and the sequence validation, and the single append is compare-and-append against that SAME basis
+        (the StatusEmitter pattern): a concurrent publisher that lands first moves the HEAD, the append fails closed (HeadMismatch), and everything is re-read and re-validated - an exact replay of the same row+token then returns the
+        genuine winner and appends nothing; a different row taking the same (feature, version, instrument, timeframe, materialization version) sequence is refused. An UnknownCommit that landed is found by the replay lookup on the next
+        attempt; one that did not is re-attempted. Exhaustion refuses. No cross-HEAD atomicity is claimed (owning-head advance is guarded by the path's pinned source head). An exact replay returns the existing record; a different token is refused."""
+        sp = self._path; spec = sp._spec
+        for _ in range(attempts):
+            src = sp.feature_journal.head(); side = sp._sj.head()                                           # both basis heads BEFORE any state is read
+            sup, origin = self._derive(feature_key, row_hash, visible_at, published_projection_hash, data_vintage_mode, source_or_causal_policy_ref)
+            mine = None; seqs = []; asofs = []
+            for r in (sp._sj.read_from(1) if side != GENESIS_HEAD else []):
+                if r.seq > side.seq: break
+                bd = json.loads(r.body_json)
+                if bd.get("origin", {}).get("row_content_hash") == row_hash: mine = (r, bd); break
+                if all(bd.get(n) == v for n, v in zip(spec["mv"], self._mv(sup, feature_key))): seqs.append(bd[spec["sequence_field"]]); asofs.append(bd[spec["available_asof_field"]])
+            if mine is not None:
+                if mine[1][spec["status_field"]] != token: raise Refusal(row_hash, code="ROW_PUBLICATION_REPLAY_DIFFERS")
+                return mine[0]
+            if seqs and (type(sequence) is not int or sequence <= max(seqs)): raise Refusal(str(sequence), code="ROW_PUBLICATION_SEQUENCE_NOT_INCREASING")
+            if asofs and sup.available_asof < max(asofs): raise Refusal(str(sup.available_asof), code="ROW_PUBLICATION_ASOF_DECREASED")        # chain-status rule: AVAILABLE_ASOF is non-decreasing per MV; a cold projection would refuse the whole journal
+            try: return sp.commit(feature_key, sup, token, sequence=sequence, origin=origin, expected_source_head=src, expected_side_head=side)
+            except HeadMismatch: continue                                                                      # the side HEAD moved after validation: re-read and re-validate
+            except UnknownCommit: continue                                                                     # landed => found as the replay next attempt; absent => re-attempted
+            except Refusal as e:
+                if e.code == "SIM_PUBLICATION_SOURCE_HEAD_ADVANCED": continue
+                raise
+        raise Refusal(row_hash, code="ROW_PUBLICATION_RACE_EXHAUSTED")
+
+    def _mv(self, sup, feature_key):
+        bf = self._path._spec["bytes_fields"]; vals = (sup.feature_id, feature_key.feature_version, sup.instrument_id, sup.timeframe_id, sup.materialization_version)
+        return [v.hex() if n in bf else v for n, v in zip(self._path._spec["mv"], vals)]
