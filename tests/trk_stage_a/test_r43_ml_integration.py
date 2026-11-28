@@ -1,5 +1,6 @@
 """R43: the ML writer/finalizer + dataset manifest -> union -> request -> reverse-H1 + six joins wired into the SAME separated acceptance -> committed SIM status -> Core -> Gateway -> consumer path (stage_a/ml/consumer_path.py). Legitimate same-generation positive for the unrelated baseline and for the denied feature once its ancestry is declared; negatives: required non-delivery, mixed generation, mixed J1 manifest, foreign binding id, a Binding from ANOTHER gateway, a forged Binding, dataset revocation, generation revocation around the facade, an ungranted caller. qualified is ALWAYS False; grants are test labels; the catalog snapshot is a TEST-SUPPLIED slot (the accepted-record -> definition/formula/graph hash mapping is not source-defined)."""
 import dataclasses, unittest
+from . import health_fixtures as HF
 from stage_a.errors import Refusal
 from stage_a.gateway import contracts as G
 from stage_a.gateway.v038 import FinalResolutionIdentity as FI
@@ -40,7 +41,7 @@ class MLIntegration(_Caller):
         def path(co): return CP.MLConsumerPath(gateway=co.gateway, final_store=co.gateway.final_store, authority=auth, generations=reg, writer=wf, tables=T)
         def go(co, e, o, tag, bind, dsid, gid="G1", **k):
             kw = dict(row_id="row-" + tag, generation_ref=R("gen"), generation_manifest_id=gid, event=ev(100), request_start_ts=100, fence=10, eligibility_reason=NONE_, exclusion_reason_for_missing=lambda x: EXCL, catalog_snapshot=cat or None)
-            kw.update(k); j = kw.pop("joins", None) or self.joins(e, bind, dsid, gid, reg.manifest_of(gid), reg)
+            kw.update(k); kw.setdefault("health", HF.ml_supplier(e, dsid)); j = kw.pop("joins", None) or self.joins(e, bind, dsid, gid, reg.manifest_of(gid), reg)
             return path(co).consume("w", ds(dsid), e, o, "ml-" + tag, joins=j, **kw)
         # ---- required unknown ancestry: the ML row is EXCLUDED, nothing is consumed
         ea, oa = self._ml(coa, fka, ra, "A1", supplied().feature_id, "BIND-A1"); self.assertEqual(type(oa).__name__, "NonDeliveryResolution")

@@ -8,6 +8,7 @@ from .test_r41_separated_caller import FB, supplied, AP, T, R
 from .test_r35_dataset_manifest import ds
 from .test_r29_generation_lifecycle import man, ev
 from .test_r43_ml_integration import MLIntegration, NONE_, EXCL
+from .health_fixtures import ml_supplier
 
 class J2Correlation(MLIntegration):
     test_separated_acceptance_to_both_consumers_then_ml_writer_dataset_union_request_reverse_h1_and_six_joins_on_the_same_objects = None
@@ -30,7 +31,7 @@ class J2Correlation(MLIntegration):
             if j2 is not None: j["J2_INCLUDED_FEATURES"] = j2
             return CP.MLConsumerPath(gateway=cob.gateway, final_store=cob.gateway.final_store, authority=auth, generations=reg, writer=wf, tables=T).consume(
                 "w", ds("D1"), eb, ob, "ml-B1", row_id="row-B1", generation_ref=R("gen"), generation_manifest_id="G1", event=ev(100), request_start_ts=100, fence=10,
-                eligibility_reason=NONE_, exclusion_reason_for_missing=lambda x: EXCL, catalog_snapshot=cat, joins=j, **k)
+                eligibility_reason=NONE_, exclusion_reason_for_missing=lambda x: EXCL, catalog_snapshot=cat, joins=j, **dict(dict(health=ml_supplier(eb)), **k))
         ent = lambda fid, ver: {"feature_id": fid, "feature_version": ver, "definition_hash": "d", "formula_hash": "f", "graph_hash": "g", "closure_ref": "c"}
         good = go(); self.assertEqual(good.blockers, ()); self.assertTrue(good.usable_for_simulation); self.assertFalse(good.qualified)           # genuine J2: baseline delivers
         bad = go([ent(other, eb.feature_version)])                                           # J2 replaced ONLY by the other known feature (catalog-valid)

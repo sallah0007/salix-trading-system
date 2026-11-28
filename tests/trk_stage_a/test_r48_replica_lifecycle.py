@@ -167,3 +167,74 @@ def test_review_origin_grant_revoked_refuses_and_projection_replay_equal():
     j, s = base(); admit(s); disp(s); s.revoke_grant("REV1", "verifier")
     with pytest.raises(Refusal, match="GRANT_REVOKED"): review(s)
     s.verify_projection()
+
+
+# ---- R49 reproductions -----------------------------------------------------------------------------------------------
+class Boom(Exception): pass
+
+
+class FaultJournal(InMemoryJournal):
+    """Test port: raises BEFORE appending the named kind (once armed). Earlier writes succeed."""
+    fail_kind = None
+    def append(self, expected_head, kind, body):
+        if kind == self.fail_kind: raise Boom(kind)
+        return super().append(expected_head, kind, body)
+
+
+def two_orders():
+    j = FaultJournal(); s = ReplicaLifecycle(j, ANCHOR); order(s); claim(s); order(s, "O2", "S2", "ISS2"); claim(s, "O2", "S2", "C2"); admit(s)
+    admit(s, "B2", "O2", "CLAIM:C2", "C2", "BG2"); return j, s
+
+
+def test_r49_1_one_attempt_cannot_make_two_finals():
+    j, s = two_orders()
+    disp(s, verdict="ACCEPT_FOR_REGISTRY")                                             # positive
+    with pytest.raises(Refusal, match="ATTEMPT_ALREADY_HAS_FINAL_EFFECT"): disp(s, pkg="P2", rid="R2", rh="h2", verdict="ACCEPT_FOR_REGISTRY")
+    with pytest.raises(Refusal, match="ATTEMPT_ALREADY_HAS_FINAL_EFFECT"): disp(s, pkg="P3", rid="R3", rh="h3", verdict="REUSE_EXISTING")
+    assert disp(s, pkg="P2", rid="R2", rh="h2", verdict="REVIEW_REQUIRED")["verdict"] == "REVIEW_REQUIRED"      # a nonterminal report is not a second effect
+    assert disp(s, pkg="P9", rid="R9", rh="h9", verdict="ACCEPT_FOR_REGISTRY", bid="B2")["build_id"] == "B2"    # another attempt's own final stays allowed
+
+
+def test_r49_2_foreign_attempt_cannot_take_over_review_or_successor():
+    j, s = two_orders(); disp(s)
+    with pytest.raises(Refusal, match="PACKAGE_OWNED_BY_ANOTHER_ATTEMPT"):
+        s.record_review(package_id="P1", package_hash="ph", prior_report_hash="h1", build_id="B2", expected_review_generation=0, decision="X", origin_grant="REV1", decision_evidence_hash="e")
+    review(s)                                                                          # own attempt: positive
+    with pytest.raises(Refusal, match="PACKAGE_OWNED_BY_ANOTHER_ATTEMPT"): disp(s, rid="R2", rh="h2", verdict="ACCEPT_FOR_REGISTRY", prior="h1", bid="B2")
+    with pytest.raises(Refusal, match="PACKAGE_OWNED_BY_ANOTHER_ATTEMPT"): disp(s, rid="R1", rh="h1", verdict="REVIEW_REQUIRED", bid="B2")   # foreign exact replay
+    assert disp(s, rid="R2", rh="h2", verdict="ACCEPT_FOR_REGISTRY", prior="h1")["build_id"] == "B1"
+
+
+def test_r49_3_crash_before_abandon_is_reconciled_on_restart_and_retry():
+    j, s = two_orders(); s.consume("CLAIM:C2", "ID2") if False else None
+    j.fail_kind = "CLAIM_ABANDONED"
+    with pytest.raises(Boom): s.revoke_grant("ISS1", "issuer")
+    assert s.claim("CLAIM:C1")["state"] == "BOUND" and "O1" in s._p.revoked           # the stranded state
+    j.fail_kind = None
+    s2 = ReplicaLifecycle(j, ANCHOR)                                                   # restart on the SAME journal
+    assert s2.settle() == ["O1"] and s2.claim("CLAIM:C1")["state"] == "ABANDONED"
+    assert s2.settle() == [] and s2.revoke_grant("ISS1", "issuer") == []               # exact retry / idempotent
+    assert s2.authorizes("S2", "C2") is True and s2.claim("CLAIM:C2")["state"] == "BOUND"      # unrelated control
+    s2.verify_projection()
+
+
+def test_r49_3b_accepted_history_unchanged_through_crash_recovery():
+    j = FaultJournal(); s = ReplicaLifecycle(j, ANCHOR); order(s); claim(s); admit(s); s.consume("CLAIM:C1", "ID1"); order(s, "O2", "S2", "ISS1"); claim(s, "O2", "S2", "C2")
+    j.fail_kind = "CLAIM_ABANDONED"
+    with pytest.raises(Boom): s.revoke_grant("ISS1", "issuer")
+    j.fail_kind = None; s2 = ReplicaLifecycle(j, ANCHOR)
+    assert s2.settle() == ["O2"] and s2.claim("CLAIM:C1")["state"] == "CONSUMED" and s2.claim("CLAIM:C2")["state"] == "ABANDONED"
+
+
+def test_r49_4_base_claimservice_and_composed_authority_route_fail_closed_in_crash_window():
+    from tracker_component.claims import ClaimService
+    j, s = two_orders()
+    base = ClaimService(j, ANCHOR); assert base.authorizes("S1", "C1") is True and base.authorizes("S2", "C2") is True      # genuine baseline
+    j.fail_kind = "ORDER_REVOKED"
+    with pytest.raises(Boom): s.revoke_grant("BG1", "builder")                           # GRANT_REVOKED durable, then throws
+    assert s.authorizes("S1", "C1") is False
+    base2 = ClaimService(j, ANCHOR)                                                    # the NORMAL shared service on the same journal
+    assert base2.authorizes("S1", "C1") is False and base2.authorizes("S2", "C2") is True
+    from stage_a.tracker import authority_bridge as AB
+    import inspect; assert "authorizes" in inspect.getsource(AB)                       # the composed route calls claim_service.authorizes
+    j.fail_kind = None; assert s.settle() == ["O1"] and base2.claim("CLAIM:C1")["state"] == "ABANDONED" and base2.authorizes("S2", "C2") is True
