@@ -12,7 +12,7 @@ M = [
  (L2, 'if type(s.required) is not bool: return', 'if False: return'),
  (EX, 'or a.subject != subject or', 'or'),
  (EX, 'not (a.valid_from <= at < a.valid_until)', 'False'),
- (EX, 'resolver is not None and resolver(a.admitted_ref) is True', 'True'),
+ (EX, 'resolver is not None and _matches(a, resolver(a.admitted_ref))', 'True'),
  (EX, 'if len({a.state for a in usable}) > 1:', 'if False:'),
  (EX, 'if type(at) is not int or', 'if False or'),
  (EI, 'or any(c not in row for c in cols): raise', ': raise'),
