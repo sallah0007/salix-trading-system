@@ -281,8 +281,17 @@ def build_safe_intake_report(pkg: BuildPackage, adm: Admission, *, clock, verdic
     Stamp(IDENTITY, clock.now_iso())
     failed = list(adm.failed)
     fit_refs = adm.manifest.data["fit_refs"] if adm.manifest else []
-    ancestry = "PASS" if (adm.manifest is not None and not any(d in ("SCHEMA", "FIT_ANCESTRY", "HASH_BINDING") for d, _ in failed)) \
+    # R54: ancestry completeness is NOT PASS when s27's learned-derived construction-side ancestry is missing/inconsistent (reason codes from check_build_output), nor when the manifest/hash/fit ancestry failed.
+    _ANC_CODES = ("LEARNED_DERIVED_WITHOUT_UPSTREAM_GENERATION_IDENTITY", "UPSTREAM_ANCESTRY_WITHOUT_LEARNED_DERIVATION")
+    ancestry = "PASS" if (adm.manifest is not None and not any(d in ("SCHEMA", "FIT_ANCESTRY", "HASH_BINDING") or c in _ANC_CODES for d, c in failed)) \
         else ("FAIL" if failed else "UNKNOWN")
+    oia_fail = [c for d, c in failed if d == "BUILD_CONFORMANCE"]
+    oia = ("FAIL:" + oia_fail[0]) if oia_fail else ("PASS_ON_SUPPLIED_CONFORMANCE_EVIDENCE" if pkg.build_output is not None and adm.manifest is not None and not any(d == "BUILD_OUTPUT_CONTRACT" for d, _ in failed) else "NOT_ASSESSED")
+    from .build_output_check import section27_status
+    g27 = section27_status(pkg.build_output, learned_derived=bool(fit_refs), manifest_verified=adm.manifest is not None and not any(d in ("SCHEMA", "HASH_BINDING") for d, _ in failed))
+    omissions = ["SOURCE_VINTAGE_NOT_ASSESSED_BOUNDARY"] + (["OUTCOME_ACCESS_NOT_ASSESSED_BOUNDARY"] if oia == "NOT_ASSESSED" else []) \
+        + ["S27_GROUP_%d_%s" % (n, st.replace(":", "=")) for n, st in g27 if st.startswith("ABSENT_TOKEN")] \
+        + ["S27_PROSE_GROUPS_NO_SOURCE_KEY_NOT_ASSESSED=" + ",".join(str(n) for n, st in g27 if st == "NO_SOURCE_KEY")]
     body = {
         "SAFE_INTAKE_REPORT_ID": "TSIR:" + pkg.attempt_id,
         "BUILD_OUTPUT_PACKAGE": {"ID": pkg.package_id, "HASH": pkg.content_hash()},
@@ -297,12 +306,12 @@ def build_safe_intake_report(pkg: BuildPackage, adm: Admission, *, clock, verdic
         "ANCESTRY_COMPLETENESS": ancestry,
         "CAUSAL_AVAILABILITY_VERDICT": "PASS_EXPRESSION_CAUSAL_ONLY" if adm.manifest else "NOT_ASSESSED",
         "SOURCE_VINTAGE_PROVENANCE_VERDICT": "NOT_ASSESSED_BOUNDARY",
-        "OUTCOME_INFORMATION_ACCESS_VERDICT": "NOT_ASSESSED_BOUNDARY",
+        "OUTCOME_INFORMATION_ACCESS_VERDICT": oia,
         "LEARNED_OR_FITTED_ANCESTRY_VERDICT": ("PASS_REFS_CURRENT" if fit_refs and not any(d == "FIT_ANCESTRY" for d, _ in failed)
                                                else ("FAIL" if any(d == "FIT_ANCESTRY" for d, _ in failed) else "NONE_DECLARED")),
         "COMPLETION_SEMANTICS_VERDICT": "DECLARED:" + str(pkg.identity_fields.get("completion_semantics")),
         "CURRENTNESS_HEALTH_ELIGIBILITY_INITIAL_STATE": "CANDIDATE_NOT_CURRENT",
-        "OMISSIONS_EXCLUSIONS_REASONS": ["SOURCE_VINTAGE_NOT_ASSESSED_BOUNDARY", "OUTCOME_ACCESS_NOT_ASSESSED_BOUNDARY"],
+        "OMISSIONS_EXCLUSIONS_REASONS": omissions,
         "SAFE_INTAKE_TS": clock.now_iso(), "TRACKER_VERIFIER_ID": VERIFIER_ID,
         "POLICY": {"ID": POLICY["ID"], "VERSION": POLICY["VERSION"], "HASH": POLICY["HASH"]},
     }

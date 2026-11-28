@@ -19,6 +19,34 @@ LEARNED_DERIVED_REQUIRED = ("UPSTREAM_MODEL_ID", "UPSTREAM_GENERATION_ID", "GENE
 
 def _present(v): return isinstance(v, str) and bool(v.strip())
 
+# R54: Composer V9 s27 "must include, where applicable" groups IN SOURCE ORDER (33 semicolon groups; the earlier "35" count is withdrawn - it is not the source grouping).
+# kind: TOKEN = the source names the field key(s); MANIFEST = carried by the verified manifest/BuildPackage hashes (not by a bo key); PROSE = the source names no key (no key is invented).
+SECTION27_GROUPS = (
+ (1, "CREATION_REQUEST_ID/ORDER_ID/CLAIM_ID", "TOKEN", ("CREATION_REQUEST_ID", "ORDER_ID", "CLAIM_ID")), (2, "REQUEST_SCHEMA_VERSION", "TOKEN", ("REQUEST_SCHEMA_VERSION",)),
+ (3, "BUILDER_BUILD_ID", "TOKEN", ("BUILDER_BUILD_ID",)), (4, "request context", "PROSE", ()), (5, "purpose/hypothesis", "PROSE", ()), (6, "research mode", "PROSE", ()),
+ (7, "PURPOSE_PROFILE_ID/HASH", "TOKEN", ("PURPOSE_PROFILE_ID", "PURPOSE_PROFILE_HASH")), (8, "SIMULATION_OR_AUTHORITY_CLASS", "TOKEN", ("SIMULATION_OR_AUTHORITY_CLASS",)),
+ (9, "INSTRUMENT_PROFILE_ID/HASH", "TOKEN", ("INSTRUMENT_PROFILE_ID", "INSTRUMENT_PROFILE_HASH")), (10, "SOURCE_CONFIG_ID/HASH", "TOKEN", ("SOURCE_CONFIG_ID", "SOURCE_CONFIG_HASH")),
+ (11, "BUILDER_VERSION/HASH", "TOKEN", ("BUILDER_VERSION", "BUILDER_HASH")), (12, "TRACKER_CATALOG_SNAPSHOT_ID/HASH", "TOKEN", ("TRACKER_CATALOG_SNAPSHOT_ID", "TRACKER_CATALOG_SNAPSHOT_HASH")),
+ (13, "CATALOG_WATERMARK", "TOKEN", ("CATALOG_WATERMARK",)), (14, "construction graph ID/hash", "MANIFEST", ()), (15, "exact input IDs/versions/hashes", "MANIFEST", ()),
+ (16, "resolved feature identities/versions", "MANIFEST", ()), (17, "dependency graph/closures", "MANIFEST", ()), (18, "source/vintage/time semantics", "PROSE", ()),
+ (19, "operation/grammar versions", "MANIFEST", ()), (20, "parameters", "MANIFEST", ()), (21, "search/candidate set/exclusions", "PROSE", ()),
+ (22, "OUTCOME_INFORMATION_ACCESS declaration + fitting/holdout contract ref", "TOKEN", ("OUTCOME_INFORMATION_ACCESS",)), (23, "bounded materialization/query policy ref", "PROSE", ()),
+ (24, "intermediate nodes/hashes", "MANIFEST", ()), (25, "fitted/learned state", "MANIFEST", ()), (26, "UPSTREAM_MODEL_ID/UPSTREAM_GENERATION_ID/generation authority class (learned-derived)", "TOKEN", LEARNED_DERIVED_REQUIRED),
+ (27, "missingness and quality behavior", "PROSE", ()), (28, "environment/code/config", "PROSE", ()), (29, "manifest ID/hash", "MANIFEST", ()), (30, "output hash", "PROSE", ()),
+ (31, "BUILT_AT", "TOKEN", ("BUILT_AT",)), (32, "TEST/EVIDENCE REFERENCES", "PROSE", ()), (33, "warnings/unresolved constraints", "PROSE", ()))
+assert len(SECTION27_GROUPS) == 33 and [g[0] for g in SECTION27_GROUPS] == list(range(1, 34))
+
+def section27_status(bo, *, learned_derived: bool, manifest_verified: bool):
+    """Per-group presence/applicability: [(n, status)] with status in PRESENT | ABSENT_TOKEN:<keys> | CARRIED_BY_VERIFIED_MANIFEST | MANIFEST_NOT_VERIFIED | NOT_APPLICABLE_NOT_LEARNED_DERIVED | NO_SOURCE_KEY. CLAIM_ID is optional (the claim may not exist before intake). Presence only: values are not judged here. Never refuses."""
+    bo = bo if isinstance(bo, dict) else {}; out = []
+    for n, _name, kind, keys in SECTION27_GROUPS:
+        if kind == "PROSE": out.append((n, "NO_SOURCE_KEY")); continue
+        if kind == "MANIFEST": out.append((n, "CARRIED_BY_VERIFIED_MANIFEST" if manifest_verified else "MANIFEST_NOT_VERIFIED")); continue
+        if n == 26 and not learned_derived: out.append((n, "NOT_APPLICABLE_NOT_LEARNED_DERIVED")); continue
+        need = [k for k in keys if k != "CLAIM_ID"]; miss = [k for k in need if not _present(bo.get(k))]
+        out.append((n, "PRESENT" if not miss else "ABSENT_TOKEN:" + ",".join(miss)))
+    return out
+
 def check_build_output(bo, *, order_id: str, creation_request_id: str, learned_derived: bool) -> None:
     """Refuses (first defect). learned_derived is DERIVED by the caller from the verified manifest (fit_refs), never taken from the package."""
     if not isinstance(bo, dict):
