@@ -45,6 +45,13 @@ def test_independent_row_hash_equals_producer():
               row(fit_generation_ref=None, input_refs_and_hashes=((R("a"), H), (R("b", H), J * 2)))):
         assert X.row_hash(rowd(r), ENUMS) == O.row_content_hash(T, r)
 
+def test_independent_row_hash_catches_a_same_width_field_swap_because_the_identities_are_distinct():
+    # R52 (Build Plan 7.2A required mutant "reordered field"): the fixture used ONE value for feature_id/instrument_id/timeframe_id, so swapping two same-width id fields in the producer was undetectable.
+    i1, i2, i3 = I[:-1] + b"\x01", I[:-1] + b"\x02", I[:-1] + b"\x03"
+    r = row(feature_id=i1, instrument_id=i2, timeframe_id=i3, materializer_implementation_id=i1)
+    assert X.row_hash(rowd(r), ENUMS) == O.row_content_hash(T, r)
+    assert len({X.row_hash(rowd(row(feature_id=a, instrument_id=b, timeframe_id=c)), ENUMS) for a, b, c in ((i1, i2, i3), (i2, i1, i3), (i1, i3, i2), (i3, i2, i1))}) == 4
+
 def test_independent_row_refuses_what_producer_refuses():
     bad = rowd(row()); bad["state_origin_ref"] = xref(R("o"))
     with pytest.raises(ValueError): X.row_hash(bad, ENUMS)
@@ -61,6 +68,23 @@ def test_independent_transition_status_delivered_hashes():
               available_asof=7, evidence_ref=xref(R("e")), sifp_fencing_epoch=2, correction_marked=True)
     assert X.status_event_hash(sd, ENUMS) == O.status_event_hash(T, s)
     d = _delivered()
+    dd = dataclasses.asdict(d)
+    for k in ("fit_generation_ref", "source_or_causal_policy_ref", "bound_health_resolution_ref", "canonical_transition_ref"):
+        dd[k] = None if getattr(d, k) is None else xref(getattr(d, k))
+    dd["data_vintage_mode"] = 1; dd["chain_status_at_bind"] = 1
+    dd["omissions_exclusions_reason_codes"] = [("ENUM", "REASON", 1), ("REF", xref(R("why")))]
+    d2 = dataclasses.replace(d, omissions_exclusions_reason_codes=(("ENUM", "REASON", "NONE"), ("REF", R("why"))))
+    assert X.delivered_hash(dd, ENUMS) == O.delivered_hash(T, d2)
+
+def test_status_and_delivered_hash_orders_are_pinned_with_DISTINCT_same_width_identities():
+    # R52 (7.2A reordered-field mutant): the earlier fixture reused one value for every id, so a producer-side swap of status_event_id/instrument_id/timeframe_id (or feature_id/instrument_id/timeframe_id in the delivered entry) was undetectable.
+    i1, i2, i3 = I[:-1] + b"\x01", I[:-1] + b"\x02", I[:-1] + b"\x03"
+    s = O.StatusEvent(i1, "f1", i2, i3, "m1", 1, "CURRENT", ("INTERVAL", 2, 9), ("ENUM", "REASON", "NONE"), R("p"), 7, R("e"), 2, True)
+    sd = dict(status_event_id=i1, feature_version="f1", instrument_id=i2, timeframe_id=i3, materialization_version="m1", mv_status_sequence=1,
+              status_event_type=1, effective_from=("INTERVAL", 2, 9), reason_code=("ENUM", "REASON", 1), predecessor_or_successor_mv_ref=xref(R("p")),
+              available_asof=7, evidence_ref=xref(R("e")), sifp_fencing_epoch=2, correction_marked=True)
+    assert X.status_event_hash(sd, ENUMS) == O.status_event_hash(T, s)
+    d = _delivered(feature_id=i1, instrument_id=i2, timeframe_id=i3)
     dd = dataclasses.asdict(d)
     for k in ("fit_generation_ref", "source_or_causal_policy_ref", "bound_health_resolution_ref", "canonical_transition_ref"):
         dd[k] = None if getattr(d, k) is None else xref(getattr(d, k))
