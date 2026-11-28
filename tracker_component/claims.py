@@ -19,6 +19,16 @@ class ClaimService:
         self._p = Projection()
         self._max = max_fence_retries
 
+    # -- R7 PROPOSED terminal rule on the ONE authority route (R49): derived from the same HEAD, so every ClaimService/ReplicaLifecycle/pipeline caller sees it --
+    def _order_grant_revoked(self, order_id, issued_by):
+        gr, roles = self._p.grants_revoked, self._p.grant_roles
+        if issued_by in gr and roles.get(issued_by) == "issuer":
+            return True
+        return any(a["order_id"] == order_id and a["builder_grant"] in gr and roles.get(a["builder_grant"]) == "builder" for a in self._p.attempts.values())
+
+    def _order_terminal(self, order_id):
+        return any(c["order_id"] == order_id and c["state"] == "CONSUMED" for c in self._p.claims.values())
+
     # -- verification, always against the synced journal view ---------------
     def _verify_order(self, order_id: str, subject_key, head_seq: int) -> ConstructionOrder:
         raw = self._p.orders.get(order_id)
@@ -35,6 +45,8 @@ class ClaimService:
             raise Refusal("ORDER_SUBJECT_MISMATCH")
         if order.valid_until_seq is not None and head_seq > order.valid_until_seq:
             raise Refusal("ORDER_EXPIRED", order_id)
+        if not self._order_terminal(order_id) and self._order_grant_revoked(order_id, order.issued_by):
+            raise Refusal("ORDER_REVOKED_BY_GRANT", order_id)
         return order
 
     def _commit(self, build):

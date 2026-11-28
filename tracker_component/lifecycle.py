@@ -21,25 +21,6 @@ VERDICTS = FINAL | {"REVIEW_REQUIRED"}
 
 
 class ReplicaLifecycle(ClaimService):
-    # -- derived authority: a revoked grant cannot authorize even before the cascade records are materialised ----------
-    # -- derived authority: a revoked grant cannot authorize even before the cascade records are materialised ----------
-    def _order_grant_revoked(self, order_id, issued_by):
-        if self._p.grants_revoked.get(issued_by) is not None and self._p.grant_roles.get(issued_by) == ISSUER:
-            return True
-        for a in self._p.attempts.values():
-            if a["order_id"] == order_id and self._p.grant_roles.get(a["builder_grant"]) == BUILDER and a["builder_grant"] in self._p.grants_revoked:
-                return True
-        return False
-
-    def _order_terminal(self, order_id):
-        return any(c["order_id"] == order_id and c["state"] == "CONSUMED" for c in self._p.claims.values())
-
-    def _verify_order(self, order_id, subject_key, head_seq):
-        order = super()._verify_order(order_id, subject_key, head_seq)
-        if not self._order_terminal(order_id) and self._order_grant_revoked(order_id, order.issued_by):
-            raise Refusal("ORDER_REVOKED_BY_GRANT", order_id)
-        return order
-
     def _need_grant(self, gid):
         if not isinstance(gid, str) or not gid:
             raise Refusal("GRANT_ID_REQUIRED")
@@ -61,18 +42,21 @@ class ReplicaLifecycle(ClaimService):
         return self.settle()
 
     def settle(self):
-        """Materialise terminal records for every nonterminal order affected by an issuer/builder grant revocation (idempotent; resumable after a crash).
-        Authority never depends on this having run: _verify_order derives the refusal from the same HEAD."""
+        """Reconcile OUTSTANDING consequences of issuer/builder grant revocation after any partial phase (idempotent, restart-safe): revoke a still-live affected order AND abandon every
+        still-BOUND claim of every grant-affected order, including orders already revoked by an earlier partial run. Consumed (accepted) history is never touched. Authority never depends on
+        this having run: ClaimService._verify_order derives the refusal from the same HEAD."""
         self._p.sync(self._j)
         done = []
         for oid, raw in list(self._p.orders.items()):
-            if oid in self._p.revoked or self._order_terminal(oid) or not self._order_grant_revoked(oid, raw["issued_by"]):
+            if self._order_terminal(oid) or not self._order_grant_revoked(oid, raw["issued_by"]):
                 continue
-            self.revoke_order(oid, "GRANT_REVOCATION")
+            acted = False
+            if oid not in self._p.revoked:
+                self.revoke_order(oid, "GRANT_REVOCATION"); acted = True
             for c in list(self._p.claims.values()):
                 if c["order_id"] == oid and c["state"] == "BOUND":
-                    self._commit(lambda head, cid=c["claim_id"]: (CLAIM_ABANDONED, {"claim_id": cid, "reason": "GRANT_REVOCATION"}))
-            done.append(oid)
+                    self._commit(lambda head, cid=c["claim_id"]: (CLAIM_ABANDONED, {"claim_id": cid, "reason": "GRANT_REVOCATION"})); acted = True
+            if acted: done.append(oid)
         return done
 
     def replace_creation(self, *, old_creation_id: str, new_creation_id: str, subject_key: str, order_id: str, lookup_outcome):
@@ -165,6 +149,8 @@ class ReplicaLifecycle(ClaimService):
             if self._final(package_id):
                 raise Refusal("FINAL_DISPOSITION_EXISTS")
             ds = self._p.dispositions.get(package_id, [])
+            if ds and ds[0]["build_id"] != build_id:
+                raise Refusal("PACKAGE_OWNED_BY_ANOTHER_ATTEMPT", package_id)      # the review must come from the SAME owning order/claim/creation/attempt/reservation generation
             if not ds or ds[-1]["report_hash"] != prior_report_hash or ds[-1]["verdict"] != "REVIEW_REQUIRED" or ds[-1]["package_hash"] != package_hash:
                 raise Refusal("REVIEW_NOT_AGAINST_CURRENT_REVIEW_REQUIRED_REPORT")
             have = sum(1 for k in self._p.reviews if k[0] == package_id)
@@ -191,6 +177,8 @@ class ReplicaLifecycle(ClaimService):
             if c is None or c["state"] != "BOUND":
                 raise Refusal("CLAIM_NOT_BOUND")
             ds = self._p.dispositions.get(package_id, [])
+            if ds and ds[0]["build_id"] != build_id:
+                raise Refusal("PACKAGE_OWNED_BY_ANOTHER_ATTEMPT", package_id)
             same = next((d for d in ds if d["report_id"] == report_id), None)
             if same is not None:
                 if same["report_hash"] != report_hash or same["verdict"] != verdict or same["package_hash"] != package_hash:
@@ -200,6 +188,8 @@ class ReplicaLifecycle(ClaimService):
                 raise Refusal("FINAL_DISPOSITION_EXISTS")               # a new operation or report id cannot make a second effect
             if any(d["report_hash"] == report_hash for d in ds):
                 raise Refusal("REPORT_HASH_REUSED")
+            if verdict in FINAL and any(d["build_id"] == build_id and d["verdict"] in FINAL for dd in self._p.dispositions.values() for d in dd):
+                raise Refusal("ATTEMPT_ALREADY_HAS_FINAL_EFFECT", build_id)      # one final effect per admitted attempt, not merely per package string
             if ds:
                 if ds[0]["package_hash"] != package_hash:
                     raise Refusal("PACKAGE_HASH_CHANGED")
