@@ -34,3 +34,8 @@ FIX (this PR): the acceptor pins one HEAD basis BEFORE its replay, decides only 
 The separated acceptor path (`ops/separated_handlers.accept`) calls the same `pipe._accept`, so it carries the fix; it was not given its own interleaving test.
 REVIEW of the same stale-state/fresh-HEAD pattern in other append sites (own reading, not new mutants): `tracker/publication._commit` reads HEAD before the state (older head, newer state: the CAS fails closed); `coordination/lifecycle_framework.apply` and `core/tracker_core._commit` decide and CAS on one pinned head; `tracker/evidence_resolver.put/revoke` append with a fresh head but make no decision from prior state; `tracker/sim_publication_path.commit` appends to the side journal with a fresh side head when none is pinned, but the decision is on the owning journal whose head is recorded in the body and guarded downstream (documented fail-closed design, R51); a pinned `expected_side_head` is available. No further instance of the Manager's pattern found; not claimed as proof of absence.
 
+## Resolution notes after the governing annex was opened (see the carrier-relation doc)
+- Open item 3 (monotonicity scope) is RESOLVED: the rule is per MATERIALIZATION_VERSION status-event sequence and is already enforced by `chain_status` (ASOF_DECREASED).
+- Open item 2 (PUBLISHABLE/WITHDRAWN time field) REMAINS: the annex's AVAILABLE_ASOF lives on STATUS events and on the typed transition; it does not define a time field for the journal PUBLISHABLE/WITHDRAWN bodies.
+- Open item 1 (carrier agreement) is REFRAMED: they are different granularities (version vs row), not two carriers of one event.
+
