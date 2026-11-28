@@ -1,0 +1,21 @@
+# R53 — Tracker Health Profile V1 read (Drive 1Wsqw3NRJBoBHn6zBlZIC_KhSjn4_DDxLAWINqFjOFBs)
+
+CODER FINDING != SALIX DECISION. Docs only; paraphrase by role, no source text copied. Merge clears no gate.
+DERIVATION_CLASS = INDEPENDENTLY_DERIVED for what the document says (full `read_file_content`, opened this session); repo comparison by direct read of `stage_a/health/subject_coverage.py`, `envelope.py`, `adapters.py` (head only for adapters: INSUFFICIENT_EVIDENCE for per-adapter detail beyond that).
+REPRODUCIBLE_BY_MANAGER = YES (same file id; the three repo files at main 6f7f9ca).
+Count note: Manager reports 59 non-empty paragraphs (not 61); I did not recount.
+
+## What the document establishes (role level)
+- Owner-frozen H1–H4 overlay (2026-09-19); whole-SALIX master health freeze, implementation, FW/EURUSD/ML/production authority all NO. Old body lines "freeze pending / implementation NO" are superseded by the overlay for status and are not a re-permission question.
+- Ownership follows SUBJECT: Tracker Health owns Tracker facts and Tracker machinery (data identity, source/vintage/currentness, causal availability, bar-construction integrity, dependency-closure completeness, registry/lifecycle, materialization freshness, eligibility/currentness, stale/superseded, wrong-instrument contamination detectable by Tracker, Gateway production machinery). It does not own the Tracker→FW handoff instance or FW-local state; Contract Health checks binding/carrying only; Master Health references, never re-derives.
+- Four critical-set CANDIDATES (data identity, closure completeness, causal availability, wrong-instrument integrity); membership is governed by Tracker authority and versioned by CRITICAL_SET_ID/VERSION. Calendar/session authority stays with the instrument/source profile; Tracker Health must not invent a calendar. Producer liveness is Tracker-local; Master may derive STALE_NO_PRODUCER from expired silence only.
+- Four health layers are distinct and no consumer/projection creates second ownership.
+
+## Comparison with the repo
+1. **Two different subject lists.** `subject_coverage.KINDS` is the Build Plan 14 list of eight Stage A subject kinds (manifest/profile, fit generation, materialization row, recording verification, scheduler/resource, Gateway binding/non-delivery, FW/ML carried impact, replay backlog). The Profile V1 list is Tracker FACT subjects. They are not one-to-one. Role-level mapping (reviewer judgment, not a source mapping): registry/lifecycle → registry-integrity adapter (an "extra" kind, outside the aggregate); materialization freshness → MATERIALIZATION_ROW (no freshness policy bound); Gateway machinery → GATEWAY_BINDING_NON_DELIVERY; closure completeness → blast-radius/closure code (impact, not a state kind).
+2. **No coverage kind for the four critical-set candidates** (data identity, causal availability, wrong-instrument integrity have no Health kind or adapter in `KINDS`; closure completeness only as impact). I did not search the whole repo for other evidence sources (INSUFFICIENT_EVIDENCE, not absence). This is a gap in Health coverage, not a defect in current code, since membership and profile instances are source-owned and unbound.
+3. **Held, unchanged:** CRITICAL_SET_ID/VERSION values, which candidates are final, HEALTH_PROFILE/POLICY ids, reason registry, thresholds, producer identity/signature (`B0_HELD_SLOTS`, envelope REQUIRED fields). The envelope already carries CRITICAL_SET_ID/VERSION and derives STALE_NO_PRODUCER from expired silence without treating silence as HEALTHY, consistent with the producer-health clause.
+4. **Not covered by anything I read:** source/feed availability, missing/duplicate/conflicting data state, segmentation integrity as Health subjects; they sit in Core/L2 recording code and are not wired into `subject_coverage` (INSUFFICIENT_EVIDENCE for any other path).
+
+## Recommendation (proposal only)
+Keep `KINDS` as is; add nothing invented. When the Manager supplies the governed profile instance, add typed readings for the four critical-set subjects via the existing supplied-reading path (CALLER_ASSERTED_UNADMITTED) rather than new authority. Lenses: ARCHITECTURE=YES, GOVERNANCE=YES, ADVERSARIAL=NA (no code), others NA.
