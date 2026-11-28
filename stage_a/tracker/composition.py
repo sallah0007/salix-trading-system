@@ -34,7 +34,7 @@ class Composition:
         for n, o in (("pipeline", pipeline), ("journals", journals), ("store", store), ("core", core), ("path", path)):
             if o is None: raise Refusal(n, code="COMPOSITION_PART_MISSING")
         if not callable(gateway_factory): raise Refusal("gateway_factory", code="COMPOSITION_PART_MISSING")
-        self._p, self._js, self._st, self._core, self._path, self._gf = pipeline, journals, store, core, path, gateway_factory; self._up = dict(upstream or {}); self.gateway = None; self._l2r = l2_scope_resolver; self._sv = {}; self._pub = {}
+        self._p, self._js, self._st, self._core, self._path, self._gf = pipeline, journals, store, core, path, gateway_factory; self._up = dict(upstream or {}); self.gateway = None; self._l2r = l2_scope_resolver; self._sv = {}; self._pub = {}; self._published = {}
     @staticmethod
     def _report_scope_defect(rep, key, pkg, now, max_age):
         from .registry_integrity import IntegrityReport
@@ -99,6 +99,7 @@ class Composition:
                 try: rec = lifecycle.apply(key, *lifecycle_transition); r.log("lifecycle", "APPLIED" if rec is not None else "IDEMPOTENT_NOOP", lifecycle_transition[0])
                 except Refusal as e: r.log("lifecycle", "HELD" if e.code in ("LIFECYCLE_POLICY_HELD", "LIFECYCLE_EVIDENCE_CHECK_HELD") else "REFUSED", e.code)
         r.status = "PUBLISHED_SIMULATION" if l2_ok[0] else "PUBLISHED_SIMULATION_L2_NOT_PASS"
+        self._published[key] = r                                                                                                      # R54: the result THIS Composition published for this subject (delivery selects health only through it)
         if stored_inputs is not None and callable(stored_inputs.get("fetch")) and callable(stored_inputs.get("series_hash")): self._pub[key] = (r, r.status, stored_inputs["fetch"], stored_inputs["series_hash"])           # R53: the OWNING registration basis: THIS Composition accepted, persisted and published this feature with exactly these stored-value inputs
         return r
     def register_stored_maintenance(self, result, stored_inputs=None):
@@ -113,13 +114,34 @@ class Composition:
     def run_maintenance(self, events=(), *, now, max_age, max_items, subjects=None):
         """One bounded all-segment L2 pass over the registered subjects through the existing `run_stored_value_pass` (Core due-ness UNION supplied (subject, trigger) events; no daemon/cadence here). Results are recorded in the SAME Core the Gateway reads health from, so a failing/unavailable segment makes later delivery NON_DELIVERY."""
         return SV.run_stored_value_pass(self._core, dict(self._sv), sorted(self._sv) if subjects is None else list(subjects), events, now=now, max_age=max_age, max_items=max_items)
+    def recover_publication(self, feature_key, *, stored_inputs=None):
+        """R54 cold recovery of THIS Composition's owning connection after a restart: nothing is taken from memory. The feature must (a) still have its committed CANONICAL_ACCEPTED manifest in the owning feature journal (`read_accepted_manifest`), and (b) hold at least one committed status record in the (rebuilt) publication path whose source guard still matches the owning HEAD; a NEW Gateway is built from the path's committed projection, its durable final store is recovered (stored consumer-local outcomes and identities are authoritative, never re-evaluated), and the committed rows are fed. The result is labelled RECOVERED_PUBLISHED_SIMULATION; it does NOT restore the L2/stored-value basis unless `stored_inputs` is supplied AND the all-segment verification finds stored segments (a basis is never recreated from a caller label). Health/ancestry live in the Core journal (a new Core over the same journal)."""
+        key = feature_key.key(); j = self._js.journal(feature_key.namespace())
+        try: read_accepted_manifest(j, self._st, feature_key)
+        except Refusal as e: raise Refusal(key, code="COMPOSITION_RECOVERY_NO_ACCEPTED_RECORD:" + e.code)
+        if not any(b.get("feature_key") == key for b in self._path.records()): raise Refusal(key, code="COMPOSITION_RECOVERY_NO_COMMITTED_STATUS")
+        if not self._path.source_current(): raise Refusal(key, code="COMPOSITION_RECOVERY_SOURCE_HEAD_ADVANCED")
+        r = CompositionResult("RECOVERED_PUBLISHED_SIMULATION", feature_key=feature_key); proj = self._path.status_projection(); gw = self._gf(proj); fs = getattr(gw, "final_store", None)
+        if fs is not None and hasattr(fs, "recover"): fs.recover()
+        self.gateway = gw; r.projection = proj; r.published_rows = self._path.feed(gw); r.log("recovered_committed_status_and_rows", "OK", "rows=%d" % r.published_rows); self._published[key] = r
+        if stored_inputs is not None and callable(stored_inputs.get("fetch")) and callable(stored_inputs.get("series_hash")):
+            v = SV.verify_all_stored_segments(journal=j, store=self._st, feature_key=feature_key, fetch=stored_inputs["fetch"], series_hash=stored_inputs["series_hash"])
+            if v["segments"]: self._pub[key] = (r, r.status, stored_inputs["fetch"], stored_inputs["series_hash"]); r.log("stored_basis", "RESTORED_FROM_STORED_SEGMENTS", v["overall"])
+            else: r.log("stored_basis", "NOT_RESTORED", v["reason"])
+        return r
+    def _owning_subject(self, result, entry, binding):
+        """R54: delivery selects Core health from the RESULT's feature key, and a result is a caller-held mutable object. The result must be the very object this Composition published for that subject, and the requested entry and health binding must name that subject's feature id/version; otherwise refuse (the Gateway's HEALTH_BINDING_MISMATCH is a second, independent check, not the only one)."""
+        fk = result.feature_key
+        if self._published.get(fk.key()) is not result: raise Refusal(fk.key(), code="COMPOSITION_RESULT_NOT_THIS_PUBLICATION")
+        if getattr(binding, "feature_id", None) != getattr(entry, "feature_id", object()) or getattr(binding, "feature_version", None) != fk.feature_version or getattr(entry, "feature_version", None) != fk.feature_version: raise Refusal(fk.key(), code="COMPOSITION_ENTRY_BINDING_SUBJECT_MISMATCH")
+        return fk
     def deliver(self, request_id, identity, entry, instrument_id, timeframe_id, step_index, event_time, result: CompositionResult, *, binding, now, ref, resolved_at, tables, health=None, consumer_manifest_id=None):
         """Gateway resolution for ONE FW window under the composed Core Health. Returns the Binding after the FW verified receive; a non-delivery raises `NON_DELIVERY`. Optional `health` (health.impact_supplier) adds the consumer-closure carried-upstream check BEFORE resolution; omitted => only the Core ancestry check applies (named in closeout 27)."""
         if self.gateway is None or result.feature_key is None: raise Refusal("not published", code="COMPOSITION_NOT_PUBLISHED")
         if health is not None:                                               # R49: the SAME supplier/relations as the ML path; requiredness derives from `entry`; the FW consumer manifest id is caller-named but must exist in the supplier's governed registry with kind FW
             use, _imp = health.decide(consumer_manifest_id, "FW", entry)
             if use == "BLOCK_PROVEN_DEPENDENCY" or use.startswith("REFUSE_"): raise Refusal(use, code="HEALTH_IMPACT_" + use)
-        fk = result.feature_key; health = self._core.gateway_health(fk.key(), fk.feature_version, now, ref, resolved_at, binding=binding, require_ancestry=True)
+        fk = self._owning_subject(result, entry, binding); health = self._core.gateway_health(fk.key(), fk.feature_version, now, ref, resolved_at, binding=binding, require_ancestry=True)
         d = self.gateway.resolve_window(request_id, identity, entry, instrument_id, timeframe_id, step_index, event_time, health)
         return FWR.receive_verified(d, entry, instrument_id, timeframe_id, tables, self.gateway)
     def deliver_ml(self, request_id, identity, entry, instrument_id, timeframe_id, step_index, event_time, result: CompositionResult, *, binding, now, ref, resolved_at, tables, row_id, generation_ref, vintage_mode, omissions, exclusion_reason, health=None, consumer_manifest_id=None):
@@ -128,6 +150,6 @@ class Composition:
         if health is not None:
             use, _imp = health.decide(consumer_manifest_id, "ML", entry)
             if use == "BLOCK_PROVEN_DEPENDENCY" or use.startswith("REFUSE_"): raise Refusal(use, code="HEALTH_IMPACT_" + use)
-        fk = result.feature_key; h = self._core.gateway_health(fk.key(), fk.feature_version, now, ref, resolved_at, binding=binding, require_ancestry=True)
+        fk = self._owning_subject(result, entry, binding); h = self._core.gateway_health(fk.key(), fk.feature_version, now, ref, resolved_at, binding=binding, require_ancestry=True)
         d = self.gateway.resolve_window(request_id, identity, entry, instrument_id, timeframe_id, step_index, event_time, h)
         return MLR.build_row(row_id, generation_ref, [entry], [d], self.gateway, vintage_mode, omissions, exclusion_reason, tables=tables)
