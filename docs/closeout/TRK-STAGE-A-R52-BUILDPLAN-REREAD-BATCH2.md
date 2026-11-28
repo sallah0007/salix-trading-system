@@ -24,3 +24,6 @@ MATHEMATICAL=YES (i64 bound, equality of the two time carriers); DATA_SCIENCE=NA
 2. PUBLISHABLE/WITHDRAWN time field (needs source clause).
 3. Monotonicity scope definition.
 4. Lines 140–2230 line-by-line read; lines 2440–3158, 3232–3743, 3900–5234 reads.
+
+## Addendum (own grep, main aec5b18)
+Finding 1 sharpened: `schema/objects.CanonicalTransition` / `transition_bytes` / `transition_hash` are constructed only in `tests/trk_stage_a/test_schema_annex.py` and `test_boundaries.py`; NO production path (pipeline, acceptor, replay) builds the typed transition. The live carrier of acceptance is the journal body (CANONICAL_ACCEPTED), and the typed object is schema/oracle-only. So the Build Plan 5.5 duty that the CanonicalTransition (with accepted-at, available_asof, commit point, epoch) is THE authority-bearing append is not met by the typed object today; reconciling the journal body with the typed transition (which one is authoritative bytes, how the commit-point id and available_asof are produced) is an owner/design input, not something to invent. Role: Manager/Owner (D13 byte layout stays unadmitted). Consequence: the typed hash cannot yet be cited as the acceptance hash. Recommendation: Manager states whether the journal record hash or the typed transition hash is the HEAD-installed hash; then a bridge test can be written.
