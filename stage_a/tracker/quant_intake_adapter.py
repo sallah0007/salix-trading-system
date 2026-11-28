@@ -214,13 +214,16 @@ def _check_ancestry(pkg, m, a, resolver):
     if a.feature_key is None: return held("SUBJECT_IDENTITY_NOT_DERIVED")
     if resolver is None: return held("NO_RESOLVER_SUPPLIED")
     from ..ml import closure as CL
-    b = resolver(a.feature_key, mid, gid, list(m.data["fit_refs"]))
+    import copy
+    snap_refs = copy.deepcopy(list(m.data["fit_refs"]))                                      # R52: expected-query snapshot pinned BEFORE the port is called; the port gets its OWN detached copy
+    b = resolver(a.feature_key, mid, gid, copy.deepcopy(snap_refs))
+    if m.data["fit_refs"] != snap_refs: return fail("ANCESTRY_RESOLVER_MUTATED_PARSED_MANIFEST")   # belt and braces: callback effects must not reach the verified manifest
     if b is None: return held("RESOLVER_RETURNED_NO_BINDING")
     if not isinstance(b, AncestryBinding) or b.fit_ref_nodes is None: return fail("ANCESTRY_BINDING_MALFORMED")
     qr = b.query_receipt
     if qr is None: return held("QUERY_RECEIPT_ABSENT_MAPPING_NOT_ESTABLISHED")            # the mapping to THIS query cannot be established: UNKNOWN, never a pass
     if not isinstance(qr, AncestryQueryReceipt): return fail("ANCESTRY_QUERY_RECEIPT_MALFORMED")
-    here = query_receipt_for(a.feature_key, mid, gid, m.data["fit_refs"], qr.closure_id)
+    here = query_receipt_for(a.feature_key, mid, gid, snap_refs, qr.closure_id)
     if qr != here: return fail("ANCESTRY_BINDING_QUERY_MISMATCH")                        # a consistent binding issued for another feature/version/generation/fit set (cache or replay)
     fit_nodes = dict(b.fit_ref_nodes)
     try: v = CL.derive(b.record)
@@ -231,7 +234,7 @@ def _check_ancestry(pkg, m, a, resolver):
     if rec.subject_id != b.subject_node: return fail("ANCESTRY_CLOSURE_FOR_ANOTHER_SUBJECT")
     reached = set(v.reached)
     if b.upstream_model_node not in reached or b.upstream_generation_node not in reached: return fail("UPSTREAM_ID_NOT_IN_CLOSURE")
-    gens = [r.get("generation") for r in m.data["fit_refs"]]
+    gens = [r.get("generation") for r in snap_refs]
     if any(g not in fit_nodes or fit_nodes[g] not in reached for g in gens): return fail("FIT_REFERENCE_NOT_IN_CLOSURE")
     if not any(e.edge_class in _LEARNED_EDGES and e.content_carrying and e.child in ({rec.subject_id} | reached) and e.parent in (b.upstream_model_node, b.upstream_generation_node) for e in rec.edges):
         return fail("NO_LEARNED_EDGE_TO_UPSTREAM_IDS")
