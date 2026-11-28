@@ -4,16 +4,17 @@
   * bounded: per-job reply timeout (a hung child is killed), `max_attempts` per idempotency key (then DEAD-LETTERED, still visible), a bounded respawn count;
   * recovery: a child that dies or hangs mid-job leaves the job PENDING; the supervisor respawns that worker (NEW pid, re-checked for separation) and retries; after queue loss `workers.recover_pending` rebuilds the pending set from canonical history and a fresh supervisor runs it.
 NOT a deployment: no production principal, credential, host, container or scheduler is created or claimed; principals are the DOCUMENTARY `workers.WORKER_PRINCIPAL` names. Handlers are caller-supplied `module:function` names. A passing test here is not an E04 acceptance."""
-import json, os, select, subprocess, sys, time
+import json, math, os, select, subprocess, sys, time
 from ..errors import Refusal
 from . import workers as W
 from .runner import encode_job_ref
 _BOOT = "import sys; sys.path[:0] = [sys.argv[1]]; from stage_a.ops.worker_child import main; main(sys.argv[2:])"
+MAX_FRAME_BYTES = 1 << 16          # R39: one reply frame is one short JSON line; a larger one is oversized => the child is killed/replaced
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 class ProcessSupervisor:
     def __init__(self, queue, handlers, *, sink=None, max_attempts=3, reply_timeout=10.0, max_respawns=6, extra_paths=()):
         """handlers: {job kind: (worker, "module:function")}. Every worker role in W.WORKERS is started (one process each) so the full separation can be checked on real pids."""
-        if not (isinstance(handlers, dict) and handlers and all(isinstance(k, str) and isinstance(v, tuple) and len(v) == 2 and v[0] in W.WORKERS and isinstance(v[1], str) and v[1].count(":") == 1 for k, v in handlers.items())) or type(max_attempts) is not int or max_attempts < 1 or not (isinstance(reply_timeout, (int, float)) and reply_timeout > 0) or type(max_respawns) is not int or max_respawns < 0:
+        if not (isinstance(handlers, dict) and handlers and all(isinstance(k, str) and isinstance(v, tuple) and len(v) == 2 and v[0] in W.WORKERS and isinstance(v[1], str) and v[1].count(":") == 1 for k, v in handlers.items())) or type(max_attempts) is not int or max_attempts < 1 or not (type(reply_timeout) in (int, float) and math.isfinite(reply_timeout) and reply_timeout > 0) or type(max_respawns) is not int or max_respawns < 0:
             raise Refusal("handlers", code="SUPERVISOR_CONFIG_INVALID")
         self._q, self._h, self._sink, self._max, self._to, self._maxresp, self._paths = queue, dict(handlers), sink, max_attempts, float(reply_timeout), max_respawns, tuple(extra_paths)
         self._procs = {}; self._tries = {}; self.dead = {}; self.respawns = 0; self.pid_history = {w: [] for w in W.WORKERS}
@@ -23,7 +24,7 @@ class ProcessSupervisor:
         except BaseException: self.close(); raise
     def _spawn(self, w):
         mine = {k: v[1] for k, v in self._h.items() if v[0] == w}
-        p = subprocess.Popen([sys.executable, "-I", "-c", _BOOT, _ROOT, w, json.dumps(mine, sort_keys=True)] + list(self._paths), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1, cwd="/")
+        p = subprocess.Popen([sys.executable, "-I", "-c", _BOOT, _ROOT, w, json.dumps(mine, sort_keys=True)] + list(self._paths), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0, cwd="/")
         self._procs[w] = p; self.pid_history[w].append(p.pid)
     def pids(self): return {w: p.pid for w, p in self._procs.items()}
     def slots(self): return {w: (p.pid, W.WORKER_PRINCIPAL[w]) for w, p in self._procs.items() if p.poll() is None}
@@ -35,20 +36,35 @@ class ProcessSupervisor:
     def _ask(self, w, job):
         """One job over ref-only IPC. Returns (result, code) or ('LOST', reason) when the child died/hung/lied (the worker is then replaced)."""
         p = self._procs[w]
-        try: p.stdin.write(encode_job_ref(job).decode("ascii") + "\n"); p.stdin.flush()
+        try: p.stdin.write(encode_job_ref(job) + b"\n"); p.stdin.flush()
         except (BrokenPipeError, OSError, ValueError): return "LOST", "CHILD_PIPE_BROKEN"
-        r, _, _ = select.select([p.stdout], [], [], self._to)
-        if not r: p.kill(); p.wait(); return "LOST", "CHILD_REPLY_TIMEOUT"
-        line = p.stdout.readline()
-        if not line: p.wait(); return "LOST", "CHILD_EXITED"
-        try: d = json.loads(line)
+        deadline = time.monotonic() + self._to; buf = b""; fd = p.stdout.fileno()         # R39: ONE bounded whole-FRAME deadline with non-blocking accumulation (never a blocking readline after a partial byte)
+        while b"\n" not in buf:
+            left = deadline - time.monotonic()
+            if left <= 0: p.kill(); p.wait(); return "LOST", "CHILD_REPLY_TIMEOUT"
+            r, _, _ = select.select([fd], [], [], left)
+            if not r: continue
+            try: chunk = os.read(fd, 4096)
+            except OSError: chunk = b""
+            if not chunk: p.wait(); return "LOST", "CHILD_EXITED"
+            buf += chunk
+            if len(buf) > MAX_FRAME_BYTES and b"\n" not in buf[:MAX_FRAME_BYTES]: p.kill(); p.wait(); return "LOST", "CHILD_REPLY_OVERSIZED"
+        line, rest = buf.split(b"\n", 1)
+        if rest or len(line) > MAX_FRAME_BYTES: p.kill(); p.wait(); return "LOST", "CHILD_REPLY_MALFORMED"
+        try: d = json.loads(line.decode("utf-8"))
         except ValueError: return "LOST", "CHILD_REPLY_MALFORMED"
         if not (isinstance(d, dict) and set(d) == {"job_id", "result", "code", "pid"}) or d["pid"] != p.pid or d["job_id"] != job.job_id: return "LOST", "CHILD_REPLY_NOT_FROM_SPAWNED_PID_OR_JOB"
         return d["result"], d["code"]
+    @staticmethod
+    def _close_streams(p):
+        for f in (p.stdin, p.stdout):
+            try:
+                if f: f.close()
+            except Exception: pass
     def _replace(self, w):
         old = self._procs[w]
         if old.poll() is None: old.kill()
-        old.wait()
+        old.wait(); self._close_streams(old)
         if self.respawns >= self._maxresp: raise Refusal(w, code="SUPERVISOR_RESPAWN_BOUND_EXCEEDED")
         self.respawns += 1; self._spawn(w); self._check()
     def run_one(self):
@@ -80,5 +96,6 @@ class ProcessSupervisor:
             except Exception: pass
             try: p.wait(timeout=2)
             except Exception: p.kill(); p.wait()
+            self._close_streams(p)
     def __enter__(self): return self
     def __exit__(self, *a): self.close()

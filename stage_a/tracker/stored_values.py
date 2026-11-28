@@ -86,8 +86,10 @@ def verify_all_stored_segments(*, journal, store, feature_key, fetch, series_has
     out = {}
     for k in keys:
         got = store.get(k)
-        try: b = json.loads(got[0])["bindings"]; assert _check_bindings(b)
+        try: rec = json.loads(got[0]); b = rec["bindings"]; assert _check_bindings(b)
         except Exception: out[k] = dict(base, overall="FAIL", reason="STORED_VALUES_UNPARSEABLE", l1="PASS", l2="FAIL", health_effect="NOT_HEALTHY"); continue
+        if k != stored_values_key(mh, segment_id(b)) or rec.get("segment_id") != segment_id(b) or rec.get("materialization_hash") != mh or rec.get("feature_key") != feature_key.key():      # R39: the ENUMERATED key/body/segment/accepted identity must agree; never follow another record
+            out[k] = dict(base, overall="FAIL", reason="STORED_VALUES_KEY_BODY_SEGMENT_MISMATCH", l1="PASS", l2="FAIL", health_effect="NOT_HEALTHY"); continue
         out[k] = verify_stored_values(journal=journal, store=store, feature_key=feature_key, bindings=b, fetch=fetch, series_hash=series_hash)
     ov = [v["overall"] for v in out.values()]; overall = "FAIL" if "FAIL" in ov else "UNAVAILABLE" if "UNAVAILABLE" in ov else "VERIFIED_STORED_EQUALS_RECOMPUTED"
     l1 = "FAIL" if any(v["l1"] == "FAIL" for v in out.values()) else "PASS"

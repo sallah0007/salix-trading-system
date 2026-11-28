@@ -2,7 +2,7 @@
   * the state vocabulary and the policy are SUPPLIED (`LifecyclePolicy`); no 12-state graph, initial state, terminal set or mapping (PUBLISHABLE=>CURRENT, WITHDRAWN=>HALTED, ...) is defined here. With `policy=None` every operation refuses `LIFECYCLE_POLICY_HELD` (fail closed on the unbound slot);
   * safeguards that hold for ANY policy: exact-HEAD compare-and-append (a stale writer refuses), the current state is DERIVED by replaying the chain-verified journal (never a cache), a transition must name its prior state (a lie about 'from' refuses), is idempotent by transition id (identical retry = no-op, a different body under the same id refuses), requires an `evidence_ref` and, when a checker is supplied, that checker must accept (e.g. an `EvidenceResolver.use` receipt wrapper); a subject in a policy-declared terminal state accepts nothing further; unknown states refuse; a failed attempt writes nothing;
   * `quarantine/withdraw` style moves are just policy transitions: nothing here auto-reopens or rolls back.
-The ACTUAL caller is `LifecycleFramework.apply(...)`, used by the composition caller (`composition.py`) to record a status event for a subject. A committed transition changes NO gate; mapping a lifecycle state to chain-status/currentness remains the source-owned mapping (HELD)."""
+The composition caller (`composition.py`) calls `apply(...)` ONLY when a `lifecycle` framework AND an explicit `lifecycle_transition` are supplied to `accept_and_publish` (R39); by default it is not invoked, and an unbound policy is reported HELD in the step log. `history(subject)` is the read-only view `registry_entry` uses for DISPOSITION_HISTORY (this journal stays the single lifecycle authority, Registry 241). A committed transition changes NO gate; mapping a lifecycle state to chain-status/currentness remains the source-owned mapping (HELD)."""
 import json
 from dataclasses import dataclass
 from typing import Callable, FrozenSet, Optional, Tuple
@@ -28,6 +28,9 @@ class LifecycleFramework:
             if r.kind != KIND: raise Refusal(r.kind, code="LIFECYCLE_UNKNOWN_RECORD_KIND")
             b = json.loads(r.body_json); cur[b["subject"]] = b["to"]; ids[b["transition_id"]] = b
         return head, cur, ids
+    def history(self, subject):
+        """Read-only: the subject's recorded transitions in journal order (no policy needed to READ). The only source of a registry entry's DISPOSITION_HISTORY."""
+        return tuple((b["transition_id"], b["from"], b["to"], b["evidence_ref"], b["policy_ref"]) for b in (json.loads(r.body_json) for r in (self._j.read_from(1) if self._j.head() != GENESIS_HEAD else [])) if b["subject"] == subject)
     def state_of(self, subject):
         self._need(); return self._replay()[1].get(subject)
     def apply(self, subject, transition_id, from_state, to_state, evidence_ref, *, expected_head=None):
