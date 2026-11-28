@@ -9,7 +9,7 @@ Equality of this table with the generator proves transcription only. WIRING is r
 | B03 | IA | S4 Reg p104-124; S5 | tracker/registry_semantics: importers=registry_entry,registry_integrity,snapshot_binding,snapshot_carrier | YES | not re-read in R54 |
 | B04 | SD | S4/S3 s6 | tracker/quant_intake_adapter: importers=pipeline,request_classification,separated_caller | YES | not re-read in R54 |
 | B05 | MR | S3 s6 p6-8 | n/a (no module cited) | YES | not re-read in R54 |
-| B06 | SD | S4 Reg p129 | storage/byte_primitives: importers=atomic_publication,composition,evidence_resolver,object_store_journal+12; tracker/accepted_manifest: importers=composition,sim_publication_path | YES | not re-read in R54 |
+| B06 | SD | S4 Reg p129 | storage/byte_primitives: importers=atomic_publication,composition,evidence_resolver,object_store_journal+13; tracker/accepted_manifest: importers=composition,sim_publication_path | YES | not re-read in R54 |
 | B07 | IA | S4 Reg p130-134,194-195 | n/a (no module cited) | YES | R54: composer/expression operators exercised by R45-R47 parity tests; invoked by the intake/verification path, normative bytes held. |
 | B08 | SD | S4 Reg p133-136,167-170,192-199 | n/a (no module cited) | YES | not re-read in R54 |
 | B09 | SD | S4 Reg p137-165,322,377 | n/a (no module cited) | YES | not re-read in R54 |
