@@ -25,6 +25,9 @@ class Rel(unittest.TestCase):
         own2 = lambda s: s in (self.a, "X/Y/z/2"); st = RS.RelationshipStore(self.j, own2); r = st.successor_reference(self.a, "X/Y/z/2", "S1"); self.assertEqual((r.state, r.claim_allowed), ("RELATIONSHIP_UNCOMPUTED", False))
         rel = self.mk(self.a, "X/Y/z/2"); st.append(rel); self.assertIsNone(st.append(rel)); r = st.successor_reference(self.a, "X/Y/z/2", "S1"); self.assertEqual((r.claim_allowed, r.relationship_class, r.record_id), (True, VD.PROVENANCE_CHANGE, "rid-X/Y/z/2"))
         self.assertEqual(st.successor_reference(self.a, "X/Y/z/2", "S2").reason, "NO_RECORD_UNDER_CURRENT_SCHEMA"); self.assertEqual(code(st.append, dataclasses.replace(rel, relationship_class=VD.SCOPE_CHANGE)), "RELATIONSHIP_IMMUTABLE_PER_SCHEMA_VERSION")
+        st2 = RS.RelationshipStore(self.j, lambda s: True); st2.append(dataclasses.replace(rel, successor="X/Y/z/3", state=VD.COMPUTED, relationship_class=None, reason="NO_CHANGED_FIELDS_NO_CLASS_DEFINED", record_id="r3"))
+        u = st2.successor_reference(self.a, "X/Y/z/3", "S1"); self.assertEqual((u.state, u.claim_allowed), (VD.COMPUTED, False))                 # computed but NO class: the claim fails closed
+        st2.append(dataclasses.replace(rel, successor="X/Y/z/4", state="RELATIONSHIP_UNCOMPUTABLE", relationship_class=VD.CORRECTION, record_id="r4")); self.assertFalse(st2.successor_reference(self.a, "X/Y/z/4", "S1").claim_allowed)    # non-COMPUTED state never allows the claim even with a class
         self.assertEqual(st.pinned("rid-X/Y/z/2"), rel); self.assertEqual(RS.RelationshipStore(self.j, own2).successor_reference(self.a, "X/Y/z/2", "S1").record_id, "rid-X/Y/z/2")                    # restart: replayed from the journal
     def test_withdrawn_version_no_longer_resolves_and_health_observation_is_facts_only(self):
         from stage_a.tracker import publication as PUB
@@ -43,5 +46,8 @@ class Bind(unittest.TestCase):
         c, out = self._resolved("ORIGINAL_AS_OBSERVED"); mh = out["resolved_manifest_hash"]; self.assertEqual(code(SB.bind_snapshot_manifest, c, self._mv(data_vintage_mode="CURRENT_RECOMPUTED"), mh), "SNAPSHOT_VINTAGE_LABEL_NOT_COMPARABLE_HELD")                       # core vintage label 'v1' is not the manifest mode vocabulary: never guessed
         for kw, want in ((dict(instrument_id="EURUSD"), "SNAPSHOT_FIELD_DISAGREES_WITH_OWNING_OBSERVATIONS"), (dict(query_asof=9), "SNAPSHOT_FIELD_DISAGREES_WITH_OWNING_OBSERVATIONS"), (dict(timeframe_watermarks=(("H1", 10),)), "SNAPSHOT_TIMEFRAME_SET_DISAGREES"), (dict(timeframe_watermarks=(("H1", 10), ("H4", 8))), "SNAPSHOT_WATERMARK_DISAGREES_WITH_OWNING_RESOLUTION")):
             self.assertEqual(code(SB.bind_snapshot_manifest, c, self._mv(**kw), mh), want, kw)
+        class Stub:
+            def resolved_manifest(self, h): return dict(c.resolved_manifest(mh), mixed_policy="P1")
+        self.assertEqual(code(SB.bind_snapshot_manifest, Stub(), self._mv(), mh), "SNAPSHOT_COMPOSITION_NOT_SINGLE_VINTAGE_RESOLVED")
         self.assertEqual(code(SB.bind_snapshot_manifest, c, self._mv(), "0" * 64), "SNAPSHOT_RESOLVED_MANIFEST_NOT_IN_CORE"); self.assertEqual(code(SB.bind_snapshot_manifest, c, "x", mh), "SNAPSHOT_BINDING_INPUT_INVALID")
 if __name__ == "__main__": unittest.main()

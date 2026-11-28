@@ -48,6 +48,15 @@ class Proc(unittest.TestCase):
             q = W.JobQueue(); [q.submit(x) for x in a]
             with sup(q) as s: self.assertEqual(s.run_until_idle(), [(a[0].idempotency_key, "DONE")])
             j.append(j.head(), "SOMETHING_ELSE", {}); self.assertEqual(rec(), ())                      # advanced journal: the superseded state owes nothing
+    def test_a_reply_from_a_foreign_pid_is_refused_and_an_externally_killed_worker_is_replaced_before_the_job_is_sent(self):
+        import subprocess, sys, signal
+        with tempfile.TemporaryDirectory() as d, sup(W.JobQueue()) as s:
+            w = "tracker-materializer-worker"; old = s._procs[w]; old.kill(); old.wait(); self.assertIsNotNone(old.poll())
+            s._q.submit(job(d, "k", "mat")); self.assertEqual(s.run_one(), ("idem-k", "DONE")); self.assertEqual(s.respawns, 1); self.assertEqual(s._tries.get("idem-k", 0), 0)      # replaced BEFORE sending: no attempt burned
+            liar = subprocess.Popen([sys.executable, "-c", "import sys, json\nfor l in sys.stdin:\n    j = json.loads(l)\n    print(json.dumps({'job_id': j['job_id'], 'result': 'DONE', 'code': '', 'pid': 1}), flush=True)"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
+            try:
+                s._procs[w].kill(); s._procs[w].wait(); s._procs[w] = liar; self.assertEqual(s._ask(w, job(d, "z", "mat")), ("LOST", "CHILD_REPLY_NOT_FROM_SPAWNED_PID_OR_JOB"))
+            finally: liar.kill(); liar.wait()
     def test_config_and_unknown_worker_negatives(self):
         self.assertEqual(code(ProcessSupervisor, W.JobQueue(), {"mat": ("not-a-worker", M + "ok")}), "SUPERVISOR_CONFIG_INVALID"); self.assertEqual(code(ProcessSupervisor, W.JobQueue(), {"mat": ("tracker-materializer-worker", "nocolon")}), "SUPERVISOR_CONFIG_INVALID")
 if __name__ == "__main__": unittest.main()
