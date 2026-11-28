@@ -63,6 +63,6 @@ SRC=Y means the governing source passage was re-read from the live document in t
 | TR-10 | SF | N | currentness/context/time_family/lifecycle_eligibility; gateway/dependency_resolution mapped to contracts | 10/17 | - | - |
 | TR-11 | OP | N | coordination/* and e05 simulated; provider unqualified | 13/19 | provider | - |
 | TR-12 | IA | N (callsite analysis) | context/event_context_store tests only; encoding ports caller-supplied | 10/24 | D13 layouts + consumer requirement class relation | - |
-| TR-13 | IA | N | typed H1 + OutcomeSeriesDesk via Composition.outcome_desk (R54), fw association via Composition.fw_association | 19/57 | H1/H3 instances; CBID issuer | - |
+| TR-13 | IA | Y S6 H1 REQUIRED/CONDITIONAL lists re-read (live) | H1_REQUIRED in v038 equals the source 17 + the health pair + watermark for decision windows; R54: partially present conditional groups (Event/Context set, applicability-map pair, revocation-watermark pair, COVERAGE_BASIS with COVERAGE_STATE) are refused (test_r54_h1_conditional, fails on the unfixed code); typed H1 + OutcomeSeriesDesk via Composition.outcome_desk (R54), fw association via Composition.fw_association | 19/57 | H1/H3 instances; CBID issuer | - |
 | TR-14 | IA | N (callsite analysis) | ML shadow/augmented tests only | 46/94 | ML-owned instances | - |
 | TR-15 | IA | N | identifiers/keys | 11/0 | confirm LATER | - |

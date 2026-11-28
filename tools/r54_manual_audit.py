@@ -63,7 +63,7 @@ h("TR-09", "N", "stateful_verifier/quant_certification same author", "independen
 h("TR-10", "N", "currentness/context/time_family/lifecycle_eligibility; gateway/dependency_resolution mapped to contracts", "-")
 h("TR-11", "N", "coordination/* and e05 simulated; provider unqualified", "provider")
 h("TR-12", "N (callsite analysis)", "context/event_context_store tests only; encoding ports caller-supplied", "D13 layouts + consumer requirement class relation")
-h("TR-13", "N", "typed H1 + OutcomeSeriesDesk via Composition.outcome_desk (R54), fw association via Composition.fw_association", "H1/H3 instances; CBID issuer")
+h("TR-13", "Y S6 H1 REQUIRED/CONDITIONAL lists re-read (live)", "H1_REQUIRED in v038 equals the source 17 + the health pair + watermark for decision windows; R54: partially present conditional groups (Event/Context set, applicability-map pair, revocation-watermark pair, COVERAGE_BASIS with COVERAGE_STATE) are refused (test_r54_h1_conditional, fails on the unfixed code); typed H1 + OutcomeSeriesDesk via Composition.outcome_desk (R54), fw association via Composition.fw_association", "H1/H3 instances; CBID issuer")
 h("TR-14", "N (callsite analysis)", "ML shadow/augmented tests only", "ML-owned instances")
 h("TR-15", "N", "identifiers/keys", "confirm LATER")
 def tests(stems): return [t.strip() for t in re.split(r";\s*", stems) if t.strip() and t.strip() != "-"]

@@ -165,6 +165,7 @@ H1_REQUIRED = ("CONSUMER_BINDING_ID", "CONSUMER_ID", "TARGET_CONSUMER", "REQUEST
                "BOUND_PAYLOAD_OR_PACKAGE_ID", "PACKAGE_CLASS", "PACKAGE_HASH", "PURPOSE", "TEMPORAL_CONTRACT_ID",
                "ELIGIBILITY_AS_OF_T", "SOURCE_VINTAGE_CAUSAL_POLICY_ID", "RESOLVER_POLICY_ID", "OMISSIONS_EXCLUSIONS_REASON_CODES",
                "FINAL_PACKAGE_HASH", "CREATED_TS", "ISSUER", "BOUND_HEALTH_RESOLUTION_REF", "BOUND_HEALTH_RESOLVED_AT")
+H1_CONTEXT_GROUP = ("CONTEXT_REQUIREMENT_CLASS", "SOURCE_AVAILABILITY_STATE", "COVERAGE_STATE", "EVENT_PRESENCE_STATE")
 ML_MANIFEST_CLASSES = ("OFFICIAL_ML_TRAINING_MANIFEST", "ML_SIMULATION_MANIFEST", "RESEARCH_MANIFEST")      # Contract V0.38 T-ML (Composer Contract section 11 classes)
 GENERATION_AUTHORITY_CLASSES = ("ML_STANDALONE", "ML_FW_AUGMENTED")                                              # Contract V0.38 T-ML (ML Core)
 def h1_is_ml(fields: dict) -> bool:
@@ -187,6 +188,11 @@ def check_h1(fields: dict, decision_window: bool = True) -> None:
         raise Refusal(fields["PACKAGE_CLASS"], code="BAD_PACKAGE_CLASS")   # lane names are not PACKAGE_CLASS values (V0.38)
     if (fields["CONSUMER_ID"] == "FW" and fields["PACKAGE_CLASS"] == "ML_PACKAGE") or (fields["CONSUMER_ID"] == "ML" and fields["PACKAGE_CLASS"] == "FW_PACKAGE"):
         raise Refusal("%s/%s" % (fields["CONSUMER_ID"], fields["PACKAGE_CLASS"]), code="H1_CONSUMER_PACKAGE_CLASS_MISMATCH")      # ML_PACKAGE != FW_PACKAGE; one binding, one consumer
+    # R54 (S6 H1 CONDITIONAL groups, re-read from the live Contract): the source ties several conditional fields to ONE condition. Event/Context: CONTEXT_REQUIREMENT_CLASS, SOURCE_AVAILABILITY_STATE, COVERAGE_STATE, EVENT_PRESENCE_STATE are all "when Event/Context is requested/evaluated"; COVERAGE_BASIS "when coverage is evaluated"; the slash pairs APPLICABILITY_MAP_ID/VERSION and REVOCATION_WATERMARK_REF/OBSERVED_AT are each one field group. A partially present group cannot satisfy its condition and is refused (no value is invented; absence of a whole group stays legal because applicability is the Gateway's fact).
+    for grp in (H1_CONTEXT_GROUP, ("APPLICABILITY_MAP_ID", "APPLICABILITY_MAP_VERSION"), ("REVOCATION_WATERMARK_REF", "REVOCATION_WATERMARK_OBSERVED_AT")):
+        have = [k for k in grp if fields.get(k) is not None]
+        if have and len(have) != len(grp): raise Refusal(",".join(k for k in grp if k not in have), code="H1_CONDITIONAL_GROUP_INCOMPLETE")
+    if fields.get("COVERAGE_STATE") is not None and fields.get("COVERAGE_BASIS") is None: raise Refusal("COVERAGE_BASIS", code="H1_CONDITIONAL_GROUP_INCOMPLETE")
     if ml:
         if fields["ML_MANIFEST_CLASS"] not in ML_MANIFEST_CLASSES: raise Refusal(str(fields["ML_MANIFEST_CLASS"]), code="H1_ML_MANIFEST_CLASS_UNKNOWN")
         if fields["GENERATION_AUTHORITY_CLASS"] not in GENERATION_AUTHORITY_CLASSES: raise Refusal(str(fields["GENERATION_AUTHORITY_CLASS"]), code="H1_GENERATION_AUTHORITY_CLASS_UNKNOWN")
