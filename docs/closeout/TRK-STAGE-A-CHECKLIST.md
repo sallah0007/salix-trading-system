@@ -18,4 +18,4 @@ Main at last update: a79158e (#151 invariant stage, #152 row publication, #153 r
 | 12 | ONE CURRENT combined closeout (source/callpath/commit/positive+negative/review limit or irreducible input/source-owner ROLE/consequence/recommendation) | PENDING | TRK-STAGE-A-TRACKER-COMBINED-CLOSEOUT.md §28.11 is the last |
 | 13 | Refreshed fetch + untracked/stash/local-only inventory (no cleanup) | PENDING | last: 135 tracking refs, 0 stashes, 0 untracked, none unreachable |
 
-Next resume point: item 4 remainder (Composition per-row publish method, cold restart of row route, separated-worker rows), then 6-13 in order. Preserve all branches/WIP; no cleanup.
+Cold restart of the row route: tested (this PR). Next resume point: item 4 remainder (Composition per-row publish method, separated-worker rows), then item 6 (ML Registry §14), then 6-13 in order. Preserve all branches/WIP; no cleanup.

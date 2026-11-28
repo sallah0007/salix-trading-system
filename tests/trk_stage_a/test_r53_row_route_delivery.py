@@ -69,3 +69,17 @@ class RowRoute(unittest.TestCase):
         st = ix.current_status(row0.feature_id.hex(), row0.materialization_version, "tx", heads["tx"], resolver); self.assertEqual(json.loads(st["payload"])["head_seq"], 2)
         k = sorted(raw.list_prefix("final-resolution/id/"))[0]; g = raw.get(k); raw._d[k] = (g[0][:-1] + bytes([g[0][-1] ^ 1]), g[1])
         with self.assertRaises(Exception): ix.verify_all(resolver)                                                                          # a replaced durable record is DRIFT, never silently re-read
+
+    def test_cold_restart_of_the_owning_connection_keeps_per_row_final_outcomes_and_delivers_new_row_windows_to_FW_and_ML_but_not_unpublished_rows(self):
+        from stage_a.core.tracker_core import TrackerCore
+        from stage_a.coordination.object_store_journal import ObjectStoreJournal
+        from stage_a.tracker import composition as CO, sim_publication_path as SP
+        from .test_r37_sim_publication_path import SPEC
+        self.publish("B", 0); fk, co = self.o["B"][0], self.o["B"][1]; r1 = co.recover_publication(fk); fw0, ml0 = self.both("B", r1, 0, 0, "0"); b0 = fw0(); self.assertTrue(ml0.included)
+        rig = self.a.rig; c2 = TrackerCore(self.c._j, simulation=True); sj = ObjectStoreJournal(rig.store, "SIMPUB-%s-B" % fk.scope.instrument, "w2"); sj.acquire_epoch()
+        co2 = CO.Composition(pipeline=rig.pipe, journals=rig.journals, store=rig.store, core=c2, path=SP.SimulationPublicationPath(rig.store, rig.journals.journal(fk.namespace()), sj, SPEC), gateway_factory=lambda proj: _gw(proj, c2, self.a.raws["B"]))
+        self.assertEqual(code(co2.deliver, "z", FI("FW", "M", "XAUUSD", "W"), self.o["B"][4], I, I, 0, 60, r1, binding=self.o["B"][3], now=12, ref=R("hl"), resolved_at=11, tables=GTAB), "COMPOSITION_NOT_PUBLISHED")   # nothing survives in memory
+        r2 = co2.recover_publication(fk); self.assertEqual(r2.status, "RECOVERED_PUBLISHED_SIMULATION"); self.o["B"] = (fk, co2) + tuple(self.o["B"][2:])
+        b0b = self.both("B", r2, 0, 0, "0")[0](); self.assertEqual((b0b.request_id, b0b.delivered_feature_hash), (b0.request_id, b0.delivered_feature_hash))   # the exact stored outcome
+        self.publish("B", 1); r3 = co2.recover_publication(fk); fw1, ml1 = self.both("B", r3, 1, 0, "1"); self.assertIsInstance(fw1(), G.Binding); self.assertTrue(ml1.included)  # a row accepted+published AFTER the restart
+        self.assertEqual(code(self.both("B", r3, 2, 0, "2")[0]), "NON_DELIVERY")
