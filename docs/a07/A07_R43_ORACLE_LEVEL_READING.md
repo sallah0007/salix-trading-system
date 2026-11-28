@@ -20,7 +20,7 @@ The tool refuses to run if any of the three acceptance fields is not false.
 | ORACLE_NOT_GLOBALLY_CERTIFIED_PER_CLAIM_MAPPING_REQUIRED | 78 | V230 states shared-group per-claim mapping is still required: an oracle covering a unit is not a mapping of each qualifier |
 
 ## Conclusions (Coder findings, not decisions)
-1. No qualifier moves from UR. V230/V235 explicitly withhold acceptance and the 12 loss-listed qualifiers are not even oracle-stable.
+1. No qualifier moves from UR. V230/V235 explicitly withhold acceptance and the 12 loss-listed QUALIFIERS (across THREE units: NL0087#1-3, NL0180#1-5, NL0184#1-4; V232 also lists NL0178 at wider transition scope) are not even oracle-stable.
 2. The 21 disagreements are the concrete adjudication list for the ML source owner (smallest exact input: confirm whether V235's listed current-source range states the qualifier, per qualifier).
 3. NL0034/0262 (missing-tail / stale-index) and NL0186 (atomic consumer read) are engineering duties implemented in R43 (`historical_eligibility`, `lifecycle_eligibility`, `atomic_publication`) and are kept distinct from the unbound shadow-row contract (MLCore p323/p324 only).
-4. R06 candidate (Drive 1V5bv2QrbD0U22ExYUbz4FuwHkvXTsCSe): the Manager reports the readable fetch returned empty (not absence); not re-read here.
+4. R06 candidate (Drive 1V5bv2QrbD0U22ExYUbz4FuwHkvXTsCSe): the readable projection is EMPTY because the file is JSON; the raw payload is present (Manager recovered it by raw download; see docs/a07/A07_R44_R06_V240_RECORD.md). Access is resolved, adoption is not.
