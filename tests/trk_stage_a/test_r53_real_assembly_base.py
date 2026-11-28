@@ -56,6 +56,23 @@ class Assembly(unittest.TestCase):
         rb = ml(coB, "ml-b1", "W1", rB, eB, bB, FB, "row-b"); self.assertTrue(rb.included); self.assertEqual(len(rb.bindings), 1)                                                            # BASE -> ML
         self.assertIsNot(fw, rb.bindings[0]); self.assertEqual(code(coA.deliver, "fw-a2", FI("FW", "M-A", "XAUUSD", "W2"), eA, I, I, 3, 20, rA, **kw(bA)), "NON_DELIVERY"); self.assertFalse(ml(coA, "ml-a2", "W2", rA, eA, bA, FA, "row-a2").included)   # AFTER
         self.assertTrue(c._ancestry_blocks(c._replay(), fkA.key())); self.assertFalse(c._ancestry_blocks(c._replay(), fkB.key())); self.assertEqual(c.recording_health(fkA.key(), fkA.feature_version, 12).local_state, "HEALTHY")
+    def test_r52_stored_source_l2_failure_on_the_affected_feature_refuses_FW_and_excludes_ML_while_the_unrelated_BASE_still_delivers_to_both(self):
+        """R52 (Manager 20:38): ONE assembly, real committed rows: the affected feature's stored source changes after acceptance, the all-segment maintenance pass RECORDS NOT_PASS, FW is refused and ML excluded for it (before and after the pass), and the UNRELATED BASE feature still delivers to FW and ML; the affected ancestry is still UNKNOWN. SIM/candidate only; no gate cleared."""
+        c, o = self.build(); fkA, coA, rA, bA, eA = o["A"]; fkB, coB, rB, bB, eB = o["B"]; kw = lambda b: dict(binding=b, now=14, ref=R("hl"), resolved_at=13, tables=T)
+        ml = lambda co, rid, win, r, e, b, F, row: co.deliver_ml(rid, FI("ML", "DS-" + row, "XAUUSD", win), e, I, I, 3, 20, r, row_id=row, generation_ref=R("gen"), vintage_mode="ORIGINAL_AS_OBSERVED", omissions=NONE_, exclusion_reason=lambda x: ("ENUM", "REASON", "ALL_SEGMENT_FAIL"), **kw(b))
+        coA.register_stored_maintenance(rA); saved = list(SER)
+        try:
+            SER[-1] = SER[-1] + 1000                                                                                           # the stored source changes AFTER acceptance (only A is registered for maintenance)
+            self.assertEqual([x[2] for x in coA.run_maintenance([(fkA.key(), "SCHEDULED")], now=13, max_age=50, max_items=4)], ["RECORDED_NOT_PASS"])
+            self.assertEqual(code(coA.deliver, "fw-a9", FI("FW", "M-A9", "XAUUSD", "W9"), eA, I, I, 3, 20, rA, **kw(bA)), "NON_DELIVERY")        # FW refused for the affected feature
+            ra = ml(coA, "ml-a9", "W9", rA, eA, bA, FA, "row-a9"); self.assertFalse(ra.included); self.assertEqual(ra.row_exclusion_reason, ("ENUM", "REASON", "ALL_SEGMENT_FAIL"))  # ML excluded with the explicit reason
+            fw = coB.deliver("fw-b9", FI("FW", "M-B9", "XAUUSD", "W9"), eB, I, I, 3, 20, rB, **kw(bB)); self.assertIsInstance(fw, G.Binding)           # unrelated BASE -> FW (actual rows)
+            rb = ml(coB, "ml-b9", "W9", rB, eB, bB, FB, "row-b9"); self.assertTrue(rb.included); self.assertEqual(len(rb.bindings), 1)               # unrelated BASE -> ML
+            self.assertTrue(c._ancestry_blocks(c._replay(), fkA.key())); self.assertFalse(c._ancestry_blocks(c._replay(), fkB.key()))                # affected ancestry still UNKNOWN; BASE declared
+        finally: SER[:] = saved
+    def test_r52_control_without_the_source_change_the_same_pass_is_not_a_failure(self):
+        c, o = self.build(); fkA, coA, rA, *_ = o["A"]; coA.register_stored_maintenance(rA)
+        self.assertNotIn("RECORDED_NOT_PASS", [x[2] for x in coA.run_maintenance([(fkA.key(), "SCHEDULED")], now=13, max_age=50, max_items=4)])
     def test_control_the_BASE_is_denied_when_its_own_ancestry_was_never_declared_so_the_positive_is_not_vacuous(self):
         c, o = self.build(declare_base=False); fkB, coB, rB, bB, eB = o["B"]
         self.assertEqual(code(coB.deliver, "fw-x", FI("FW", "M-B", "XAUUSD", "WX"), eB, I, I, 3, 20, rB, binding=bB, now=12, ref=R("hl"), resolved_at=11, tables=T), "NON_DELIVERY")
