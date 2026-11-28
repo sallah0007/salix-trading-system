@@ -6,7 +6,7 @@ Main at last update: a79158e (#151 invariant stage, #152 row publication, #153 r
 |---|---|---|---|
 | 1 | Supplied-profile row runtime: StateRowBuilder/CommittedRowChain -> independent verifier -> invariant stage -> epoch-fenced RowAcceptor | PARTIAL (merged #139-#146, #150, #151, invariant identity) | profile math/codec/clock/commit-point rule HELD (SIM only) |
 | 2 | journaled status/currentness for rows | PARTIAL | RowPublication -> SIM_STATUS_FACT merged; no per-row A1 event (vocabulary gap); status token mapping HELD |
-| 3 | E05 rebuild over per-row records | PARTIAL | #147 sources merged; NOT yet wired over per-row SIM side records / RowPublication route. RESUME HERE |
+| 3 | E05 rebuild over per-row records | PARTIAL-> tested | #147 sources + new route test: E05 rebuild over row namespace + durable FW/ML final resolutions on the per-row route, drift refused. SIM status side records (SIM_STATUS_FACT) have NO E05 table in the plan list (not invented) |
 | 4 | Core/Gateway + BOTH FW/ML for per-row route | PARTIAL | tests merged (test_r53_row_route_delivery, SIM-merged code tables; admitted table = source-owner input). Needs: first-class Composition per-row publish method (currently reuses recover_publication), restart/cold recovery of row route, separated-worker route for rows (#149 is feature-VERSION only), exact source/manifest/version/row/currentness/consumer evidence |
 | 5 | Invariant port identity (PR151 review) | FIXED, merged | reported identity only; artifact-hash recomputation needs a bound codec input (HELD) |
 | 6 | ML Registry §14 p337-349 thirteen duties + orchestration | PENDING (not started this stretch) | |
@@ -18,4 +18,4 @@ Main at last update: a79158e (#151 invariant stage, #152 row publication, #153 r
 | 12 | ONE CURRENT combined closeout (source/callpath/commit/positive+negative/review limit or irreducible input/source-owner ROLE/consequence/recommendation) | PENDING | TRK-STAGE-A-TRACKER-COMBINED-CLOSEOUT.md §28.11 is the last |
 | 13 | Refreshed fetch + untracked/stash/local-only inventory (no cleanup) | PENDING | last: 135 tracking refs, 0 stashes, 0 untracked, none unreachable |
 
-Next resume point: item 3 (E05 over per-row side records + RowPublication), then item 4 remainder, then 6-13 in order. Preserve all branches/WIP; no cleanup.
+Next resume point: item 4 remainder (Composition per-row publish method, cold restart of row route, separated-worker rows), then 6-13 in order. Preserve all branches/WIP; no cleanup.
