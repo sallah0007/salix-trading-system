@@ -31,7 +31,7 @@ M = [
  (ES, 'if not (isinstance(i, str) and i): raise Refusal(table, code="E05_SOURCE_IDENT_INVALID")', 'pass'),
  (ES, '"%s:%s" % (i, v[i][1]) for i in sorted(v)', '"%s" % i for i in sorted(v)'),
  (ES, 'if ident_of(o) == want: return hash_of(o)', 'if ident_of(o) == want: return "x"'),
- (ES, 'raise Refusal("stagea_event_context_index", code="E05_SOURCE_EVENT_CONTEXT_HELD_NO_OWNING_STORE")', 'return iter(())'),
+ (ES, 'raise Refusal("stagea_event_context_index", code="E05_SOURCE_EVENT_CONTEXT_HELD_NO_ENCODING_INTERFACE")', 'return iter(())'),
  (RI, 'IntegrityReport(subj, tuple(out), overall, False, entry.creation_request_id, now)', 'IntegrityReport(subj, tuple(out), overall, False, "", now)'),
 ]
 T = [f"tests/trk_stage_a/{f}" for f in ("test_r40_registry_integrity.py", "test_r40_health_expectation.py", "test_r42_lifecycle_eligibility.py", "test_r42_e05_owning_sources.py", "test_r42_partial_observation.py", "test_r42_consumer_path.py")]

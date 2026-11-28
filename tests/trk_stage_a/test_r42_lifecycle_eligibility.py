@@ -17,28 +17,78 @@ class Fx:
     def at(self, t, subject, tid, frm, to): self.lf.apply(subject, tid, frm, to, "good"); TIMES[self.j.head().seq] = t
     def reindex(self):
         src = S.ledger_source(self.j, "lifecycle", accepted_at_of=time_of); self.ix.rebuild({"lifecycle": src})
-    def resolved(self): return lambda: self.ix._c.execute("SELECT seq FROM stagea_index_meta WHERE source='lifecycle'").fetchone()[0] if self.ix._c.execute("SELECT seq FROM stagea_index_meta WHERE source='lifecycle'").fetchone() else 0
+    def basis(self):
+        def f():
+            r = self.ix._c.execute("SELECT seq,hash FROM stagea_index_meta WHERE source='lifecycle'").fetchone(); return (0, None) if r is None else (r[0], r[1])
+        return f
 def ledger():
     f = Fx(); f.at(10, "G1", "t1", None, "CAND"); f.at(12, "G1", "t2", "CAND", "CERT"); f.at(20, "G1", "t3", "CERT", "SUPER"); f.at(20, "G2", "t4", None, "CAND"); f.at(22, "G2", "t5", "CAND", "CERT"); f.at(40, "G2", "t6", "CERT", "REVOKED"); f.reindex(); return f
+CR = LE.LATER_ENTRY_CANDIDATE_CLOSURE
+def rec(f, **k):
+    a = dict(time_of=time_of, event_time=15, index_basis=f.basis(), eligible_states=EL, closure_rule=CR); a.update(k); return LE.reconstruct(f.j, **a)
 class Elig(unittest.TestCase):
     def test_fresh_index_and_a_closed_slice_resolve_the_generation_certified_then_not_the_current_one(self):
-        f = ledger(); d = LE.reconstruct(f.j, time_of=time_of, event_time=15, index_resolved_through=f.resolved(), eligible_states=EL); self.assertEqual((d.status, d.generation_id), (H.READY, "G1"))
-        d = LE.reconstruct(f.j, time_of=time_of, event_time=25, index_resolved_through=f.resolved(), eligible_states=EL); self.assertEqual((d.status, d.generation_id), (H.READY, "G2"))      # revoked at t=40 does not rewrite history
+        f = ledger(); d = rec(f); self.assertEqual((d.status, d.generation_id), (H.READY, "G1"))
+        d = rec(f, event_time=25); self.assertEqual((d.status, d.generation_id), (H.READY, "G2"))      # revoked at t=40 does not rewrite history
+    def test_without_a_source_owned_closure_producer_the_decision_is_held_never_silently_closed(self):
+        f = ledger(); d = rec(f, closure_rule=None); self.assertEqual((d.status, d.generation_id, d.reasons), (H.MISSED, "", (LE.CLOSURE_HELD,)))
+        d = rec(f, closure_rule=lambda es, t, h: None); self.assertEqual(d.status, H.MISSED); self.assertIn("HISTORICAL_SLICE_COMPLETENESS_FAIL:NOT_CLOSED_THROUGH_EVENT_TIME", d.reasons)
+        with self.assertRaises(Refusal): rec(f, closure_rule=lambda es, t, h: "x")
     def test_a_lagging_index_after_a_new_revocation_is_detected_and_present_trust_is_never_reported_trusted(self):
-        f = ledger(); self.assertEqual(LE.trust(f.j, "G1", time_of=time_of, index_resolved_through=f.resolved(), revoked_states=RV), "TRUSTED")
+        f = ledger(); tr = lambda: LE.trust(f.j, "G1", time_of=time_of, index_basis=f.basis(), revoked_states=RV); self.assertEqual(tr(), "TRUSTED")
         f.at(50, "G1", "t7", "SUPER", "REVOKED")                                  # authoritative ledger advanced; the derived index did not
-        self.assertEqual(LE.trust(f.j, "G1", time_of=time_of, index_resolved_through=f.resolved(), revoked_states=RV), "UNKNOWN_STALE")
-        d = LE.reconstruct(f.j, time_of=time_of, event_time=15, index_resolved_through=f.resolved(), eligible_states=EL); self.assertEqual((d.status, d.generation_id), (H.MISSED, "")); self.assertIn("CURRENT_READ_FRESHNESS_FAIL", d.reasons)
-        f.reindex(); self.assertEqual(LE.trust(f.j, "G1", time_of=time_of, index_resolved_through=f.resolved(), revoked_states=RV), "REVOKED")
-    def test_a_slice_not_closed_by_a_later_ledger_entry_is_incomplete_even_with_a_fresh_index(self):
-        f = ledger(); d = LE.reconstruct(f.j, time_of=time_of, event_time=40, index_resolved_through=f.resolved(), eligible_states=EL)           # head entry is AT t=40: more entries at 40 may still arrive
+        self.assertEqual(tr(), "UNKNOWN_STALE"); d = rec(f); self.assertEqual((d.status, d.generation_id), (H.MISSED, "")); self.assertIn("CURRENT_READ_FRESHNESS_FAIL", d.reasons)
+        f.reindex(); self.assertEqual(tr(), "REVOKED")
+    def test_a_slice_not_closed_by_a_later_ledger_entry_is_incomplete_under_the_candidate_rule_even_with_a_fresh_index(self):
+        f = ledger(); d = rec(f, event_time=40)           # head entry is AT t=40: more entries at 40 may still arrive
         self.assertEqual(d.status, H.MISSED); self.assertTrue(any(r.startswith("HISTORICAL_SLICE_COMPLETENESS_FAIL") for r in d.reasons))
-        f.at(41, "G3", "t8", None, "CAND"); f.reindex(); d = LE.reconstruct(f.j, time_of=time_of, event_time=40, index_resolved_through=f.resolved(), eligible_states=EL); self.assertEqual(d.status, H.READY if d.generation_id else H.MISSED); self.assertFalse(any(r.startswith("HISTORICAL_SLICE") for r in d.reasons))
+        f.at(41, "G3", "t8", None, "CAND"); f.reindex(); d = rec(f, event_time=40); self.assertFalse(any(r.startswith("HISTORICAL_SLICE") for r in d.reasons))
+    def test_a_bare_sequence_number_or_an_index_basis_on_another_history_is_not_a_read_basis(self):
+        f = ledger()
+        with self.assertRaises(Refusal): rec(f, index_basis=lambda: 6)
+        with self.assertRaises(Refusal): rec(f, index_basis=None)
+        d = rec(f, index_basis=lambda: (6, "0" * 64)); self.assertEqual((d.status, d.reasons), (H.MISSED, ("INDEX_BASIS_NOT_ON_THE_OWNING_CHAIN",)))      # right number, wrong history
+        self.assertEqual(LE.trust(f.j, "G1", time_of=time_of, index_basis=lambda: (6, "0" * 64), revoked_states=RV), "UNKNOWN_STALE")
+        self.assertEqual(rec(f, index_basis=lambda: (99, f.basis()()[1])).reasons, ("INDEX_BASIS_NOT_ON_THE_OWNING_CHAIN",))                 # an index claiming MORE than the owning chain holds
+    def test_a_real_append_during_the_read_is_a_visible_staleness_not_a_silent_mix_of_two_heads(self):
+        f = ledger(); real = f.j.read_from; n = [0]
+        def racing(seq):
+            out = real(seq)
+            if n[0] == 0: n[0] += 1; f.at(60, "G4", "t9", None, "CAND")             # the authoritative journal advances right after the records were read
+            return out
+        f.j.read_from = racing; d = rec(f); self.assertEqual(d.status, H.MISSED); self.assertIn("CURRENT_READ_FRESHNESS_FAIL", d.reasons)
+        f.j.read_from = real; f.reindex(); self.assertEqual(rec(f).status, H.READY)                                    # settled: reindexed and complete
+    def test_a_read_that_drops_the_tail_is_never_complete_and_never_trusted(self):
+        f = ledger(); real = f.j.read_from; f.j.read_from = lambda seq: real(seq)[:-1]                                     # a faulty/forked reader: the last (revocation) record is missing from the read
+        d = rec(f); self.assertEqual(d.status, H.MISSED); self.assertEqual(d.reasons, ("INDEX_BASIS_NOT_ON_THE_OWNING_CHAIN",))
+        self.assertEqual(LE.trust(f.j, "G2", time_of=time_of, index_basis=f.basis(), revoked_states=RV), "UNKNOWN_STALE")
+        f.j.read_from = lambda seq: real(seq)[:2]; self.assertEqual(rec(f).status, H.MISSED)
     def test_unbound_inputs_missing_times_empty_ledger_and_epochs_are_not_fabricated(self):
         e = Fx(); f = ledger()
-        with self.assertRaises(Refusal): LE.reconstruct(f.j, time_of=None, event_time=1, index_resolved_through=f.resolved(), eligible_states=EL)
-        with self.assertRaises(Refusal): LE.reconstruct(f.j, time_of=lambda r: None, event_time=1, index_resolved_through=f.resolved(), eligible_states=EL)
-        with self.assertRaises(Refusal): LE.reconstruct(f.j, time_of=time_of, event_time=1, index_resolved_through=None, eligible_states=EL)
-        self.assertEqual(LE.reconstruct(e.j, time_of=time_of, event_time=1, index_resolved_through=lambda: 0, eligible_states=EL).reasons, ("NO_LEDGER_ENTRIES",))
-        _, ents = LE.ledger_entries(f.j, time_of); self.assertTrue(all(x.epoch is None for x in ents))
+        with self.assertRaises(Refusal): rec(f, time_of=None)
+        with self.assertRaises(Refusal): rec(f, time_of=lambda r: None)
+        self.assertEqual(rec(e).reasons, ("NO_LEDGER_ENTRIES",))
+        _, ents = LE.ledger_entries(f.j, time_of); self.assertTrue(all(x.epoch is None for x in ents)); self.assertIn("EPOCH_NOT_RECORDED_HELD", rec(f, epoch_bound=1).reasons)
+class LyingHead:
+    """Delegates to the real journal but reports a different head (rollback / divergent head): the read basis must be refused, never reconciled silently."""
+    def __init__(self, j, head): self._j, self._h = j, head
+    def read_from(self, n): return self._j.read_from(n)
+    def head(self): return self._h
+class Basis(unittest.TestCase):
+    def test_head_behind_the_records_or_a_different_hash_at_the_same_seq_is_an_incoherent_read_basis(self):
+        f = ledger(); real = f.j.head(); H = type(real)
+        def code(head):
+            with self.assertRaises(Refusal) as c: LE.reconstruct(LyingHead(f.j, head), time_of=time_of, event_time=15, index_basis=f.basis(), eligible_states=EL, closure_rule=CR)
+            return c.exception.code
+        class Hd: pass
+        behind = Hd(); behind.seq, behind.hash = real.seq - 1, real.hash
+        self.assertEqual(code(behind), "LIFECYCLE_ELIG_READ_BASIS_INCOHERENT")
+        other = Hd(); other.seq, other.hash = real.seq, "0" * len(real.hash)
+        self.assertEqual(code(other), "LIFECYCLE_ELIG_READ_BASIS_INCOHERENT")
+    def test_a_closure_rule_returning_a_non_time_is_refused(self):
+        f = ledger()
+        for bad in (-1, "x", 1.5):
+            with self.assertRaises(Refusal) as c: rec(f, closure_rule=lambda es, t, h, b=bad: b)
+            self.assertEqual(c.exception.code, "LIFECYCLE_ELIG_CLOSURE_INVALID")
+
 if __name__ == "__main__": unittest.main()

@@ -160,6 +160,6 @@ def sequence_resolver(items, ident_of, hash_of, *, ref_prefix):
         return None
     return res
 
-EVENT_CONTEXT_SOURCE_HELD = "HELD_NO_OWNING_EVENT_CONTEXT_STORE"   # stagea_event_context_index has no owning store class in stage_a/context (validators only); no source is fabricated
+EVENT_CONTEXT_SOURCE_HELD = "HELD_NO_ENCODING_INTERFACE_SUPPLIED"   # R43: the owning store now exists (`context/event_context_store.EventContextStore(...).source()`); without the owner-supplied encoding interface the slot stays HELD
 def event_context_source(*_a, **_k):
-    raise Refusal("stagea_event_context_index", code="E05_SOURCE_EVENT_CONTEXT_HELD_NO_OWNING_STORE")
+    raise Refusal("stagea_event_context_index", code="E05_SOURCE_EVENT_CONTEXT_HELD_NO_ENCODING_INTERFACE")

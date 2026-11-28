@@ -18,13 +18,22 @@ def _entries(entries):
     out = sorted(entries, key=lambda e: e.seq)
     if len({e.seq for e in out}) != len(out) or any((a.epoch is not None and b.epoch is not None and a.epoch > b.epoch) or a.event_time > b.event_time for a, b in zip(out, out[1:])): raise Refusal("entries", code="HIST_ELIG_ENTRIES_NOT_MONOTONIC")
     return out
-def reconstruct_eligibility(entries, *, event_time, required_through_seq, resolved_through_seq, slice_closed_through_time, eligible_states):
-    if not all(_int(x) for x in (event_time, required_through_seq, resolved_through_seq, slice_closed_through_time)) or not (isinstance(eligible_states, frozenset) and eligible_states): raise Refusal("inputs", code="HIST_ELIG_INPUT_INVALID")
+def _complete_through(es, resolved_through_seq):
+    """R43: the supplied entries must be EXACTLY positions 1..resolved_through_seq (no gap, no missing tail, none empty while the basis is non-zero). A contiguous PREFIX shorter than the claimed endpoint is NOT complete."""
+    return [e.seq for e in es if e.seq <= resolved_through_seq] == list(range(1, resolved_through_seq + 1))
+def reconstruct_eligibility(entries, *, event_time, required_through_seq, resolved_through_seq, slice_closed_through_time, slice_closed_at_seq, eligible_states, epoch_bound=None):
+    """`slice_closed_at_seq` is the ledger position at which the closure assertion was made; it must EQUAL the resolved basis (a closure claimed at another endpoint proves nothing about this one). Who produces the closure assertion is a source-owner slot (see lifecycle_eligibility); here it is only checked against the entries actually supplied.
+    `epoch_bound` (optional): when given, every entry must record an epoch <= it; an unrecorded epoch (None) cannot be proven and is held."""
+    if not all(_int(x) for x in (event_time, required_through_seq, resolved_through_seq, slice_closed_through_time, slice_closed_at_seq)) or not (isinstance(eligible_states, frozenset) and eligible_states) or not (epoch_bound is None or _int(epoch_bound)): raise Refusal("inputs", code="HIST_ELIG_INPUT_INVALID")
     es = _entries(entries); why = []
     if resolved_through_seq < required_through_seq: why.append("CURRENT_READ_FRESHNESS_FAIL")
     if slice_closed_through_time < event_time: why.append("HISTORICAL_SLICE_COMPLETENESS_FAIL:NOT_CLOSED_THROUGH_EVENT_TIME")
+    if slice_closed_at_seq != resolved_through_seq: why.append("HISTORICAL_SLICE_COMPLETENESS_FAIL:CLOSURE_ENDPOINT_NOT_THE_RESOLVED_BASIS")
+    if not _complete_through(es, resolved_through_seq): why.append("HISTORICAL_SLICE_COMPLETENESS_FAIL:SEQUENCE_GAP_OR_MISSING_TAIL")
     upto = [e for e in es if e.seq <= resolved_through_seq]
-    if [e.seq for e in upto] != list(range(1, len(upto) + 1)) and upto: why.append("HISTORICAL_SLICE_COMPLETENESS_FAIL:SEQUENCE_GAP")
+    if epoch_bound is not None:
+        if any(e.epoch is None for e in upto): why.append("EPOCH_NOT_RECORDED_HELD")
+        elif any(e.epoch > epoch_bound for e in upto): why.append("EPOCH_AFTER_BASIS")
     if why: return Decision(MISSED, "", tuple(why), resolved_through_seq)
     latest = {}
     for e in upto:
@@ -35,7 +44,8 @@ def reconstruct_eligibility(entries, *, event_time, required_through_seq, resolv
 def present_trust(entries, generation_id, *, required_through_seq, resolved_through_seq, revoked_states):
     """-> TRUSTED | REVOKED | UNKNOWN_STALE. A lagging resolver never reports TRUSTED."""
     if not all(_int(x) for x in (required_through_seq, resolved_through_seq)) or not (isinstance(revoked_states, frozenset) and revoked_states) or not isinstance(generation_id, str) or not generation_id: raise Refusal("inputs", code="HIST_ELIG_INPUT_INVALID")
-    es = [e for e in _entries(entries) if e.generation_id == generation_id and e.seq <= resolved_through_seq]
+    all_es = _entries(entries); es = [e for e in all_es if e.generation_id == generation_id and e.seq <= resolved_through_seq]
     if resolved_through_seq < required_through_seq: return "UNKNOWN_STALE"
+    if not _complete_through(all_es, resolved_through_seq): return "UNKNOWN_STALE"             # R43: a missing tail can hide a revocation; completeness through the resolved endpoint is part of trust
     if not es: return "UNKNOWN_STALE"
     return "REVOKED" if any(e.state in revoked_states for e in es) else "TRUSTED"

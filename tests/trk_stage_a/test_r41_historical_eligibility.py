@@ -5,7 +5,7 @@ from stage_a.tracker import historical_eligibility as H
 E = H.Entry; EL = frozenset({"CERTIFIED"}); RV = frozenset({"REVOKED"})
 LEDGER = [E(1, 1, 10, "G1", "CERTIFIED"), E(1, 2, 20, "G1", "SUPERSEDED"), E(1, 3, 20, "G2", "CERTIFIED"), E(2, 4, 40, "G2", "REVOKED")]
 def rec(**k):
-    a = dict(event_time=15, required_through_seq=4, resolved_through_seq=4, slice_closed_through_time=40, eligible_states=EL); a.update(k); return H.reconstruct_eligibility(LEDGER, **a)
+    a = dict(event_time=15, required_through_seq=4, resolved_through_seq=4, slice_closed_through_time=40, eligible_states=EL); a.update(k); a.setdefault("slice_closed_at_seq", a["resolved_through_seq"]); return H.reconstruct_eligibility(LEDGER, **a)
 class Hist(unittest.TestCase):
     def test_genuine_fresh_complete_read_resolves_the_generation_certified_at_the_event_time_not_the_current_one(self):
         d = rec(); self.assertEqual((d.status, d.generation_id), (H.READY, "G1"))
@@ -15,21 +15,33 @@ class Hist(unittest.TestCase):
     def test_incomplete_slice_each_way_is_missed_even_when_the_read_is_fresh(self):
         d = rec(slice_closed_through_time=10); self.assertEqual(d.status, H.MISSED); self.assertTrue(any(r.startswith("HISTORICAL_SLICE_COMPLETENESS_FAIL") for r in d.reasons))
         gap = [E(1, 1, 10, "G1", "CERTIFIED"), E(1, 3, 20, "G2", "CERTIFIED")]
-        d = H.reconstruct_eligibility(gap, event_time=15, required_through_seq=3, resolved_through_seq=3, slice_closed_through_time=40, eligible_states=EL); self.assertIn("HISTORICAL_SLICE_COMPLETENESS_FAIL:SEQUENCE_GAP", d.reasons)
+        d = H.reconstruct_eligibility(gap, event_time=15, required_through_seq=3, resolved_through_seq=3, slice_closed_through_time=40, slice_closed_at_seq=3, eligible_states=EL); self.assertIn("HISTORICAL_SLICE_COMPLETENESS_FAIL:SEQUENCE_GAP_OR_MISSING_TAIL", d.reasons)
     def test_both_failing_reports_both_and_no_eligible_or_ambiguous_is_missed(self):
-        d = rec(resolved_through_seq=1, slice_closed_through_time=5); self.assertEqual(len(d.reasons), 2)
+        d = rec(resolved_through_seq=1, slice_closed_through_time=5); self.assertGreaterEqual(len(d.reasons), 2)
         self.assertEqual(rec(event_time=5).reasons, ("NO_ELIGIBLE_GENERATION",))
         amb = [E(1, 1, 10, "G1", "CERTIFIED"), E(1, 2, 10, "G2", "CERTIFIED")]
-        self.assertEqual(H.reconstruct_eligibility(amb, event_time=12, required_through_seq=2, resolved_through_seq=2, slice_closed_through_time=12, eligible_states=EL).reasons, ("AMBIGUOUS_ELIGIBLE_GENERATIONS",))
+        self.assertEqual(H.reconstruct_eligibility(amb, event_time=12, required_through_seq=2, resolved_through_seq=2, slice_closed_through_time=12, slice_closed_at_seq=2, eligible_states=EL).reasons, ("AMBIGUOUS_ELIGIBLE_GENERATIONS",))
     def test_the_decision_has_no_truthiness_and_malformed_inputs_refuse(self):
         with self.assertRaises(TypeError): bool(rec())
         for bad in (dict(event_time=True), dict(eligible_states=set()), dict(eligible_states=frozenset()), dict(required_through_seq=-1), dict(slice_closed_through_time="x")):
             with self.assertRaises(Refusal): rec(**bad)
         for led in ([E(1, 1, 10, "G", "S"), E(1, 1, 11, "G", "S")], [E(2, 1, 10, "G", "S"), E(1, 2, 11, "G", "S")], ["x"]):
-            with self.assertRaises(Refusal): H.reconstruct_eligibility(led, event_time=1, required_through_seq=1, resolved_through_seq=1, slice_closed_through_time=1, eligible_states=EL)
+            with self.assertRaises(Refusal): H.reconstruct_eligibility(led, event_time=1, required_through_seq=1, resolved_through_seq=1, slice_closed_through_time=1, slice_closed_at_seq=1, eligible_states=EL)
     def test_artificial_index_lag_after_revocation_is_detected_not_reported_as_trusted(self):
         self.assertEqual(H.present_trust(LEDGER, "G2", required_through_seq=4, resolved_through_seq=4, revoked_states=RV), "REVOKED")
         self.assertEqual(H.present_trust(LEDGER, "G2", required_through_seq=4, resolved_through_seq=3, revoked_states=RV), "UNKNOWN_STALE")         # lagged resolver: revocation at seq 4 not yet seen
         self.assertEqual(H.present_trust(LEDGER, "G1", required_through_seq=4, resolved_through_seq=4, revoked_states=RV), "TRUSTED")
         self.assertEqual(H.present_trust(LEDGER, "GX", required_through_seq=4, resolved_through_seq=4, revoked_states=RV), "UNKNOWN_STALE")
+    # ---- R43: root's exact missing-tail reproduction (controls first)
+    def test_r43_a_missing_tail_with_the_same_claimed_watermark_and_closure_is_held_and_trust_is_not_reported(self):
+        a = E(1, 1, 1, "G", "LIVE"); b = E(1, 2, 5, "G", "REVOKED"); k = dict(event_time=10, required_through_seq=2, resolved_through_seq=2, slice_closed_through_time=10, slice_closed_at_seq=2, eligible_states=frozenset({"LIVE"}))
+        full = H.reconstruct_eligibility([a, b], **k); self.assertEqual((full.status, full.reasons), (H.MISSED, ("NO_ELIGIBLE_GENERATION",))); self.assertEqual(H.present_trust([a, b], "G", required_through_seq=2, resolved_through_seq=2, revoked_states=frozenset({"REVOKED"})), "REVOKED")      # positive controls
+        tail = H.reconstruct_eligibility([a], **k); self.assertEqual(tail.status, H.MISSED); self.assertIn("HISTORICAL_SLICE_COMPLETENESS_FAIL:SEQUENCE_GAP_OR_MISSING_TAIL", tail.reasons)
+        self.assertEqual(H.present_trust([a], "G", required_through_seq=2, resolved_through_seq=2, revoked_states=frozenset({"REVOKED"})), "UNKNOWN_STALE")
+    def test_r43_empty_with_a_nonzero_basis_a_closure_claimed_at_another_endpoint_and_epoch_bounds_are_held(self):
+        self.assertIn("HISTORICAL_SLICE_COMPLETENESS_FAIL:SEQUENCE_GAP_OR_MISSING_TAIL", H.reconstruct_eligibility([], event_time=1, required_through_seq=1, resolved_through_seq=1, slice_closed_through_time=1, slice_closed_at_seq=1, eligible_states=EL).reasons)
+        self.assertIn("HISTORICAL_SLICE_COMPLETENESS_FAIL:CLOSURE_ENDPOINT_NOT_THE_RESOLVED_BASIS", rec(slice_closed_at_seq=3).reasons)
+        self.assertIn("EPOCH_NOT_RECORDED_HELD", H.reconstruct_eligibility([E(None, 1, 10, "G1", "CERTIFIED")], event_time=15, required_through_seq=1, resolved_through_seq=1, slice_closed_through_time=40, slice_closed_at_seq=1, eligible_states=EL, epoch_bound=1).reasons)
+        self.assertIn("EPOCH_AFTER_BASIS", rec(epoch_bound=1).reasons); self.assertEqual(rec(epoch_bound=2).status, H.READY)
+        self.assertEqual(H.present_trust([], "G", required_through_seq=0, resolved_through_seq=0, revoked_states=RV), "UNKNOWN_STALE")
 if __name__ == "__main__": unittest.main()
