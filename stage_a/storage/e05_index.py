@@ -10,7 +10,7 @@ import json, re, sqlite3
 from ..errors import Refusal, IntegrityFailure
 TABLES = {   # name: (primary key, indexed columns [each its own index], as-of column or None)
     "stagea_manifest_index": (("manifest_hash",), ("feature_id", "feature_version", "status_currentness"), None),
-    "stagea_fit_generation_index": (("fit_generation_ref",), ("feature_id", "feature_version", "available_asof"), "available_asof"),
+    "stagea_fit_generation_index": (("fit_generation_ref",), ("feature_id", "feature_version", "instrument_id", "timeframe", "available_asof"), "available_asof"),   # E09-H1: a feature-scoped fit-generation namespace MUST carry INSTRUMENT_ID and TIMEFRAME unless the governing schema defines the ID globally unique over them (fit_generation_ref is an opaque Ref; no such uniqueness is shown), so the projection carries both (R54)
     "stagea_pending_row_index": (("row_content_hash",), ("feature_id", "materialization_version", "event_time", "state"), None),
     "stagea_transition_index": (("transition_hash",), ("namespace_id", "epoch", "sequence", "subject_id", "accepted_at"), None),
     "stagea_current_status": (("subject_id", "materialization_version"), (), None),

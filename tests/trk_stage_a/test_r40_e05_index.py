@@ -49,7 +49,13 @@ class Rebuild(unittest.TestCase):
         self.x.rebuild(self.src); a = self.x._c.execute("select * from stagea_transition_index").fetchall(); self.x.rebuild(self.src); self.assertEqual(a, self.x._c.execute("select * from stagea_transition_index").fetchall())
         r = dict(transition_hash=H("t2"), namespace_id="XAUUSD/H4/mom3", epoch=1, sequence=1, subject_id="s", accepted_at=1, ref="journal:XAUUSD/H4/mom3/1", ref_hash=H("t2"), data_vintage_mode="M"); self.assertEqual(code(self.x.upsert_projection, "stagea_transition_index", r), "E05_ROW_KEY_CONFLICT")
 class Supersede(unittest.TestCase):
-    def _fit(self, x, n, asof, sup=None): x.upsert_projection("stagea_fit_generation_index", dict(fit_generation_ref="fg%d" % n, feature_id="f", feature_version="1", available_asof=asof, ref="r%d" % n, ref_hash=H(str(n)), data_vintage_mode="M", supersedes_ref=sup))
+    def test_fit_generation_projection_requires_instrument_and_timeframe(self):
+        # E09-H1 (R54): a fit-generation projection row without INSTRUMENT_ID/TIMEFRAME is refused; fit_generation_ref is an opaque Ref with no shown global uniqueness.
+        base = dict(fit_generation_ref="fg1", feature_id="f", feature_version="1", instrument_id="XAUUSD", timeframe="H4", available_asof=1, ref="r1", ref_hash=H("1"), data_vintage_mode="M", supersedes_ref=None)
+        for k in ("instrument_id", "timeframe"):
+            d = {x: v for x, v in base.items() if x != k}; self.assertEqual(code(E.E05Index().upsert_projection, "stagea_fit_generation_index", d), "E05_ROW_COLUMNS_INVALID", k)
+        E.E05Index().upsert_projection("stagea_fit_generation_index", base)
+    def _fit(self, x, n, asof, sup=None): x.upsert_projection("stagea_fit_generation_index", dict(fit_generation_ref="fg%d" % n, feature_id="f", feature_version="1", instrument_id="XAUUSD", timeframe="H4", available_asof=asof, ref="r%d" % n, ref_hash=H(str(n)), data_vintage_mode="M", supersedes_ref=sup))
     def test_current_excludes_superseded_as_known_ignores_later_supersession_and_forks_cycles_refuse(self):
         x = E.E05Index(); self._fit(x, 1, 10); self._fit(x, 2, 20, "r1"); self._fit(x, 3, 30, "r2"); self.assertEqual(x.current_rows("stagea_fit_generation_index"), ["r3"]); self.assertEqual(x.as_known_rows("stagea_fit_generation_index", 25), ["r1", "r2"]); self.assertEqual(x.as_known_rows("stagea_fit_generation_index", 5), [])
         self.assertEqual(code(x.as_known_rows, "stagea_manifest_index", 5), "E05_AS_KNOWN_NOT_DEFINED_FOR_TABLE"); self.assertEqual(code(x.as_known_rows, "stagea_fit_generation_index", "5"), "E05_KEY_INVALID")
