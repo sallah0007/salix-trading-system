@@ -19,6 +19,7 @@ M = [(H, "check_h1(d, decision_window)", "pass"),
      (A, 'getattr(identity, "consumer_id", None) != "ML" or fs.identity_of', 'False or fs.identity_of'), (A, "rec = h1.correlation(identity)", "rec = None"),
      (A, "!= (rec.consumer_binding_id, rec.manifest_or_dataset_binding_id): raise", "!= (cur.consumer_binding_id, cur.manifest_or_dataset_binding_id): raise"),
      (A, "            return old  ", "            return out  ")]
+EQUIV = ('False or fs.identity_of',)
 bad = 0
 for i, (f, a, b) in enumerate(M):
     p = ROOT / f; o = p.read_text()
@@ -26,5 +27,6 @@ for i, (f, a, b) in enumerate(M):
     p.write_text(o.replace(a, b, 1))
     try: r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-x", T], cwd=ROOT, capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
     finally: p.write_text(o)
-    print("mutant %2d %s" % (i, "KILLED" if r.returncode else "SURVIVED")); bad += (r.returncode == 0)
+    eq = b in EQUIV
+    print("mutant %2d %s" % (i, "KILLED" if r.returncode else ("EQUIVALENT (reasoned: final-store identity_of(ML, req) == identity already implies identity.consumer_id == ML)" if eq else "SURVIVED"))); bad += (r.returncode == 0 and not eq)
 sys.exit(1 if bad else 0)

@@ -12,7 +12,7 @@ M = [("if cur is not None: return cur[1]", "if False: return cur[1]"), ('if type
      ('        st, got = self._readback(eid)                                                                      # R52', '        if self._fenced(logical_key, trigger_id): self._l.record(logical_key, trigger_id, eid, "LIFECYCLE_FENCED"); return "LIFECYCLE_FENCED"\n        st, got = self._readback(eid)                                                                      # R52'),
      # R51 additions
      ('        self._l.check_record(logical_key, trigger_id, eid, "PUBLISHED")                                    # R51', '        pass                                    # R51'),
-     ('        if st == "UNREADABLE": raise Refusal(eid, code="SHADOW_PUBLICATION_OUTCOME_UNKNOWN")\n        if got is not None:', '        if False: pass\n        if got is not None:'),
+     ('        if st == "UNREADABLE": raise Refusal(eid, code="SHADOW_PUBLICATION_OUTCOME_UNKNOWN")           # an unresolved receipt is neither "published" nor "never published": it cannot be FENCED either\n        if got is not None:', '        if False: pass\n        if got is not None:'),
      ('            if st == "UNREADABLE": raise Refusal(eid, code="SHADOW_PUBLICATION_OUTCOME_UNKNOWN")           # slot', '            if False: pass           # slot'),
      ('            if got is None: self._pending.pop(slot, None); raise ', '            if False: raise '),
      ('            if _h(got) != h: raise Refusal(eid, code="SHADOW_SINK_DIFFERENT_PAYLOAD")', '            if False: raise Refusal(eid, code="SHADOW_SINK_DIFFERENT_PAYLOAD")'),
