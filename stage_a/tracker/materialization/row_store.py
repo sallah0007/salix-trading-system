@@ -4,7 +4,7 @@ document is a non-authoritative sidecar used only to rebuild the object and is a
 A 'committed predecessor' is therefore a row LOADED from this store by hash (bytes + both hashes re-verified), never a caller-supplied object.
 One successor per predecessor (and one origin per profile identity) is claimed by a content-addressed claim key: the same row is idempotent, a different row is a FORK refusal.
 Held: who may write (principal), commit-point id rule, clock, accepted-transition linkage (this store is the PENDING candidate scope only)."""
-import hashlib, json
+import copy, hashlib, json
 from dataclasses import dataclass
 from ...errors import Refusal, IntegrityFailure
 from ...schema import objects as O, independent as X
@@ -55,7 +55,7 @@ def _claim_of(row, pred_hash_hex):
 
 class PendingRowStore:
     def __init__(self, store, tables):
-        self._s, self._t = store, tables
+        self._s, self._t = store, copy.deepcopy(tables)      # R53: pin the declared codec/profile identity; later caller mutation must not reinterpret stored rows
 
     def _verified_bytes(self, row):
         b = O.row_content_bytes(self._t, row); h = hashlib.sha256(b).hexdigest()

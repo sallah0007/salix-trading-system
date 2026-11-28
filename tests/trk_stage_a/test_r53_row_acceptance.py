@@ -156,3 +156,12 @@ def test_acceptance_requires_the_actual_verification_of_this_row_and_an_evidence
     assert fres.status != "PASS"
     with pytest.raises(Refusal): a.accept(h1, verification_result=fres, verification_evidence_ref=Ref("VERIFICATION_EVIDENCE_REF", b"x", b"v1", bytes.fromhex(fres.result_hash)), currentness_state="CURRENT", status_event="PUBLISHABLE")
     assert [r.seq for r in js.journal(RA.row_namespace(out[0][0])).read_from(1)] == [1]                                       # nothing was accepted by any refusal
+
+def test_acceptor_pins_tables_against_caller_mutation():
+    import copy
+    s, js, rows, out, _ = rig(); t = copy.deepcopy(T); a = RA.RowAcceptor(js, rows, t, Time(), CP()); r0 = acc(a, out[0][1].row_hash)
+    t.enums["CURRENTNESS_STATE"]["CURRENT"] = 9; t.ref_types["VERIFICATION_EVIDENCE_REF"] = 99
+    r1 = acc(a, out[1][1].row_hash); assert json.loads(r1.body_json)["transition_hash"] != json.loads(r0.body_json)["transition_hash"] and r1.seq == 2
+    bj = json.loads(r1.body_json); ev = bj["verification_evidence_ref"]
+    c = O.CanonicalTransition(bytes.fromhex(out[1][1].row_hash), Ref(ev[0], bytes.fromhex(ev[1]), bytes.fromhex(ev[2]), bytes.fromhex(ev[3])), js.journal(RA.row_namespace(out[1][0])).epoch, bytes.fromhex(json.loads(r1.body_json)["canonical_commit_point_id"]), json.loads(r1.body_json)["canonical_accepted_at"], json.loads(r1.body_json)["available_asof"], None, "CURRENT", "PUBLISHABLE")
+    assert json.loads(r1.body_json)["transition_hash"] == O.transition_hash(T, c).hex()      # still hashed under the ORIGINAL tables
