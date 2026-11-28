@@ -34,7 +34,7 @@ class Composition:
             if o is None: raise Refusal(n, code="COMPOSITION_PART_MISSING")
         if not callable(gateway_factory): raise Refusal("gateway_factory", code="COMPOSITION_PART_MISSING")
         self._p, self._js, self._st, self._core, self._path, self._gf = pipeline, journals, store, core, path, gateway_factory; self._up = dict(upstream or {}); self.gateway = None; self._l2r = l2_scope_resolver
-    def accept_and_publish(self, pkg, supplied, status_token, *, sequence, now, max_age, stored_inputs=None, l2_applicability=None, research_lineage=None, lineage_expect=None, lifecycle=None, lifecycle_transition=None):
+    def accept_and_publish(self, pkg, supplied, status_token, *, sequence, now, max_age, stored_inputs=None, l2_applicability=None, research_lineage=None, lineage_expect=None, lifecycle=None, lifecycle_transition=None, registry_gate=None):
         if l2_applicability is not None and not isinstance(l2_applicability, L2Applicability): raise Refusal("l2_applicability", code="COMPOSITION_L2_APPLICABILITY_INVALID")
         r = CompositionResult("STARTED")
         if research_lineage is not None:                                     # R40: the attempt checked is the one the PACKAGE actually records (never a caller-chosen known id); family/battery/input lineage must match a caller-supplied expectation (no universal family vocabulary is defined here)
@@ -71,6 +71,9 @@ class Composition:
             if sstate == "NOT_REQUIRED_ADMITTED": r.l2_scope = {"scope_ref": l2_applicability.scope_ref, "contract_ref": l2_applicability.contract_ref, "required": False, "resolved": True}; r.log("stored_values_l2", "NOT_REQUIRED_PER_RESOLVED_ADMITTED_SCOPE", l2_applicability.scope_ref)
             else: absent(swhy if sstate == "UNAVAILABLE" else "STORED_VALUES_REQUIRED_BUT_NOT_SUPPLIED")
         else: absent("STORED_VALUES_REQUIRED_BUT_NOT_SUPPLIED" if l2_applicability is not None else "L2_APPLICABILITY_UNBOUND_HELD")
+        if registry_gate is not None:                                        # R40: the integrated Registry-377 checker; anything but CHECKS_PASS_FACTS_ONLY holds publication (acceptance is not undone; nothing is guessed)
+            rep = registry_gate(key, fk); r.log("registry_integrity", rep.overall, ",".join("%s:%s" % (f.check, f.state) for f in rep.findings))
+            if rep.overall != "CHECKS_PASS_FACTS_ONLY": r.status = "HELD_REGISTRY_INTEGRITY_" + rep.overall; return r
         self._path.commit(fk, supplied, status_token, sequence=sequence); r.projection = self._path.status_projection(); self.gateway = self._gf(r.projection); r.published_rows = self._path.feed(self.gateway); r.log("committed_status_and_rows", "OK", "rows=%d" % r.published_rows)
         if lifecycle_transition is not None or lifecycle is not None:        # R39: the ACTUAL LifecycleFramework.apply call, only when BOTH a framework and an explicit transition are supplied; an unbound policy is HELD, never a guessed state
             if lifecycle is None or lifecycle_transition is None: r.log("lifecycle", "HELD", "COMPOSITION_LIFECYCLE_INPUT_INCOMPLETE")
