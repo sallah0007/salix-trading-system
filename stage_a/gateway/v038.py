@@ -192,11 +192,22 @@ def check_h1(fields: dict, decision_window: bool = True) -> None:
     for grp in (H1_CONTEXT_GROUP, ("APPLICABILITY_MAP_ID", "APPLICABILITY_MAP_VERSION"), ("REVOCATION_WATERMARK_REF", "REVOCATION_WATERMARK_OBSERVED_AT")):
         have = [k for k in grp if fields.get(k) is not None]
         if have and len(have) != len(grp): raise Refusal(",".join(k for k in grp if k not in have), code="H1_CONDITIONAL_GROUP_INCOMPLETE")
-    # COVERAGE_BASIS is "when coverage is EVALUATED" - a different condition from the Event/Context group. Source vocabulary COVERAGE_STATE = COMPLETE | PARTIAL | DELAYED | UNKNOWN | NOT_EVALUATED: NOT_EVALUATED means coverage was not evaluated, so no basis is required; a COMPLETE/PARTIAL/DELAYED result is only meaningful under its exact basis (NO_EVENT_RECORDED needs COMPLETE under the exact COVERAGE_BASIS). UNKNOWN is left unconstrained (source does not say whether an unknown result was evaluated; open question, no default invented).
-    if fields.get("COVERAGE_STATE") in ("COMPLETE", "PARTIAL", "DELAYED") and fields.get("COVERAGE_BASIS") is None: raise Refusal("COVERAGE_BASIS", code="H1_CONDITIONAL_GROUP_INCOMPLETE")
+    # COVERAGE_BASIS (H1): "when coverage is evaluated". H1 carries no separate "coverage was evaluated" fact; the ONLY explicit not-evaluated fact in its vocabulary is COVERAGE_STATE = NOT_EVALUATED (S6 section C). COMPLETE/PARTIAL/DELAYED and UNKNOWN can each be the RESULT of an evaluation (UNKNOWN is not an exemption), so with the Event/Context group present every state except NOT_EVALUATED requires COVERAGE_BASIS (fail-closed on the unread). An "UNKNOWN because not evaluated" record cannot be distinguished from "UNKNOWN after evaluation" in H1 and is held as a source gap (no enum/default/extra field invented): it must carry NOT_EVALUATED or a basis. NOT_EVALUATED without a basis is legal in H1 only; H2 (check_h2) separately REQUIRES COVERAGE_BASIS whenever Event/Context is part of the delivery.
+    if fields.get("COVERAGE_STATE") is not None and fields.get("COVERAGE_STATE") != "NOT_EVALUATED" and fields.get("COVERAGE_BASIS") is None: raise Refusal("COVERAGE_BASIS", code="H1_CONDITIONAL_GROUP_INCOMPLETE")
     if ml:
         if fields["ML_MANIFEST_CLASS"] not in ML_MANIFEST_CLASSES: raise Refusal(str(fields["ML_MANIFEST_CLASS"]), code="H1_ML_MANIFEST_CLASS_UNKNOWN")
         if fields["GENERATION_AUTHORITY_CLASS"] not in GENERATION_AUTHORITY_CLASSES: raise Refusal(str(fields["GENERATION_AUTHORITY_CLASS"]), code="H1_GENERATION_AUTHORITY_CLASS_UNKNOWN")
+
+# H2 EVENT_CONTEXT_DELIVERY_BINDING (S6 "REQUIRED WHEN EVENT/CONTEXT IS PART OF THE DELIVERY"). Only the items with unambiguous source names are checked. HELD (source writes them in slash notation and names no separate field): "CONTEXT_PACKAGE_ID / HASH" and "CONTEXT_OMISSIONS / REASON_CODES" - no field names are invented here. EVENT_RECORD_REFS[] must be PRESENT (a list, possibly empty is a stated empty set).
+H2_REQUIRED = ("CONSUMER_BINDING_ID", "CONTEXT_REQUIREMENT_CLASS", "SOURCE_AVAILABILITY_STATE", "COVERAGE_STATE", "EVENT_PRESENCE_STATE", "COVERAGE_BASIS", "REQUESTED_WINDOW_START", "REQUESTED_WINDOW_END", "EVENT_RECORD_REFS", "AVAILABLE_ASOF")
+H2_HELD_SLASH_ITEMS = ("CONTEXT_PACKAGE_ID / HASH", "CONTEXT_OMISSIONS / REASON_CODES")
+def check_h2(fields: dict) -> None:
+    missing = [k for k in H2_REQUIRED if fields.get(k) is None]
+    if missing: raise Refusal(",".join(missing), code="H2_FIELD_MISSING")            # COVERAGE_BASIS is required here EVEN when COVERAGE_STATE = NOT_EVALUATED (H2 scope differs from H1)
+    if not isinstance(fields["EVENT_RECORD_REFS"], (list, tuple)): raise Refusal("EVENT_RECORD_REFS", code="H2_EVENT_RECORD_REFS_NOT_A_LIST")
+    for a, b in (("APPLICABILITY_MAP_ID", "APPLICABILITY_MAP_VERSION"),):
+        if (fields.get(a) is None) != (fields.get(b) is None): raise Refusal(a + "/" + b, code="H2_CONDITIONAL_GROUP_INCOMPLETE")
+    if fields["COVERAGE_STATE"] not in ("COMPLETE", "PARTIAL", "DELAYED", "UNKNOWN", "NOT_EVALUATED"): raise Refusal(str(fields["COVERAGE_STATE"]), code="H2_COVERAGE_STATE_VOCABULARY")
 
 def check_h1_ml_binding(fields: dict, bound_manifest_class, bound_generation_authority_class) -> None:
     """The source-owned part: the classes carried in H1 must equal those of the ACTUAL bound ML manifest / generation, supplied by their owner. Without that owner input the H1 classes are only vocabulary-valid, not verified
