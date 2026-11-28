@@ -11,6 +11,8 @@ from tracker_component.journal_port import HeadMismatch
 from tracker_component.canonical import canonical_json
 from ..schema import objects as O, independent as X
 from .materialization.row_store import _xref, _ref_j
+from .verification.verification_result import issued_by_verifier_run, PASS
+from .verification.row_step_verifier import SCOPE_ROW_STEP
 
 KIND = "ROW_ACCEPTED"
 VERSION_TAG = "ROW_TRANSITION_CANDIDATE_V1"
@@ -39,8 +41,18 @@ class RowAcceptor:
             b = json.loads(r.body_json); out[b["row_content_hash"]] = r
         return out
 
-    def accept(self, row_hash, *, verification_evidence_ref, currentness_state, status_event, gate_dependency_transition_ref=None):
+    @staticmethod
+    def _bind_evidence(row_hash, res, ref):
+        """The accepted transition is bound to the ACTUAL independent row-step verification of THIS row: a typed PASS of scope ROW_STEP issued by an actual verifier run (in-process receipt, not a security boundary) whose subject names this row, and an
+        evidence ref whose hash IS that result's hash. A byte-hash match alone, another row's result, another scope, or a ref not naming the result is refused."""
+        if not issued_by_verifier_run(res): raise Refusal("verification result", code="ROW_VERIFICATION_NOT_ISSUED_BY_A_VERIFIER_RUN")
+        res.require_pass(SCOPE_ROW_STEP)
+        if res.status != PASS or dict(res.subject).get("row_content_hash") != row_hash: raise Refusal(row_hash, code="ROW_VERIFICATION_NOT_FOR_THIS_ROW")
+        if ref is None or ref.target_hash != bytes.fromhex(res.result_hash): raise Refusal("evidence ref", code="EVIDENCE_REF_DOES_NOT_NAME_THE_VERIFICATION")
+
+    def accept(self, row_hash, *, verification_result, verification_evidence_ref, currentness_state, status_event, gate_dependency_transition_ref=None):
         row = self._rows.load(row_hash)                                         # committed, re-verified row only
+        self._bind_evidence(row_hash, verification_result, verification_evidence_ref)
         j = self._j.journal(row_namespace(row)); seen = set()
         for _ in range(3):
             if not j.epoch_is_current(): raise StaleFence("fence lost before row acceptance")
