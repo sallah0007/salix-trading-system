@@ -36,6 +36,8 @@ class ShadowLedger:
         self._slot(logical_key, trigger_id, prediction_event_id)
         if self._expected[(logical_key, trigger_id)] is not None: raise Refusal(trigger_id, code="SHADOW_TERMINAL_ALREADY_RECORDED")
         if logical_key in self._sealed: raise Refusal(logical_key, code="SHADOW_RETROACTIVE_BACKFILL_PROHIBITED")
+        prev = self._ids.get(prediction_event_id)      # R47: a prediction_event_id binds to ONE (key, trigger) globally, checked BEFORE any write
+        if prev is not None and prev[:2] != (logical_key, trigger_id): raise Refusal(prediction_event_id, code="SHADOW_EVENT_ID_CONFLICT")
         old = self._provisional.get((logical_key, trigger_id))
         if old is not None and old != prediction_event_id: raise Refusal(trigger_id, code="SHADOW_EVENT_ID_CONFLICT")
         self._provisional[(logical_key, trigger_id)] = prediction_event_id; self._ids[prediction_event_id] = (logical_key, trigger_id, "PROVISIONAL")

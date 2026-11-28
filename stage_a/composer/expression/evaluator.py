@@ -87,6 +87,11 @@ def _window_value(node, op, t, get):
             s = _fin(s + canon(v))
         return s if op == "rolling_sum" else _fin(s / float(n))
 
+def check_constants(m: Manifest):
+    """R47: every const node is decoded (finite or NON_FINITE_CONST) BEFORE any evaluation, in every evaluator, so a lazily untaken select branch can never hide a non-finite constant."""
+    for n in m.data["nodes"]:
+        if n["op"] == "const": decode_const(n["value"])
+
 def check_series(m: Manifest, series: Dict[str, List[Optional[float]]]):
     if set(series) != set(m.data["inputs"]):
         raise Refusal("series=%s inputs=%s" % (sorted(series), m.data["inputs"]), code="INPUT_SET_MISMATCH")
@@ -116,7 +121,7 @@ def topo_order(m: Manifest):
     return order
 
 def evaluate(m: Manifest, series) -> List[Optional[float]]:
-    length = check_series(m, series)
+    length = check_series(m, series); check_constants(m)
     by_id = {n["id"]: n for n in m.data["nodes"]}
     vals: Dict[str, List[Optional[float]]] = {}
     if any(n["op"] == "select" for n in by_id.values()):
