@@ -1,4 +1,15 @@
 # Tracker Stage A — persistent work checklist (Coder; code state only, governance state lives in Drive)
+
+## Pause and resume checkpoint — 29 November 2026, Sydney
+
+Owner paused Claude follow-ups for the weekly allowance reset (Monday at 7 o'clock, AM/PM not specified). Do not restart the Tracker or mark unfinished tasks complete. New fixes remain additions to this same full-component checklist.
+
+Latest code checkpoint: main `c0988a4da74d92f44ad63f42681b12b61b462051` / PR167. PR165–167 are merged; Claude reports exact-head CI and 2160 passing at PR167. This pause record does not independently certify those runtime results. The Manager separately verified 158 GitHub heads, including the five latest branch copies; actual post-PR167 workspace outputs show no modified/untracked files or stashes and no local branch history unreachable from the remote heads. See [Preservation index](../PRESERVATION_INDEX.md).
+
+**Next work:** review the PR167 completeness/lifecycle changes, then complete item6's augmented/shadow/context/H3/cold-recovery view path; items8–12 (dependency recheck, clause review, all100 A07 comparisons, remaining Build Plan reads and current closeout). Item7 has new generic code and tests, with the explicitly held inputs and review limits in its row below. Refresh item13 after any new edits. All standing gates and Rescue items remain open/held as recorded.
+
+The earlier progress summary below is a historical checkpoint; the numbered task rows remain the working register and must be reconciled on resumption.
+
 A fixed finding or merged PR does NOT mark the larger task complete. Holds unchanged: A02 Class B HOLD; A07/COVERAGE OPEN; A07/P12/N2 UNSATISFIED; QC34 ALERT(HOLD); A08 READY_TO_CODE NO; Stage A HOLD; all 100 A07 qualifiers UR/QUALIFIED false; full Tracker NOT complete; no Sallah sign-off. No gate cleared by any merge/CI.
 Main at last update: 31b9422 (#159 race fix) + this PR; suite 2114 passed at #159. Merged this stretch: #151 invariant stage, #152 row publication, #153 route delivery, #154 invariant identity, #155 checklist, #156 E05 route, #157 cold restart, #158 Composition.publish_accepted_row, #159 side-HEAD pinning. Root-verified: #159, #154 (PASS); #151-#158 CI/trees matched; child-process tests root-STATIC+CI only.
 
@@ -18,4 +29,4 @@ Main at last update: 31b9422 (#159 race fix) + this PR; suite 2114 passed at #15
 | 12 | ONE CURRENT combined closeout (source/callpath/commit/positive+negative/review limit or irreducible input/source-owner ROLE/consequence/recommendation) | PENDING | TRK-STAGE-A-TRACKER-COMBINED-CLOSEOUT.md §28.11 is the last |
 | 13 | Refreshed fetch + untracked/stash/local-only inventory (no cleanup) | DONE for this stretch (re-run at closeout) | fetched all heads: 154 origin tracking refs, 0 stashes, 0 untracked; 7 local-only branches (r50-base, r50-batch, r50-closeout, r50-h1, r50-int, r50-shadow, r52-forecast-payload) each CONTAINED in remote refs (84/83/78/83/79/82/49), none ahead of its remote; origin/main e54b664. Nothing deleted or cleaned. |
 
-Next resume point (CURRENT): item 4 closed in candidate/SIM tests except the SOURCEVALUE/L2 and Health parts (items 7-8); then item 6 (ML Registry §14), then 7-13 in order. Preserve all branches/WIP; no cleanup.
+Next resume point (CURRENT): review the PR167 changes, complete the item6 view-path remainder, then items8–12 and refresh item13. Retain item7 held-input/review limits. Preserve all branches/WIP; no cleanup.
