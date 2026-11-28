@@ -1,7 +1,35 @@
-# Preservation index — Stage A Tracker work (sallah0007/salix-trading-system only)
+# SALIX Trading Tracker — Saved Code and Preservation Index
+
+## Verified GitHub checkpoint — 28 November 2026, Sydney
+
+This is a preservation check, not implementation certification or acceptance. Code reviewed for this checkpoint is `b8017d408c671e96a28fbb1eb25477cfef70d6ee`, through merged PR #83. Documentation-only heading/navigation updates follow that code checkpoint.
+
+| Check | Observed result |
+| --- | --- |
+| Current integrated branch | `main`; recent PR #82 lifecycle repairs and PR #83 status emitter/caller are merged |
+| Latest two PR file preservation | All 11 changed file paths have the same Git blob SHA on the PR heads and the checked main tree |
+| Remote branch inventory | 73 heads returned on one complete page of up to 100; older Tracker branches and the preservation anchor are present |
+| Earlier local-only commits | All 170 unique SHAs in [the R46 preservation list](PRESERVATION_R46_LOCAL_ONLY_SHAS.tsv) exactly match the 170 direct parents of remote anchor `5ece0b4fc7b0979dc98fc8ada67161500e390269`; no missing or extra SHA |
+| Main history continuity | GitHub comparison from R45 code `3cbefb40ff70d7b877732898c91515358eb16479` to the checkpoint is ahead by 13 commits |
+| Current runtime source and tests | The checked main Git tree is complete (not truncated); 472 file blobs were inventoried. This is an inventory, not a review of every file |
+| Active workspace limits | GitHub alone cannot detect Claude's newer uncommitted, untracked, stashed or unpushed work; a fresh workspace check remains separate |
+
+### Where to start
+
+- [Repository overview](../README.md): component purpose and directory map.
+- [Combined closeout](closeout/TRK-STAGE-A-TRACKER-COMBINED-CLOSEOUT.md): use the section explicitly labelled CURRENT, then reconcile later commits. At this checkpoint that section is R49; PR #82/#83 are newer code events and are not silently treated as covered by the R49 narrative.
+- [Working requirement register](closeout/TRK-STAGE-A-R43-CLAUSE-RECONCILIATION.md): retained filename; evidence and reread limits are stated per row.
+- [Original SHA preservation list](PRESERVATION_R46_LOCAL_ONLY_SHAS.tsv): earlier local-only work now reachable through the remote anchor.
+
+Do not merge the preservation anchor into main, delete branches as cleanup, or use branch names as acceptance evidence. The existing provider-harness PR #16 remains open and explicitly marked DO NOT MERGE; this documentation check changes none of its status.
+
+## Historical preservation record — R08 through R24
+
+The following original record is retained for provenance. Its old 'latest', 'next', 'unresolved' and branch-status statements are dated snapshots, not current selections. Later source decisions and code evidence must be read in the combined closeout and GitHub history. No earlier accepted scope is changed.
+
 
 PRESERVATION IS NOT ACCEPTANCE. A merge or this index clears no gate, hold or stage (CLAUDE.md §2A). Drive is the canonical record.
-Snapshot taken 2026-11-27 after PR #30. Verify against git, not this text: `git ls-remote --heads origin`.
+Historical baseline snapshot: 2026-11-27 after PR #30. The numbered sections below retain earlier observations; they do not describe the latest repository state.
 
 ## 1. Merged into main (code/test/evidence; author-only, no independent review)
 | PR | Branch (kept on remote) | Tip | Content |
