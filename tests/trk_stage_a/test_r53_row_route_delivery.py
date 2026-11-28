@@ -94,3 +94,16 @@ class RowRoute(unittest.TestCase):
         rec = co.publish_accepted_row(res, rp, h0, "SIM_CUR", **kws); self.assertEqual(res.published_rows >= 1, True)
         fw, ml = self.both("B", res, 0, 0, "q"); self.assertIsInstance(fw(), G.Binding); self.assertTrue(ml.included)                                         # delivered with NO second recover_publication
         self.assertEqual(co.publish_accepted_row(res, rp, h0, "SIM_CUR", **kws), rec)                                                                           # replay: same record
+
+    def test_all_segment_stored_value_failure_after_publication_denies_the_ROW_windows_for_FW_and_excludes_ML_while_the_control_before_it_delivers(self):
+        from .test_r37_stored_values import SER, H as SH
+        res_ = {"SRC/close": SER}; si = dict(bindings={"close": {"ref": "SRC/close", "hash": SH(SER)}}, fetch=lambda ref: res_.get(ref), series_hash=SH)
+        self.publish("B", 0); self.publish("B", 1); fk, co = self.o["B"][0], self.o["B"][1]; res = co.recover_publication(fk, stored_inputs=si)
+        self.assertIn(("stored_basis", "RESTORED_FROM_STORED_SEGMENTS", "VERIFIED_STORED_EQUALS_RECOMPUTED"), res.steps)                                              # the stored segment is the feature-version one the rows belong to
+        fw0, ml0 = self.both("B", res, 0, 0, "s0"); self.assertIsInstance(fw0(), G.Binding); self.assertTrue(ml0.included)                                           # control: healthy before
+        co.register_stored_maintenance(res); res_["SRC/close"] = SER[:-1] + [-1]                                                                                       # the source of a stored segment changes
+        self.assertEqual([x[2] for x in co.run_maintenance([(fk.key(), "SCHEDULED")], now=13, max_age=50, max_items=4)], ["RECORDED_NOT_PASS"])
+        import dataclasses as dc; fk_, co_, r0, b, e = self.o["B"]; e = dc.replace(e, expected_projection=self.chain["B"][0][0].published_projection_name); k = dict(binding=b, now=14, ref=R("hl-2"), resolved_at=13, tables=GTAB)
+        self.assertEqual(code(co.deliver, "fw-s1", FI("FW", "M-s1", "XAUUSD", "Ws1"), e, I, I, 1, 60, res, **k), "NON_DELIVERY")                                           # FW refused for a published, accepted ROW window
+        row = co.deliver_ml("ml-s1", FI("ML", "D-s1", "XAUUSD", "Ws1"), e, I, I, 1, 60, res, row_id="row-s1", generation_ref=R("gen"), vintage_mode="ORIGINAL_AS_OBSERVED", omissions=NONE_, exclusion_reason=lambda x: ("ENUM", "REASON", "ALL_SEGMENT_FAIL"), **k)
+        self.assertFalse(row.included); self.assertEqual(row.row_exclusion_reason, ("ENUM", "REASON", "ALL_SEGMENT_FAIL"))                                               # ML excluded with the explicit reason
