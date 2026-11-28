@@ -3,7 +3,7 @@ Nothing normative is defined here: the canonical byte layout of an Event/Context
 No canonical database, no Core write permission, no principal/admission: writes are plain store puts from a supplied caller; who may write is a source-owned grant not modelled here."""
 import hashlib
 from ..errors import Refusal, IntegrityFailure
-FACT, CORR = "event-context/fact/", "event-context/corr/"
+FACT, CORR, INTENT = "event-context/fact/", "event-context/corr/", "event-context/intent/"
 def _s(x): return isinstance(x, str) and bool(x)
 def _k(prefix, ident): return prefix + hashlib.sha256(ident.encode("utf-8")).hexdigest()
 class EventContextStore:
@@ -16,18 +16,34 @@ class EventContextStore:
         raw = bytes(raw)
         if self._e(self._d(raw)) != raw: raise Refusal(ident, code="EVENT_CONTEXT_ENCODING_NOT_ROUND_TRIP")
         if corrects is not None:
-            if not _s(corrects) or corrects == ident or self._s.get(_k(FACT, corrects)) is None: raise Refusal(str(corrects), code="EVENT_CONTEXT_CORRECTION_TARGET_UNKNOWN")
-        k = _k(FACT, ident)
+            if not _s(corrects) or corrects == ident or self.get(corrects) is None: raise Refusal(str(corrects), code="EVENT_CONTEXT_CORRECTION_TARGET_UNKNOWN")
+        k = _k(FACT, ident); ik, ck = _k(INTENT, ident), _k(CORR, ident)
+        if corrects is None:
+            if self._s.get(ik) is not None and self._s.get(ck) is None: raise Refusal(ident, code="EVENT_CONTEXT_PARTIAL_CORRECTION_PENDING_RETRY_THE_EXACT_CORRECTION")
+        else:
+            # R46: a correction's fact and lineage become VISIBLE together. Order: intent (hides the fact) -> fact -> lineage (reveals it). A failure or unknown outcome in any phase
+            # leaves the fact hidden (get() None, absent from the E05 source); the EXACT retry completes it idempotently; a different lineage is an integrity failure.
+            body = ("%s>%s" % (ident, corrects)).encode("utf-8")
+            if not self._s.put_if_absent(ik, body):
+                got = self._s.get(ik)
+                if got is None or got[0] != body: raise IntegrityFailure("correction lineage differs")
         if not self._s.put_if_absent(k, raw):
             got = self._s.get(k)
             if got is None or got[0] != raw: raise IntegrityFailure("event context identity already bound to different bytes")        # a correction is a NEW identity
         if corrects is not None:
-            ck = _k(CORR, ident); body = ("%s>%s" % (ident, corrects)).encode("utf-8")
             if not self._s.put_if_absent(ck, body):
                 got = self._s.get(ck)
                 if got is None or got[0] != body: raise IntegrityFailure("correction lineage differs")
         return ident
+    def _hidden(self, fact_key):
+        """a correction whose intent exists but whose lineage is not (yet) confirmed. LEGACY facts (no intent record) are visible; a legacy fact-without-lineage partial write cannot be told apart and stays readable (explicit held compatibility)."""
+        h = fact_key[len(FACT):]
+        return self._s.get(INTENT + h) is not None and self._s.get(CORR + h) is None
+    def pending(self):
+        """intent bodies ('new>corrects') whose correction is not confirmed: visible to operators, never to readers."""
+        return sorted(self._s.get(k)[0].decode("utf-8") for k in self._s.list_prefix(INTENT) if self._s.get(CORR + k[len(INTENT):]) is None and self._s.get(k) is not None)
     def get(self, ident):
+        if _s(ident) and self._hidden(_k(FACT, ident)): return None
         got = self._s.get(_k(FACT, ident)) if _s(ident) else None
         if got is None: return None
         f = self._d(got[0])
@@ -51,4 +67,8 @@ class EventContextStore:
             r = dict(self._c(f))
             if r.get("event_context_identity") != ident: raise Refusal(key, code="E05_SOURCE_COLUMNS_DISAGREE_WITH_IDENTITY")
             return r
-        return S.object_prefix_source(self._s, "stagea_event_context_index", FACT, row_of, vintage_mode=vintage_mode)
+        me = self
+        class _Visible:        # R46: the E05 source sees only facts whose correction (if any) is confirmed
+            def list_prefix(self, prefix): return [k for k in me._s.list_prefix(prefix) if not me._hidden(k)]
+            def get(self, k): return me._s.get(k)
+        return S.object_prefix_source(_Visible(), "stagea_event_context_index", FACT, row_of, vintage_mode=vintage_mode)

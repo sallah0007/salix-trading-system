@@ -46,6 +46,7 @@ class MLConsumerPath:
         jr = None
         if isinstance(joins, dict) and isinstance(joins.get("J1_DATASET_MANIFEST"), dict) and joins["J1_DATASET_MANIFEST"].get("binding_id") != bh["binding_id"]: blockers.append("J1_BINDING_ID_NOT_THE_ISSUED_IDENTITYS")
         else:
-            jr = SJ.check_six_joins(joins, self._gr, fence=fence, catalog_snapshot=catalog_snapshot, request_snapshot=snap, dataset_manifests=self._a._d.manifest_index(), binding_to_manifest=self._a._d.binding_index(), consumer_binding_id=bh["binding_id"], family_map=family_map, hypothesis_family_id=hypothesis_family_id)
+            consumed = {(b.entry.feature_id.hex(), b.entry.feature_version) for b in row.bindings} | {(a.feature_id.hex(), a.feature_version) for a in row.absence_applied}
+            jr = SJ.check_six_joins(joins, self._gr, fence=fence, consumed_features=consumed, catalog_snapshot=catalog_snapshot, request_snapshot=snap, dataset_manifests=self._a._d.manifest_index(), binding_to_manifest=self._a._d.binding_index(), consumer_binding_id=bh["binding_id"], family_map=family_map, hypothesis_family_id=hypothesis_family_id)
             blockers += ["JOINS_" + c + "_" + s for c, s, _ in jr.correlation if s in (SJ.MISMATCH, SJ.MISSING)] + ["JOIN_" + j + "_" + s for j, s, _ in jr.statuses if s in (SJ.MISMATCH, SJ.MISSING)]
         return MLConsumption(row, bh, gate, corr, snap, jr, tuple(blockers), HELD)

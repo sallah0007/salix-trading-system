@@ -1,4 +1,4 @@
-"""R45 shadow-live ledger tests. Mutants: python -m tests.trk_stage_a.mutation_sweep_r45_shadow. A pass clears no gate."""
+"""R45/R46 shadow-live ledger (MLCore p325-p329 semantics). Mutants: python tests/trk_stage_a/mutation_sweep_r45_shadow.py. A pass clears no gate."""
 import unittest
 from stage_a.errors import Refusal
 from stage_a.ml.shadow_ledger import ShadowLedger
@@ -7,32 +7,39 @@ def code(f, *a):
     try: f(*a)
     except Refusal as e: return e.code
 
+def L(*t, key="k"):
+    l = ShadowLedger()
+    for x in t: l.expect(key, x)
+    return l
 class Ledger(unittest.TestCase):
-    def test_idempotent_duplicate_and_conflict(self):
-        L = ShadowLedger()
-        self.assertEqual(L.record("p1", "k", "PUBLISHED"), "RECORDED")
-        self.assertEqual(L.record("p1", "k", "PUBLISHED"), "DUPLICATE_NOOP")
-        self.assertEqual(L.counters("k")["PUBLISHED"], 1)
-        self.assertEqual(code(L.record, "p1", "k", "MODEL_ABSTAINED"), "SHADOW_EVENT_ID_CONFLICT")
-        self.assertEqual(L.counters("k"), {"PUBLISHED": 1, "MODEL_ABSTAINED": 0, "LIFECYCLE_FENCED": 0})
-    def test_outcome_and_fields_closed(self):
-        L = ShadowLedger()
-        self.assertEqual(code(L.record, "p", "k", "OK"), "SHADOW_OUTCOME_NOT_ADMITTED")
-        self.assertEqual(code(L.record, "", "k", "PUBLISHED"), "SHADOW_FIELD_INVALID")
-        self.assertEqual(code(L.record, "p", None, "PUBLISHED"), "SHADOW_FIELD_INVALID")
-    def test_fencing_misses_visible_in_coverage_and_list(self):
-        L = ShadowLedger()
-        L.record("a", "k", "PUBLISHED"); L.record("b", "k", "LIFECYCLE_FENCED"); L.record("c", "k", "MODEL_ABSTAINED")
-        self.assertEqual(L.coverage("k"), (1, 3)); self.assertEqual(L.fenced("k"), ["b"])
-    def test_empty_coverage_is_none_not_full(self):
-        self.assertIsNone(ShadowLedger().coverage("nothing"))
-    def test_no_retroactive_backfill_after_seal_but_duplicates_still_noop(self):
-        L = ShadowLedger(); L.record("a", "k", "PUBLISHED"); L.seal("k")
-        self.assertEqual(code(L.record, "late", "k", "PUBLISHED"), "SHADOW_RETROACTIVE_BACKFILL_PROHIBITED")
-        self.assertEqual(L.record("a", "k", "PUBLISHED"), "DUPLICATE_NOOP")
-        self.assertEqual(L.coverage("k"), (1, 1))
-        self.assertEqual(L.record("o", "other", "PUBLISHED"), "RECORDED")          # sealing is per logical key
-    def test_counters_are_per_logical_key(self):
-        L = ShadowLedger(); L.record("a", "k1", "PUBLISHED"); L.record("b", "k2", "MODEL_ABSTAINED")
-        self.assertEqual(L.counters("k1"), {"PUBLISHED": 1, "MODEL_ABSTAINED": 0, "LIFECYCLE_FENCED": 0}); self.assertEqual(L.coverage("k2"), (0, 1))
+    def test_expected_two_published_one_is_one_half_and_unreported_stays_in_denominator(self):
+        l = L("t1", "t2"); l.record("k", "t1", "p1", "PUBLISHED"); self.assertEqual(l.coverage("k"), (1, 2)); self.assertEqual(l.missing("k"), ["t2"])
+        self.assertEqual(l.counters("k")["MISSING_OR_IN_PROGRESS"], 1)
+    def test_no_expected_trigger_holds_coverage_and_unexpected_record_is_refused(self):
+        l = ShadowLedger(); self.assertIsNone(l.coverage("k")); self.assertEqual(code(l.record, "k", "t1", "p", "PUBLISHED"), "SHADOW_TRIGGER_NOT_EXPECTED_HELD_UNBOUND")
+    def test_expect_is_counted_once(self):
+        l = L("t1", "t1", "t1"); self.assertEqual(l.counters("k")["EXPECTED"], 1)
+    def test_retry_counts_once_and_conflicts_refuse_and_terminal_is_immutable(self):
+        l = L("t1"); self.assertEqual(l.record("k", "t1", "p1", "PUBLISHED"), "RECORDED"); self.assertEqual(l.record("k", "t1", "p1", "PUBLISHED"), "DUPLICATE_NOOP"); self.assertEqual(l.coverage("k"), (1, 1))
+        self.assertEqual(code(l.record, "k", "t1", "p1", "MODEL_ABSTAINED"), "SHADOW_TERMINAL_IMMUTABLE"); self.assertEqual(code(l.record, "k", "t1", "p2", "PUBLISHED"), "SHADOW_EVENT_ID_CONFLICT")
+        self.assertEqual(code(l.record, "k", "t1", "p1", "FENCED"), "SHADOW_OUTCOME_NOT_ADMITTED")
+    def test_one_prediction_id_cannot_serve_two_triggers(self):
+        l = L("t1", "t2"); l.record("k", "t1", "p", "PUBLISHED"); self.assertEqual(code(l.record, "k", "t2", "p", "PUBLISHED"), "SHADOW_EVENT_ID_CONFLICT")
+    def test_provisional_abstention_is_not_terminal_then_lifecycle_fence_finalizes_and_wins(self):
+        l = L("t1"); self.assertEqual(l.provisional_abstain("k", "t1", "pa"), "PROVISIONAL"); self.assertEqual(l.coverage("k"), (0, 1)); self.assertEqual(l.missing("k"), ["t1"])
+        self.assertEqual(l.record("k", "t1", "pf", "LIFECYCLE_FENCED"), "RECORDED"); self.assertEqual(l.fenced("k"), ["t1"]); self.assertEqual(l.missing("k"), [])
+        self.assertEqual(code(l.record, "k", "t1", "pa", "MODEL_ABSTAINED"), "SHADOW_EVENT_ID_CONFLICT")        # the finalized fence is never reopened
+        self.assertEqual(l.coverage("k"), (0, 1))                                       # fencing miss visible in the denominator
+    def test_provisional_abstention_confirmed_and_published_after_it_is_not_guessed(self):
+        l = L("t1", "t2"); l.provisional_abstain("k", "t1", "pa"); self.assertEqual(l.record("k", "t1", "pa", "MODEL_ABSTAINED"), "RECORDED")
+        l.provisional_abstain("k", "t2", "pb"); self.assertEqual(code(l.record, "k", "t2", "pc", "PUBLISHED"), "SHADOW_EVENT_ID_CONFLICT"); self.assertEqual(code(l.record, "k", "t2", "pb", "PUBLISHED"), "SHADOW_PUBLISHED_AFTER_PROVISIONAL_ABSTENTION_NOT_DEFINED")
+    def test_terminal_trigger_refuses_a_later_provisional(self):
+        l = L("t1"); l.record("k", "t1", "p", "PUBLISHED"); self.assertEqual(code(l.provisional_abstain, "k", "t1", "q"), "SHADOW_TERMINAL_ALREADY_RECORDED")
+    def test_no_retroactive_backfill_after_seal_and_no_new_expected_trigger(self):
+        l = L("t1", "t2"); l.record("k", "t1", "p", "PUBLISHED"); l.seal("k")
+        self.assertEqual(code(l.record, "k", "t2", "late", "PUBLISHED"), "SHADOW_RETROACTIVE_BACKFILL_PROHIBITED"); self.assertEqual(code(l.expect, "k", "t3"), "SHADOW_RETROACTIVE_BACKFILL_PROHIBITED")
+        l.expect("k", "t1"); self.assertEqual(l.record("k", "t1", "p", "PUBLISHED"), "DUPLICATE_NOOP"); self.assertEqual(l.coverage("k"), (1, 2))
+    def test_fields_closed_and_keys_isolated(self):
+        l = L("t1"); self.assertEqual(code(l.expect, "", "t"), "SHADOW_FIELD_INVALID"); self.assertEqual(code(l.record, "k", "t1", "", "PUBLISHED"), "SHADOW_FIELD_INVALID")
+        l.expect("k2", "t1"); l.record("k", "t1", "a", "PUBLISHED"); self.assertEqual(l.coverage("k2"), (0, 1))
 if __name__ == "__main__": unittest.main()

@@ -44,6 +44,8 @@ def op_value(node, t, get):
         if c is None:
             return None
         return canon(get(node["args"][1] if c is True else node["args"][2], t))
+    if op in ("lag", "rolling_sum", "rolling_mean"):
+        return _window_value(node, op, t, get)
     a = [canon(get(x, t)) for x in node.get("args", [])]
     if op in ("lt", "le", "gt", "ge", "eq_canonical"):
         if any(v is None for v in a):
@@ -65,6 +67,11 @@ def op_value(node, t, get):
         if op == "sqrt":
             if a[0] < 0.0: raise Refusal("negative sqrt input", code="DOMAIN_SQRT_NEGATIVE")
             return _fin(math.sqrt(a[0]))
+    raise Refusal(op, code="UNKNOWN_OPCODE")   # unreachable for validated manifests
+
+def _window_value(node, op, t, get):
+    """lag / rolling_*: request ONLY the indices the operation actually reads (warm-up returns before any read), so a lazy demand evaluator never
+    evaluates an index the state/window operation does not need. Ascending read order; the first None/failure encountered decides."""
     src = node["args"][0]
     n = node["n"]
     if op == "lag":
@@ -79,7 +86,6 @@ def op_value(node, t, get):
                 return None
             s = _fin(s + canon(v))
         return s if op == "rolling_sum" else _fin(s / float(n))
-    raise Refusal(op, code="UNKNOWN_OPCODE")   # unreachable for validated manifests
 
 def check_series(m: Manifest, series: Dict[str, List[Optional[float]]]):
     if set(series) != set(m.data["inputs"]):
