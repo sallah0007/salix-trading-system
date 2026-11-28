@@ -69,7 +69,7 @@ class SequenceSources(unittest.TestCase):
         h = ["a" * 64]; mk = lambda i: S.sequence_source("stagea_fit_generation_index", lambda: [1], lambda o: i, lambda o: h[0], lambda o: dict(fit_generation_ref="f", feature_id="F", feature_version="1", available_asof=0), ref_prefix="fit:")
         self.assertEqual(code(lambda: mk("")[0]()), "E05_SOURCE_IDENT_INVALID"); src = mk("1"); h0 = src[0](); h[0] = "b" * 64; self.assertNotEqual(src[0](), h0)
     def test_event_context_has_no_owning_store_and_is_held_not_fabricated(self):
-        self.assertEqual(code(S.event_context_source), "E05_SOURCE_EVENT_CONTEXT_HELD_NO_OWNING_STORE")
+        self.assertEqual(code(S.event_context_source), "E05_SOURCE_EVENT_CONTEXT_HELD_NO_ENCODING_INTERFACE")
     def test_invalid_inputs_refuse(self):
         self.assertEqual(code(S.sequence_source, "t", None, None, None, None, ref_prefix="x:"), "E05_SOURCE_INPUT_INVALID")
 if __name__ == "__main__": unittest.main()
