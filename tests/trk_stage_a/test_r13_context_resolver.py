@@ -119,3 +119,20 @@ class R52EventStoreSemanticPort(unittest.TestCase):
         st = self.store(strict); st.put(ev(NOTE="BULLISH_FOR_SILVER")); self.assertEqual(code(st.get_for_semantic_use, "E1"), "NOTE_NOT_FACTUAL")
     def test_non_callable_port_is_refused(self):
         self.assertEqual(code(self.store, "x"), "EVENT_CONTEXT_SEMANTIC_VALIDATOR_NOT_CALLABLE")
+    # PR123 review (Manager 21:14): port contract, detached validation, original fact returned
+    def test_only_None_is_success_every_other_port_return_is_refused(self):
+        for bad in (False, 0, "", True, {"ok": True}, "OK"):
+            st = self.store(lambda f, b=bad: b); st.put(ev())
+            self.assertEqual(code(st.get_for_semantic_use, "E1"), "EVENT_CONTEXT_SEMANTIC_VALIDATOR_RETURN_UNSUPPORTED", repr(bad))
+        st = self.store(lambda f: None); st.put(ev()); self.assertEqual(st.get_for_semantic_use("E1")["EVENT_ID"], "E1")          # genuine positive control
+    def test_a_port_that_mutates_its_input_cannot_change_what_is_returned_and_is_refused(self):
+        def mut(f): f["EVENT_ID"] = "FOREIGN"; f["EVENT_TYPE"] = "BULLISH_FOR_GOLD"
+        st = self.store(mut); st.put(ev()); raw_before = st.get("E1")
+        self.assertEqual(code(st.get_for_semantic_use, "E1"), "EVENT_CONTEXT_SEMANTIC_VALIDATOR_ALTERED_THE_FACT")
+        self.assertEqual(st.get("E1"), raw_before); self.assertEqual(st.get("E1")["EVENT_ID"], "E1")          # raw evidence/history unchanged
+        def benign(f): f["EXTRA"] = 1          # even a payload-only change is refused (the validated fact must be the stored one)
+        st2 = self.store(benign); st2.put(ev()); self.assertEqual(code(st2.get_for_semantic_use, "E1"), "EVENT_CONTEXT_SEMANTIC_VALIDATOR_ALTERED_THE_FACT")
+    def test_the_returned_object_is_a_fresh_decode_not_the_one_the_port_saw(self):
+        seen = []
+        st = self.store(lambda f: seen.append(f)); st.put(ev()); r = st.get_for_semantic_use("E1")
+        self.assertIsNot(r, seen[0]); r["EVENT_TYPE"] = "X"; self.assertNotEqual(st.get("E1")["EVENT_TYPE"], "X")

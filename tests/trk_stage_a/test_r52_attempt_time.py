@@ -3,6 +3,7 @@ from stage_a.errors import Refusal, UnknownCommit, StaleFence
 from stage_a.clocks import FixedClock, SystemClock
 from stage_a.coordination import transition_record as T
 from stage_a.coordination.attempt_time import append_with_attempt_time as awt, accepted_time_of, TIME_KEY
+from stage_a.coordination.attempt_time import find_attempt, mint_fresh
 from .test_foundations import mk, accepted_body
 
 class Port:
@@ -58,3 +59,18 @@ class AttemptTime(unittest.TestCase):
             if key.startswith("head/"): raise UnknownCommit("dropped")
             return real(key, data, etag)
         s2.put_if_match = always_drop; self.assertEqual(code(awt, j2, T.CANONICAL_ACCEPTED, body_for, Port(), max_attempts=3), "ATTEMPT_TIME_RETRY_EXHAUSTED")
+    def test_a_port_that_repeats_its_value_is_refused_not_trusted_to_be_fresh(self):
+        class Const:
+            def mint(self): return 100
+        self.assertEqual(code(mint_fresh, Const(), {100}), "ATTEMPT_TIME_NOT_FRESH")
+        s, j = mk(); other = []
+        def build(t):
+            if not other: other.append(j.append(j.head(), T.CANONICAL_ACCEPTED, accepted_body(v="9")))
+            return body_for(t)
+        self.assertEqual(code(awt, j, T.CANONICAL_ACCEPTED, build, Const()), "ATTEMPT_TIME_NOT_FRESH")          # CAS lost, retry minted the same value: refused, nothing written for it
+        self.assertEqual(len(j.read_from(1)), 1)
+    def test_unknown_commit_is_resolved_for_the_SPECIFIC_attempt_position_not_a_chain_wide_body_match(self):
+        s, j = mk(); h0 = j.head(); b = body_for(5); r1 = j.append(h0, T.CANONICAL_ACCEPTED, b); h1 = j.head()
+        from tracker_component.canonical import canonical_json
+        self.assertIsNone(find_attempt(j, h1, T.CANONICAL_ACCEPTED, canonical_json(b)))          # an identical body earlier in the chain is NOT this attempt (old kind+body matching would say COMMITTED)
+        self.assertEqual(find_attempt(j, h0, T.CANONICAL_ACCEPTED, canonical_json(b)).record_hash, r1.record_hash)

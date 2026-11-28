@@ -79,7 +79,7 @@ SIM_DUTIES = DutyEvidence(frozenset(MANDATORY_UNVERIFIED_DUTIES), "SIMULATED:tes
 SIM_CONF = ConformanceEvidence(False, "SIMULATED:test-fixture (no real Tracker verification path exists)")
 
 class Rig:
-    def __init__(self, store=None, fits=None, baseline=None, conformance_source=lambda pkg: SIM_CONF, duty_source=lambda pkg, adm: SIM_DUTIES, simulation=True, ancestry_resolver=None):
+    def __init__(self, store=None, fits=None, baseline=None, conformance_source=lambda pkg: SIM_CONF, duty_source=lambda pkg, adm: SIM_DUTIES, simulation=True, ancestry_resolver=None, attempt_time_port=None):
         self.raw_store = store or InMemoryObjectStore()
         self.store = SimulationStore(self.raw_store) if simulation else self.raw_store
         self.claims_journal = ObjectStoreJournal(self.store, "claims", "claims-writer")
@@ -89,7 +89,7 @@ class Rig:
         self.events = EventSink()
         self.fits = fits or {}
         self.pipe = TrackerPipeline(store=self.store, claims=self.claims, journals=self.journals, clock=FixedClock(),
-                                    events=self.events, accepted_fit_generations=self.fits, baseline=baseline, conformance_source=conformance_source, duty_source=duty_source, simulation=simulation, ancestry_resolver=ancestry_resolver)
+                                    events=self.events, accepted_fit_generations=self.fits, baseline=baseline, conformance_source=conformance_source, duty_source=duty_source, simulation=simulation, ancestry_resolver=ancestry_resolver, attempt_time_port=attempt_time_port)
 
     def issue(self, pkg, issuer="MANAGER", binding="SRC-BINDING-1"):
         adm = admit(pkg, accepted_fit_generations=self.fits, conformance=SIM_CONF)

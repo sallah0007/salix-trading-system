@@ -42,8 +42,11 @@ class EventContextStore:
         if self._sv is None: raise Refusal(str(ident), code="EVENT_CONTEXT_SEMANTIC_USE_HELD_NO_VALIDATION_PORT")
         f = self.get(ident)
         if f is None: return None
-        self._sv(f)
-        return f
+        raw = self._e(f); import copy; probe = copy.deepcopy(f)          # PORT CONTRACT: the port sees a DETACHED copy; success is exactly `None`; failure is a raised Refusal (propagates); every other return (False, 0, '', a dict, True...) is an unsupported verdict and is REFUSED, never read as approval.
+        r = self._sv(probe)
+        if r is not None: raise Refusal(repr(r)[:60], code="EVENT_CONTEXT_SEMANTIC_VALIDATOR_RETURN_UNSUPPORTED")
+        if self._i(probe) != ident or self._e(probe) != raw: raise Refusal(str(ident), code="EVENT_CONTEXT_SEMANTIC_VALIDATOR_ALTERED_THE_FACT")          # the validated thing must be the ORIGINAL exact stored fact
+        return self._d(raw)          # a fresh decode of the stored bytes: never the object the port touched
     def _hidden(self, fact_key):
         """a correction whose intent exists but whose lineage is not (yet) confirmed. LEGACY facts (no intent record) are visible; a legacy fact-without-lineage partial write cannot be told apart and stays readable (explicit held compatibility)."""
         h = fact_key[len(FACT):]

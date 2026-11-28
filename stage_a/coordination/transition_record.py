@@ -21,6 +21,8 @@ _REQUIRED = {
     WITHDRAWN: ("feature_key", "feature_version", "reason"),
 }
 
+# R52 (E03-F1): CANDIDATE optional field. `canonical_accepted_at` is present ONLY when a supplied attempt-time port minted it for that exact CAS attempt (coordination/attempt_time.py). Records without it (all history) stay valid and their acceptance time is UNKNOWN/held: never back-filled.
+OPTIONAL = {CANONICAL_ACCEPTED: ("canonical_accepted_at",)}
 # R35: R34 added `materialization_hash` to CANONICAL_ACCEPTED. Accepted journals written before R34 lack it and MUST stay readable: they are classified LEGACY (the accepted-materialization binding is ABSENT, never
 # fabricated, never back-filled into a committed record) and are HELD for maintenance by the verifier. NEW writes (default) still require the field; only READING a committed record accepts the legacy shape.
 LEGACY_ACCEPTED_OMITS = ("materialization_hash",)
@@ -36,7 +38,11 @@ def validate_body(kind: str, body: dict, *, legacy_read: bool = False):
     missing = [k for k in req if k not in body or body[k] in (None, "")]
     if missing:
         raise Refusal("%s missing %s" % (kind, missing), code="TRANSITION_BODY_INCOMPLETE")
-    extra = set(body) - set(req)
+    opt = OPTIONAL.get(kind, ())
+    if "canonical_accepted_at" in opt and "canonical_accepted_at" in body:
+        v = body["canonical_accepted_at"]
+        if type(v) is not int or v < 0: raise Refusal("%s canonical_accepted_at" % kind, code="TRANSITION_ACCEPTED_AT_INVALID")
+    extra = set(body) - set(req) - set(opt)
     if extra:
         raise Refusal("%s unexpected %s" % (kind, sorted(extra)), code="TRANSITION_BODY_UNEXPECTED_FIELDS")
 

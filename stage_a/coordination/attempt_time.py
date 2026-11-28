@@ -7,11 +7,10 @@ from ..errors import Refusal, UnknownCommit
 from ..clocks import Clock
 from tracker_component.journal_port import HeadMismatch
 from tracker_component.canonical import canonical_json
-from .recovery import resolve_unknown_commit, COMMITTED
 
 TIME_KEY = "canonical_accepted_at"     # candidate name (schema/objects.canonical_accepted_at); a candidate, versioned by whoever wires it
 
-def _port_ok(port):
+def port_ok(port):
     if port is None: raise Refusal("attempt-time port", code="ATTEMPT_TIME_PORT_UNBOUND_HELD")
     if isinstance(port, Clock): raise Refusal(type(port).__name__, code="ATTEMPT_TIME_PORT_IS_IDENTITY_CLOCK")
     if not callable(getattr(port, "mint", None)): raise Refusal("attempt-time port", code="ATTEMPT_TIME_PORT_INVALID")
@@ -20,22 +19,32 @@ def _t(v):
     if type(v) is not int or v < 0: raise Refusal(repr(v), code="ATTEMPT_TIME_INVALID")
     return v
 
+def mint_fresh(port, seen):
+    """Mint ONE attempt time and require it to be DISTINCT from every time already minted for earlier attempts of this call. Freshness beyond distinctness (ordering, units, precision, clock domain) is NOT decided here: it is an explicit obligation of the supplied port/owner (held). A port that repeats a value is refused, not silently accepted."""
+    t = _t(port.mint())
+    if t in seen: raise Refusal(repr(t), code="ATTEMPT_TIME_NOT_FRESH")
+    seen.add(t); return t
+
+def find_attempt(journal, head, kind, body_json):
+    """Resolve an UnknownCommit for the SPECIFIC attempted transition: the record that sits at the position this attempt targeted (seq = head.seq+1, prev_hash = head.hash) with exactly this kind and body. Not a chain-wide kind+body match. Returns the record or None (not committed AT THAT POSITION). A byte-identical transition from a rival at the same position is indistinguishable from ours and is the same idempotent fact."""
+    for r in journal.read_from(head.seq + 1):
+        if r.seq == head.seq + 1 and r.prev_hash == head.hash and r.kind == kind and r.body_json == body_json: return r
+    return None
+
 def append_with_attempt_time(journal, kind, build_body, port, *, max_attempts=8):
-    """Returns (record, accepted_at). Each attempt: read HEAD, mint a FRESH time from the port, build the body FROM that time, append. HeadMismatch -> next attempt re-mints (the old body/time is discarded).
-    UnknownCommit -> reread the chain: if THAT attempt's exact body landed, return that SAME record and time (no re-mint, no re-evaluation); if proven not committed, mint anew. StaleFence propagates."""
-    _port_ok(port)
+    """Returns (record, accepted_at). Each attempt: read HEAD, mint a FRESH (distinct) time, build the body FROM that time, append. HeadMismatch -> next attempt re-mints (old body/time discarded).
+    UnknownCommit -> reread; if THAT attempt (position + body) landed, return that SAME record and time (no re-mint); if not landed at that position, mint anew. StaleFence propagates."""
+    port_ok(port); seen = set()
     for _ in range(max_attempts):
-        head = journal.head(); t = _t(port.mint()); body = build_body(t)
+        head = journal.head(); t = mint_fresh(port, seen); body = build_body(t)
         if not isinstance(body, dict) or body.get(TIME_KEY) != t: raise Refusal(kind, code="ATTEMPT_BODY_DOES_NOT_CARRY_ITS_TIME")
         try:
             return journal.append(head, kind, body), t
         except HeadMismatch:
             continue
         except UnknownCommit:
-            bj = canonical_json(body)
-            if resolve_unknown_commit(journal, kind=kind, body_json=bj) == COMMITTED:
-                for r in journal.read_from(1):
-                    if r.kind == kind and r.body_json == bj: return r, t
+            r = find_attempt(journal, head, kind, canonical_json(body))
+            if r is not None: return r, t
             continue
     raise Refusal(kind, code="ATTEMPT_TIME_RETRY_EXHAUSTED")
 
