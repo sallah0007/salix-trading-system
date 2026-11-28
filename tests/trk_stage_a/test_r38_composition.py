@@ -154,13 +154,17 @@ class MaintenanceAssembly(unittest.TestCase):
         with self.assertRaises(Refusal) as x: co.deliver("fw-after", W("W9"), e, I, I, 3, 20, r, now=13, **kw)
         self.assertEqual(x.exception.code, "NON_DELIVERY")
     def test_healthy_all_segments_pass_records_in_the_same_core_and_delivery_proceeds(self):
-        rig, fk, c, co, r, si, res, e, kw = self._rig(); co.register_stored_maintenance(r, si); self.assertIs(co.register_stored_maintenance(r, si).fetch, si["fetch"])
+        rig, fk, c, co, r, si, res, e, kw = self._rig(); co.register_stored_maintenance(r, si); self.assertEqual(co.register_stored_maintenance(r).fetch, si["fetch"])
         o = co.run_maintenance([(fk.key(), "SCHEDULED")], now=12, max_age=50, max_items=4); self.assertEqual([x[2] for x in o], ["VERIFIED"]); self.assertIsInstance(co.deliver("fw-ok", W("W1"), e, I, I, 3, 20, r, now=13, **kw), G.Binding)
-    def test_registration_refuses_unpublished_and_changed_inputs_and_an_unregistered_subject_is_unbound(self):
-        rig, fk, c, co, r, si, res, e, kw = self._rig(); k = fk.key()
-        bad = CO.CompositionResult("NOT_ACCEPTED"); self.assertEqual(code(co.register_stored_maintenance, bad, si), "COMPOSITION_MAINTENANCE_NOT_PUBLISHED"); self.assertEqual(code(co.register_stored_maintenance, r, {"fetch": 1}), "COMPOSITION_MAINTENANCE_INPUT_INVALID")
-        self.assertEqual([x[2] for x in co.run_maintenance([(k, "SCHEDULED")], now=12, max_age=50, max_items=4)], ["UNBOUND"]); co.register_stored_maintenance(r, si)
-        self.assertEqual(code(co.register_stored_maintenance, r, dict(si, fetch=lambda ref: None)), "COMPOSITION_MAINTENANCE_BINDING_IMMUTABLE")
+    def test_registration_is_bound_to_THIS_compositions_actual_acceptance_basis_not_a_result_label_or_a_foreign_result(self):
+        rig, fk, c, co, r, si, res, e, kw = self._rig(); k = fk.key(); import dataclasses
+        bad = CO.CompositionResult("NOT_ACCEPTED"); self.assertEqual(code(co.register_stored_maintenance, bad, si), "COMPOSITION_MAINTENANCE_NOT_PUBLISHED")
+        forged = dataclasses.replace(r); forged.status = "PUBLISHED_SIMULATION"; self.assertEqual(code(co.register_stored_maintenance, forged, si), "COMPOSITION_MAINTENANCE_NOT_PUBLISHED")                          # a copy carrying a PUBLISHED label is not the accepted result
+        rig2, fk2, c2, co2, r2, si2, res2, e2, kw2 = self._rig(); self.assertEqual(code(co.register_stored_maintenance, r2, si2), "COMPOSITION_MAINTENANCE_NOT_PUBLISHED")                                   # a REAL published result of ANOTHER Composition
+        self.assertEqual([x[2] for x in co.run_maintenance([(k, "SCHEDULED")], now=12, max_age=50, max_items=4)], ["UNBOUND"])
+        self.assertEqual(code(co.register_stored_maintenance, r, dict(si, fetch=lambda ref: None)), "COMPOSITION_MAINTENANCE_INPUT_NOT_THE_ACCEPTANCE_INPUT"); self.assertEqual(code(co.register_stored_maintenance, r, dict(si, series_hash=lambda x: x)), "COMPOSITION_MAINTENANCE_INPUT_NOT_THE_ACCEPTANCE_INPUT"); self.assertEqual(code(co.register_stored_maintenance, r, {"fetch": 1}), "COMPOSITION_MAINTENANCE_INPUT_NOT_THE_ACCEPTANCE_INPUT")
+        self.assertEqual([x[2] for x in co.run_maintenance([(k, "SCHEDULED")], now=12, max_age=50, max_items=4)], ["UNBOUND"])                                                                                  # every negative left nothing registered
+        b = co.register_stored_maintenance(r); self.assertIs(co._sv[k], b); self.assertEqual(co.register_stored_maintenance(r, si).fetch, b.fetch); r.status = "TAMPERED"; self.assertEqual([x[2] for x in co.run_maintenance([(k, "SCHEDULED")], now=12, max_age=50, max_items=4)], ["VERIFIED"])   # genuine control: the acceptance inputs register; a later label edit changes nothing
     def test_a_result_with_a_feature_key_but_not_published_and_a_cross_class_core_are_refused(self):
         rig, fk, c, co, r, si, res, e, kw = self._rig(); import dataclasses; held = dataclasses.replace(r, status="HELD_REGISTRY_INTEGRITY_X")
         self.assertEqual(code(co.register_stored_maintenance, held, si), "COMPOSITION_MAINTENANCE_NOT_PUBLISHED")
