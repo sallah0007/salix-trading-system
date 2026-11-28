@@ -6,10 +6,12 @@ One call, `MLConsumerPath.consume`, drives in order, each step on the real publi
   4. the writer/finalizer facade `correlate` must be VERIFIED_AGAINST_REGISTRY for the named generation manifest (recorded write + granted finalize);
   5. the request snapshot is ISSUED by the generation registry (refuses an ineligible/revoked generation);
   6. all six joins are checked against the REAL registries' indexes (binding->manifest reverse index, manifest hash index, the issued snapshot) with the caller's join record, plus cross-object coherence (J1 binding id == the issued identity's binding id; J4/J5/snapshot name one generation).
+  7. optional Health carried-upstream impact (R48): `health_impact` for THIS consumer (`health_consumer_id` must equal its consumer_id) is applied through `health.blast_radius.consumer_use`: proven dependency BLOCKS, unproven independence of a REQUIRED use REFUSES, proven-independent allows, undetermined non-required use is only NAMED (no source rule). Omitted impact is held visibly, not silently allowed.
 The result is ALWAYS `qualified=False` and lists `held` inputs (principal grants, J2 catalog, J3 Health service, J6 exposure ledger instances, native ML forward fields): source-owned inputs stay exactly held. Grants here are whatever the caller's registries were built with (test labels in tests); nothing is appointed."""
 from dataclasses import dataclass
 from ..errors import Refusal
 from . import receiver as MLR, six_joins as SJ
+from ..health import blast_radius as BR
 def _s(x): return isinstance(x, str) and bool(x)
 @dataclass(frozen=True)
 class MLConsumption:
@@ -29,7 +31,7 @@ class MLConsumerPath:
     def __init__(self, *, gateway, final_store, authority, generations, writer, tables):
         if any(x is None for x in (gateway, final_store, authority, generations, writer, tables)): raise Refusal("ports", code="ML_CONSUMER_PATH_PORT_MISSING")
         self._g, self._f, self._a, self._gr, self._w, self._t = gateway, final_store, authority, generations, writer, tables
-    def consume(self, caller, dataset_manifest, entry, outcome, request_id, *, row_id, generation_ref, generation_manifest_id, event, request_start_ts, joins, fence, vintage_mode="ORIGINAL_AS_OBSERVED", eligibility_reason, exclusion_reason_for_missing, catalog_snapshot=None, family_map=None, hypothesis_family_id=None):
+    def consume(self, caller, dataset_manifest, entry, outcome, request_id, *, row_id, generation_ref, generation_manifest_id, event, request_start_ts, joins, fence, vintage_mode="ORIGINAL_AS_OBSERVED", eligibility_reason, exclusion_reason_for_missing, catalog_snapshot=None, family_map=None, hypothesis_family_id=None, health_impact=None, health_consumer_id=None, health_required=True):
         bh = self._a.request_binding(caller, dataset_manifest, outcome, gateway=self._g, final_store=self._f, request_id=request_id)           # refuses foreign / forged / unissued / re-linked
         row = MLR.build_row(row_id, generation_ref, [entry], [outcome], self._g, vintage_mode, eligibility_reason, exclusion_reason_for_missing, tables=self._t, expected_request_ids={(entry.feature_id, entry.feature_version): getattr(outcome, "request_id", None)})
         if not row.included: return MLConsumption(row, bh, None, None, None, None, ("ROW_EXCLUDED_REQUIRED_DEPENDENCY_NOT_DELIVERED",), HELD)
@@ -49,4 +51,14 @@ class MLConsumerPath:
             consumed = {(b.entry.feature_id.hex(), b.entry.feature_version) for b in row.bindings} | {(a.feature_id.hex(), a.feature_version) for a in row.absence_applied}
             jr = SJ.check_six_joins(joins, self._gr, fence=fence, consumed_features=consumed, catalog_snapshot=catalog_snapshot, request_snapshot=snap, dataset_manifests=self._a._d.manifest_index(), binding_to_manifest=self._a._d.binding_index(), consumer_binding_id=bh["binding_id"], family_map=family_map, hypothesis_family_id=hypothesis_family_id)
             blockers += ["JOINS_" + c + "_" + s for c, s, _ in jr.correlation if s in (SJ.MISMATCH, SJ.MISSING)] + ["JOIN_" + j + "_" + s for j, s, _ in jr.statuses if s in (SJ.MISMATCH, SJ.MISSING)]
-        return MLConsumption(row, bh, gate, corr, snap, jr, tuple(blockers), HELD)
+        held = HELD
+        if health_impact is None:
+            held = HELD + ("HEALTH_CARRIED_UPSTREAM_IMPACT_NOT_EVALUATED",)             # visible, never silent; the J3 Health service instance is separately held
+        else:
+            if getattr(health_impact, "consumer_id", None) != health_consumer_id or not health_consumer_id: blockers.append("HEALTH_IMPACT_FOR_A_DIFFERENT_CONSUMER")       # a foreign verdict must not allow this consumer
+            else:
+                use = BR.consumer_use(health_impact, health_required)
+                if use == "BLOCK_PROVEN_DEPENDENCY": blockers.append("HEALTH_PROVEN_DEPENDENCY_ON_FAILED_SUBJECT")
+                elif use == "REFUSE_UNPROVEN_INDEPENDENCE": blockers.append("HEALTH_REQUIRED_ANCESTRY_UNPROVEN:" + str(health_impact.reason))
+                elif use.startswith("NO_SOURCE_RULE"): held = HELD + ("HEALTH_NO_SOURCE_RULE_UNDETERMINED_NON_REQUIRED_USE",)       # named, not decided
+        return MLConsumption(row, bh, gate, corr, snap, jr, tuple(blockers), held)
