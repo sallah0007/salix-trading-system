@@ -101,3 +101,12 @@ def test_interrupted_commit_recovers_on_exact_retry_without_rewriting():
     rc = rows.commit(r)                                                                # exact retry completes it
     assert rc.row_hash == h and rows.load(h) == r and rows.commit(r) == rc             # and a further retry is idempotent
     k = s.get(RS.row_key(h)); rows.commit(r); assert s.get(RS.row_key(h)) == k          # nothing rewritten
+
+def test_store_pins_tables_against_caller_mutation_and_new_tables_are_explicit():
+    import copy
+    t = copy.deepcopy(T); s = InMemoryObjectStore(); b = StateRowBuilder(SCHEMA, t, enc, dec, FIXED); rows = RS.PendingRowStore(s, t)
+    r, rc = RS.CommittedRowChain(b, rows).step(step_fn, None, {"x": 1.0}, **kw(0, True)); assert rows.load(rc.row_hash) == r
+    t.ref_types["ROW"] = 9                                                      # caller mutates its own tables object afterwards
+    assert rows.load(rc.row_hash) == r and rows.receipt_for(rc.row_hash) == rc
+    t2 = copy.deepcopy(T); t2.ref_types["ROW"] = 9                              # an EXPLICIT new table set is a new store view and is judged on its own (different identity)
+    with pytest.raises(IntegrityFailure): RS.PendingRowStore(s, t2).load(rc.row_hash)
