@@ -42,4 +42,12 @@ class Ledger(unittest.TestCase):
     def test_fields_closed_and_keys_isolated(self):
         l = L("t1"); self.assertEqual(code(l.expect, "", "t"), "SHADOW_FIELD_INVALID"); self.assertEqual(code(l.record, "k", "t1", "", "PUBLISHED"), "SHADOW_FIELD_INVALID")
         l.expect("k2", "t1"); l.record("k", "t1", "a", "PUBLISHED"); self.assertEqual(l.coverage("k2"), (0, 1))
+    def test_r47_event_id_is_globally_unique_across_provisional_and_terminal_in_both_orders_and_refusals_change_nothing(self):
+        l = L("t1", "t2"); l.record("k", "t1", "P", "PUBLISHED"); before = (dict(l._expected), dict(l._provisional), dict(l._ids), l.counters("k"))
+        self.assertEqual(code(l.provisional_abstain, "k", "t2", "P"), "SHADOW_EVENT_ID_CONFLICT"); self.assertEqual(code(l.record, "k", "t2", "P", "MODEL_ABSTAINED"), "SHADOW_EVENT_ID_CONFLICT")
+        self.assertEqual((dict(l._expected), dict(l._provisional), dict(l._ids), l.counters("k")), before); self.assertEqual(l.coverage("k"), (1, 2))
+        l2 = L("t1", "t2"); l2.provisional_abstain("k", "t1", "Q"); self.assertEqual(code(l2.record, "k", "t2", "Q", "MODEL_ABSTAINED"), "SHADOW_EVENT_ID_CONFLICT"); self.assertEqual(code(l2.provisional_abstain, "k", "t2", "Q"), "SHADOW_EVENT_ID_CONFLICT")
+        self.assertEqual(l2.missing("k"), ["t1", "t2"]); self.assertEqual(l2.record("k", "t1", "F", "LIFECYCLE_FENCED"), "RECORDED"); self.assertEqual(code(l2.record, "k", "t2", "Q", "PUBLISHED"), "SHADOW_EVENT_ID_CONFLICT")   # the superseded abstention id stays bound to t1
+        self.assertEqual(l2.coverage("k"), (0, 2)); self.assertEqual(len({v[0] for v in l2._expected.values() if v}), 1)
+        self.assertEqual(l.provisional_abstain("k", "t1", "P") if False else l.record("k", "t1", "P", "PUBLISHED"), "DUPLICATE_NOOP")      # exact retry stays a no-op (MLCore p324)
 if __name__ == "__main__": unittest.main()

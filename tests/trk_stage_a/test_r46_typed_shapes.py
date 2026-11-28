@@ -43,4 +43,17 @@ class Ops(unittest.TestCase):
     def test_not_admitted_operations_are_refused_by_name(self):
         for n in ("matmul", "transpose", "inverse", "solve", "decompose"): self.assertEqual(code(T.refuse_not_admitted, n), "OPCODE_NOT_ADMITTED_SQE_OPSET_V1_1")
         T.refuse_not_admitted("fixed_dot")
+class ApiIntegrity(unittest.TestCase):
+    """R47 group 2: public values are immutable; operations revalidate; dimensions are strict UINT32 ints."""
+    def test_public_assignment_refused_and_dot_still_correct(self):
+        a = Typed(VEC, (2,), [1.0, 2.0]); b = Typed(VEC, (2,), [1.0, 1.0]); self.assertEqual(fixed_dot(a, b).data, 3.0)
+        for k, v in (("data", (1.0,)), ("dims", (1,)), ("kind", SC)): self.assertEqual(code(setattr, a, k, v), "TYPED_VALUE_IMMUTABLE")
+        self.assertEqual(code(delattr, a, "data"), "TYPED_VALUE_IMMUTABLE"); self.assertEqual(fixed_dot(a, b).data, 3.0)
+    def test_deliberate_bypass_of_immutability_is_caught_by_revalidation_in_every_operation(self):
+        a = Typed(VEC, (2,), [1.0, 2.0]); b = Typed(VEC, (2,), [1.0, 1.0]); object.__setattr__(a, "data", (1.0,))
+        self.assertEqual(code(fixed_dot, a, b), "SHAPE_MISMATCH"); self.assertEqual(code(fixed_sum, a), "SHAPE_MISMATCH"); self.assertEqual(code(elementwise, "add", a, b), "SHAPE_MISMATCH")
+    def test_dimensions_must_be_strict_uint32_integers(self):
+        for d in ((True,), (1.0,), (0,), (2 ** 32,), (-1,), ("2",)): self.assertEqual(code(Typed, VEC, d, [2.0]), "SHAPE_DIMENSION_NOT_UINT32", d)
+        self.assertEqual(code(Typed, MAT, (1, True), [[2.0]]), "SHAPE_DIMENSION_NOT_UINT32"); self.assertEqual(code(Typed, VEC, (2 ** 32 - 1,), [2.0]), "SHAPE_MISMATCH")
+        self.assertEqual(fixed_dot(Typed(VEC, (1,), [2.0]), Typed(VEC, (1,), [2.0])).data, 4.0)
 if __name__ == "__main__": unittest.main()

@@ -12,6 +12,7 @@ M = [("raise Refusal(trigger_id, code=\"SHADOW_EVENT_ID_CONFLICT\" if cur[0] != 
      ("if prev is not None and prev[:2] != slot: raise", "if False: raise", "id reused across triggers"),
      ("if outcome not in OUTCOMES:", "if False:", "outcome unchecked"),
      ("if self._expected[(logical_key, trigger_id)] is not None: raise Refusal(trigger_id, code=\"SHADOW_TERMINAL_ALREADY_RECORDED\")", "pass", "provisional after terminal"),
+     ("        if prev is not None and prev[:2] != (logical_key, trigger_id): raise Refusal(prediction_event_id, code=\"SHADOW_EVENT_ID_CONFLICT\")\n        old =", "        old =", "R47 provisional ignores global id binding"),
      ("if k != logical_key: continue", "pass", "counters cross keys")]
 s = []
 for a, b, n in M:

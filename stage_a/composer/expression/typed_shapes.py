@@ -38,11 +38,13 @@ def validate_state_schema(components, ceilings=None):
     return tuple(out)
 
 class Typed:
-    """A value with its STATICALLY declared type and dims. Construction validates the nesting and every element (finite binary64, -0 -> +0)."""
+    """A value with its STATICALLY declared type and dims. Construction validates the nesting and every element (finite binary64, -0 -> +0). The instance is IMMUTABLE (attribute assignment refused;
+    data is a tuple / tuple of tuples) and every operation REVALIDATES shape, so a value cannot drift from its declared dimensions. Dimensions are strict UINT32-range ints (not bool, not float)."""
     __slots__ = ("kind", "dims", "data")
     def __init__(self, kind, dims, data):
         if kind not in TYPES: raise Refusal(str(kind), code="STATE_COMPONENT_TYPE_NOT_ADMITTED")
         dims = tuple(dims)
+        if not all(type(d) is int and 1 <= d < 2 ** 32 for d in dims): raise Refusal(str(dims), code="SHAPE_DIMENSION_NOT_UINT32")
         if kind == "BINARY64_SCALAR":
             if dims: raise Refusal("dims", code="STATE_SCALAR_HAS_DIMENSIONS")
             data = _f(data)
@@ -52,9 +54,17 @@ class Typed:
         else:
             if len(dims) != 2 or not isinstance(data, (list, tuple)) or len(data) != dims[0] or any(not isinstance(r, (list, tuple)) or len(r) != dims[1] for r in data): raise Refusal(str(dims), code="SHAPE_MISMATCH")
             data = tuple(tuple(_f(x) for x in r) for r in data)
-        self.kind, self.dims, self.data = kind, dims, data
+        object.__setattr__(self, "kind", kind); object.__setattr__(self, "dims", dims); object.__setattr__(self, "data", data)
+    def __setattr__(self, k, v): raise Refusal(k, code="TYPED_VALUE_IMMUTABLE")
+    def __delattr__(self, k): raise Refusal(k, code="TYPED_VALUE_IMMUTABLE")
+
+def _recheck(a):
+    """invariant: the held data still has exactly the declared shape (defence against any bypass of immutability)."""
+    if not isinstance(a, Typed): raise Refusal(type(a).__name__, code="SHAPE_MISMATCH")
+    Typed(a.kind, a.dims, a.data)
 
 def _same(a, b):
+    _recheck(a) if isinstance(a, Typed) else None; _recheck(b) if isinstance(b, Typed) else None
     if not (isinstance(a, Typed) and isinstance(b, Typed)) or a.kind != b.kind or a.dims != b.dims: raise Refusal("%s%s vs %s%s" % (getattr(a, "kind", a), getattr(a, "dims", ""), getattr(b, "kind", b), getattr(b, "dims", "")), code="SHAPE_MISMATCH")
 
 def _elem(op, x, y):
@@ -76,7 +86,7 @@ def elementwise(op, a, b):
 def fixed_sum(v):
     """FIXED_SUM over a declared-length vector: accumulator canonical +0, sequential ADD in ascending index order only."""
     if not isinstance(v, Typed) or v.kind != "FIXED_VECTOR_BINARY64": raise Refusal("operand", code="SHAPE_MISMATCH")
-    s = 0.0
+    _recheck(v); s = 0.0
     for x in v.data: s = _fin(s + x)
     return Typed("BINARY64_SCALAR", (), s)
 
