@@ -7,7 +7,7 @@ CLAIM_BOUND = "CLAIM_BOUND"
 CLAIM_CONSUMED = "CLAIM_CONSUMED"
 CLAIM_RELEASED = "CLAIM_RELEASED"
 ORDER_PROVENANCE = "ORDER_PROVENANCE"
-# R7 PROPOSED successor semantics (NOT ADOPTED; candidate journal kinds, no grants/principals appointed): see tracker_component/lifecycle.py
+# R7 sections 1-6: CURRENT conditional design source for the isolated replica (Matrix R7 source-selection change set 01); these journal kinds are CANDIDATE runtime code, no grants/principals appointed: see tracker_component/lifecycle.py
 CLAIM_ABANDONED = "CLAIM_ABANDONED"
 GRANT_REVOKED = "GRANT_REVOKED"
 ATTEMPT_ADMITTED = "ATTEMPT_ADMITTED"
