@@ -137,3 +137,31 @@ class Hooks(unittest.TestCase):
         for bad in (dict(origin="SPECULATIVE"), dict(creation_request_id=""), dict(test_evidence_refs=("EV", "EV")), dict(test_evidence_refs=["EV"])): self.assertEqual(code(lambda b=bad: build_registry_entry("S1", **dict(dict(origin="BUILDER", creation_request_id="R", lifecycle=lf), **b))), "REGISTRY_ENTRY_INPUT_INVALID")
         self.assertEqual(code(build_registry_entry, "S1", "BUILDER", "R", None), "REGISTRY_ENTRY_LIFECYCLE_SOURCE_REQUIRED"); self.assertEqual(code(build_registry_entry, "S1", "BUILDER", "R", lf, survivor_pointers={"S1": "S2", "S2": "S1"}), "SURVIVOR_CYCLE")
 if __name__ == "__main__": unittest.main()
+class MaintenanceAssembly(unittest.TestCase):
+    """R52: the all-segment stored-value pass is connected to the SAME assembly (accepted -> published -> Core -> Gateway/FW delivery)."""
+    def _rig(self):
+        rig, pkg, fk, c, co, path = comp(); key = fk.key(); res = {"SRC/close": SER}; fetch = lambda ref: res.get(ref)
+        si = dict(bindings={"close": {"ref": "SRC/close", "hash": H(SER)}}, fetch=fetch, series_hash=H)
+        r = co.accept_and_publish(pkg, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, stored_inputs=si); c.declare_ancestry_complete(key, "src"); b1 = G.HealthBinding(F, fk.feature_version, I, I); c.associate_subject(key, b1, "assoc")
+        e = _entry(fid=F, ver=fk.feature_version); kw = dict(binding=b1, ref=R("hl"), resolved_at=11, tables=T); return rig, fk, c, co, r, si, res, e, kw
+    def test_second_segment_failure_found_by_the_pass_blocks_the_next_delivery_while_the_first_segment_alone_would_pass(self):
+        rig, fk, c, co, r, si, res, e, kw = self._rig(); key = fk.key(); self.assertEqual(r.stored_values["l2"], "PASS")
+        j = rig.journals.journal(fk.namespace()); SER_B = [x + 1 for x in SER]; res["SRC/close-b"] = SER_B; from stage_a.tracker import stored_values as SV
+        SV.persist_stored_values(journal=j, store=rig.store, feature_key=fk, bindings={"close": {"ref": "SRC/close-b", "hash": H(SER_B)}}, fetch=si["fetch"], series_hash=H)
+        co.register_stored_maintenance(r, si); res["SRC/close-b"] = SER_B[:-1] + [-1]                                                         # segment B's source changed after storage
+        o = co.run_maintenance([(key, "SCHEDULED")], now=12, max_age=50, max_items=4); self.assertEqual([(x[0], x[2]) for x in o], [(key, "RECORDED_NOT_PASS")])
+        self.assertEqual(SV.verify_stored_values(journal=j, store=rig.store, feature_key=fk, bindings=si["bindings"], fetch=si["fetch"], series_hash=H)["l2"], "PASS")        # the single-segment (acceptance) view is still PASS
+        with self.assertRaises(Refusal) as x: co.deliver("fw-after", W("W9"), e, I, I, 3, 20, r, now=13, **kw)
+        self.assertEqual(x.exception.code, "NON_DELIVERY")
+    def test_healthy_all_segments_pass_records_in_the_same_core_and_delivery_proceeds(self):
+        rig, fk, c, co, r, si, res, e, kw = self._rig(); co.register_stored_maintenance(r, si); self.assertIs(co.register_stored_maintenance(r, si).fetch, si["fetch"])
+        o = co.run_maintenance([(fk.key(), "SCHEDULED")], now=12, max_age=50, max_items=4); self.assertEqual([x[2] for x in o], ["VERIFIED"]); self.assertIsInstance(co.deliver("fw-ok", W("W1"), e, I, I, 3, 20, r, now=13, **kw), G.Binding)
+    def test_registration_refuses_unpublished_and_changed_inputs_and_an_unregistered_subject_is_unbound(self):
+        rig, fk, c, co, r, si, res, e, kw = self._rig(); k = fk.key()
+        bad = CO.CompositionResult("NOT_ACCEPTED"); self.assertEqual(code(co.register_stored_maintenance, bad, si), "COMPOSITION_MAINTENANCE_NOT_PUBLISHED"); self.assertEqual(code(co.register_stored_maintenance, r, {"fetch": 1}), "COMPOSITION_MAINTENANCE_INPUT_INVALID")
+        self.assertEqual([x[2] for x in co.run_maintenance([(k, "SCHEDULED")], now=12, max_age=50, max_items=4)], ["UNBOUND"]); co.register_stored_maintenance(r, si)
+        self.assertEqual(code(co.register_stored_maintenance, r, dict(si, fetch=lambda ref: None)), "COMPOSITION_MAINTENANCE_BINDING_IMMUTABLE")
+    def test_a_result_with_a_feature_key_but_not_published_and_a_cross_class_core_are_refused(self):
+        rig, fk, c, co, r, si, res, e, kw = self._rig(); import dataclasses; held = dataclasses.replace(r, status="HELD_REGISTRY_INTEGRITY_X")
+        self.assertEqual(code(co.register_stored_maintenance, held, si), "COMPOSITION_MAINTENANCE_NOT_PUBLISHED")
+        from .test_r38_stored_values_class import qcore; co._core = qcore(); self.assertEqual(code(co.register_stored_maintenance, r, si), "STORED_VALUES_CLASS_MISMATCH")
