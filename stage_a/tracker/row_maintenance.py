@@ -25,36 +25,62 @@ class RowBinding:
 
 def _profile_ok(p): return isinstance(p, dict) and all(k in p and p[k] is not None for k in NEED)
 def _attribute(store):
-    """(hash -> fields) for every stored row sidecar. A sidecar that cannot be parsed cannot be attributed to any feature: returned separately (fail-closed for every row-maintained feature; disclosed blast radius)."""
+    """(hash -> fields) for every stored row sidecar that parses; `bad` = hashes whose sidecar exists but cannot be parsed."""
     ok, bad = {}, []
     for k in sorted(store.list_prefix("pending-row-fields/")):
         h = k.rsplit("/", 1)[-1]; got = store.get("pending-row-fields/" + h)
+        if got is None: continue
         try: ok[h] = RS._from_json(got[0])
         except Exception: bad.append(h)
     return ok, bad
-def _accepted(journals, row, h):
-    j = journals.journal(RA.row_namespace(row)); head = j.head(); hit = None
-    if head.seq:
-        for r in j.read_from(1):
-            if r.seq > head.seq: break
-            b = json.loads(r.body_json)
-            if b.get("row_content_hash") == h: hit = b
-    return hit
+def _pinned(journals, ns):
+    """One coherent read of a row namespace: head, records up to it, head again. Returns (head, records) or None when the basis moved or is unreadable (fail-closed; the pass can be re-run)."""
+    for _ in range(2):
+        try:
+            j = journals.journal(ns); h1 = j.head(); recs = j.read_from(1) if h1.seq else []; h2 = j.head()
+        except (Refusal, IntegrityFailure, KeyError, ValueError, TypeError): return None
+        if h1 == h2 and (not recs or (recs[-1].seq == h1.seq and recs[-1].record_hash == h1.hash)): return h1, recs
+    return None
+def _expected(journals, store):
+    """The REQUIRED accepted row population, derived from the owning ROW_ACCEPTED journals themselves (never from what happens to be stored): {row_hash: (namespace, body)} plus the pinned heads, or (None, reason)."""
+    heads, exp = {}, {}
+    for k in sorted(store.list_prefix("head/rowtx/")):
+        ns = k[len("head/"):]; p = _pinned(journals, ns)
+        if p is None: return None, "ROW_ACCEPTED_JOURNAL_BASIS_NOT_COHERENT_HELD"
+        heads[ns] = p[0]
+        for r in p[1]:
+            if r.kind != RA.KIND: return None, "ROW_NAMESPACE_FOREIGN_KIND"
+            try: body = json.loads(r.body_json)
+            except ValueError: return None, "ROW_ACCEPTED_RECORD_UNPARSEABLE"
+            if not (isinstance(body, dict) and body.get("version") == RA.VERSION_TAG and isinstance(body.get("row_content_hash"), str)): return None, "ROW_ACCEPTED_RECORD_MALFORMED"
+            exp[body["row_content_hash"]] = (ns, body)
+    return (heads, exp), ""
+def _fid(ns): return ns.split("/")[1] if ns.count("/") >= 4 else None
 def verify_stored_rows(b: RowBinding) -> dict:
     base = {"stream_verified": False, "provider_vintage_clock_proof": "HELD", "l1_fallback": False, "stored_values_compared": False, "route": "ROWS"}
     fk = b.feature_key
-    if not _profile_ok(b.profile): return dict(base, overall="UNAVAILABLE", reason="ROW_PROFILE_HELD", l1="PASS", l2="UNAVAILABLE", health_effect="NOT_HEALTHY", rows={})
+    def non(overall, reason, rows=None, l1="PASS"): return dict(base, overall=overall, reason=reason, l1=l1, l2=overall if overall in ("FAIL", "UNAVAILABLE") else "PASS", health_effect="NOT_HEALTHY", rows=rows or {})
+    if not _profile_ok(b.profile): return non("UNAVAILABLE", "ROW_PROFILE_HELD")
     from . import accepted_manifest as AM
     try: mh = AM.read_accepted_manifest(b.journals.journal(fk.namespace()), b.store, fk).manifest_hash
-    except (Refusal, IntegrityFailure, KeyError, ValueError, TypeError): return dict(base, overall="UNAVAILABLE", reason="ACCEPTED_MANIFEST_UNAVAILABLE", l1="FAIL", l2="UNAVAILABLE", health_effect="NOT_HEALTHY", rows={})
-    fields, bad = _attribute(b.store)
-    if bad: return dict(base, overall="FAIL", reason="STORED_ROW_SIDECAR_UNATTRIBUTABLE", l1="FAIL", l2="FAIL", health_effect="NOT_HEALTHY", rows={h: "UNATTRIBUTABLE" for h in bad})
-    out, p = {}, b.profile
-    for h in sorted(fields):
-        row = fields[h]
-        if row.feature_version != fk.feature_version or row.quant_manifest_hash.hex() != mh: continue          # ATTRIBUTION by the ACCEPTED manifest hash + version (subject-bound); no symbol<->byte-id equality is guessed
-        acc = _accepted(b.journals, row, h)
+    except (Refusal, IntegrityFailure, KeyError, ValueError, TypeError): return non("UNAVAILABLE", "ACCEPTED_MANIFEST_UNAVAILABLE", l1="FAIL")
+    got, why = _expected(b.journals, b.store)
+    if got is None: return non("UNAVAILABLE", why)
+    heads, exp = got; fields, bad = _attribute(b.store); out, p = {}, b.profile
+    mine = {h for h, r in fields.items() if r.feature_version == fk.feature_version and r.quant_manifest_hash.hex() == mh}
+    my_fids = {_fid(RA.row_namespace(fields[h])) for h in mine}; unattributable = []
+    todo = {}                                                                                  # hashes this feature must account for
+    for h in mine: todo[h] = "STORED"
+    for h, (ns, body) in exp.items():
+        if h in mine: continue
+        if h in fields: continue                                                               # a readable sidecar of ANOTHER feature/version: not ours
+        if my_fids and _fid(ns) not in my_fids: continue                                       # a different feature_id: provably not this feature's
+        if my_fids: todo[h] = "SIDECAR_ABSENT_OR_UNREADABLE"                                   # same feature_id, expected accepted row with no usable sidecar: cannot be excluded
+        else: unattributable.append(h)                                                         # no attributed row at all: no basis to attribute or to exclude
+    for h in sorted(todo):
+        acc = exp.get(h, (None, None))[1]
         if acc is None: out[h] = ("PENDING", "NO_ROW_ACCEPTED_RECORD"); continue
+        if todo[h] != "STORED": out[h] = ("FAIL", "ACCEPTED_ROW_" + todo[h]); continue
         try:
             rows = b.rows; stored = rows.load(h); pred = None if stored.predecessor_row_hash is None else rows.load(stored.predecessor_row_hash.hex())
         except (IntegrityFailure, Refusal, KeyError, ValueError, TypeError) as e: out[h] = ("FAIL", "STORED_ROW_OR_PREDECESSOR_UNREADABLE:" + getattr(e, "code", type(e).__name__)); continue
@@ -67,13 +93,18 @@ def verify_stored_rows(b: RowBinding) -> dict:
         if res.status != PASS: out[h] = ("UNAVAILABLE", "ROW_REVERIFICATION_" + res.status + ":" + ",".join(res.reasons)); continue
         ev = acc.get("verification_evidence_ref"); ok = isinstance(ev, list) and len(ev) == 4 and ev[3] == res.result_hash
         out[h] = ("VERIFIED", "") if ok else ("FAIL", "ROW_REVERIFICATION_DIFFERS_FROM_ACCEPTED_EVIDENCE")
+    for ns, h0 in heads.items():                                                               # the read basis must not have moved while verifying
+        try: now_head = b.journals.journal(ns).head()
+        except (Refusal, IntegrityFailure, KeyError, ValueError, TypeError): return non("UNAVAILABLE", "ROW_ACCEPTED_JOURNAL_BASIS_NOT_COHERENT_HELD", {h[:16]: v for h, v in out.items()})
+        if now_head != h0: return non("UNAVAILABLE", "ROW_ACCEPTED_JOURNAL_ADVANCED_DURING_READ_HELD", {h[:16]: v for h, v in out.items()})
     counted = {h: v for h, v in out.items() if v[0] != "PENDING"}; st = [v[0] for v in counted.values()]
-    if not counted: overall, reason = "UNAVAILABLE", "ACCEPTED_ROWS_ABSENT"
-    elif "FAIL" in st: overall, reason = "FAIL", "ROW_" + "FAIL"
+    if "FAIL" in st: overall, reason = "FAIL", "ROW_FAIL"
     elif "UNAVAILABLE" in st: overall, reason = "UNAVAILABLE", "ROW_UNAVAILABLE"
+    elif unattributable: overall, reason = "UNAVAILABLE", "ROW_ACCEPTED_NAMESPACE_UNATTRIBUTABLE_HELD"
+    elif not counted: overall, reason = "UNAVAILABLE", "ACCEPTED_ROWS_ABSENT"
     else: overall, reason = "VERIFIED_ROWS_EQUAL_RECOMPUTED", ""
     good = overall.startswith("VERIFIED")
-    return dict(base, overall=overall, reason=reason, l1="PASS", l2="PASS" if good else overall, stored_values_compared=good, health_effect="NONE_ASSERTED" if good else "NOT_HEALTHY", rows={h[:16]: v for h, v in sorted(out.items())})
+    return dict(base, overall=overall, reason=reason, l1="PASS", l2="PASS" if good else overall, stored_values_compared=good, health_effect="NONE_ASSERTED" if good else "NOT_HEALTHY", rows={h[:16]: v for h, v in sorted(out.items())}, unattributable=[h[:16] for h in unattributable], pinned_heads={ns: (h.seq, h.hash) for ns, h in heads.items()})
 _RANK = {"PASS": 0, "UNAVAILABLE": 1, "FAIL": 2}
 def verify_feature(b: RowBinding) -> dict:
     """Rows, and (when the feature also carries a feature-version StoredBinding) its segments; the WORST of the two is the single L2 outcome (FAIL > UNAVAILABLE > PASS). L1 stays the as-found binding (FAIL if either L1 FAIL)."""

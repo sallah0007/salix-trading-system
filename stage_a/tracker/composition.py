@@ -175,7 +175,7 @@ class Composition:
             from ..fw.association import FwAssociation
             a = self._fwa = FwAssociation(self.gateway.final_store)
         return a
-    def deliver(self, request_id, identity, entry, instrument_id, timeframe_id, step_index, event_time, result: CompositionResult, *, binding, now, ref, resolved_at, tables, health=None, consumer_manifest_id=None):
+    def deliver(self, request_id, identity, entry, instrument_id, timeframe_id, step_index, event_time, result: CompositionResult, *, binding, now, ref, resolved_at, tables, health=None, consumer_manifest_id=None, snapshot=None):
         """Gateway resolution for ONE FW window under the composed Core Health. Returns the Binding after the FW verified receive; a non-delivery raises `NON_DELIVERY`. Optional `health` (health.impact_supplier) adds the consumer-closure carried-upstream check BEFORE resolution; omitted => only the Core ancestry check applies (named in closeout 27)."""
         if self.gateway is None or result.feature_key is None: raise Refusal("not published", code="COMPOSITION_NOT_PUBLISHED")
         if health is not None:                                               # R49: the SAME supplier/relations as the ML path; requiredness derives from `entry`; the FW consumer manifest id is caller-named but must exist in the supplier's governed registry with kind FW
@@ -183,7 +183,12 @@ class Composition:
             if use == "BLOCK_PROVEN_DEPENDENCY" or use.startswith("REFUSE_"): raise Refusal(use, code="HEALTH_IMPACT_" + use)
         fk = self._owning_subject(result, entry, binding); health = self._core.gateway_health(fk.key(), fk.feature_version, now, ref, resolved_at, binding=binding, require_ancestry=True)
         d = self.gateway.resolve_window(request_id, identity, entry, instrument_id, timeframe_id, step_index, event_time, health)
-        return FWR.receive_verified(d, entry, instrument_id, timeframe_id, tables, self.gateway)
+        got = FWR.receive_verified(d, entry, instrument_id, timeframe_id, tables, self.gateway)
+        if snapshot is not None:                                             # R53: the FW receiver refuses a delivered ROW the Core's resolved per-timeframe composition contradicts (the Gateway's final outcome stays immutable)
+            from .row_snapshot import row_snapshot_blockers
+            bl = row_snapshot_blockers(snapshot, d.entry) if hasattr(d, "entry") else ("ROW_SNAPSHOT_NO_DELIVERED_ENTRY",)
+            if bl: raise Refusal(",".join(bl), code="NON_DELIVERY")
+        return got
     def deliver_ml(self, request_id, identity, entry, instrument_id, timeframe_id, step_index, event_time, result: CompositionResult, *, binding, now, ref, resolved_at, tables, row_id, generation_ref, vintage_mode, omissions, exclusion_reason, health=None, consumer_manifest_id=None):
         """R53: the ML twin of `deliver`: the SAME composed Core Health (require_ancestry=True), the SAME Gateway window path (ML's OWN consumer-local outcome under the durable final store) and then `ml.receiver.build_row`. A required non-delivery needs the caller's explicit tagged exclusion reason (build_row refuses without); the returned row is `included` only for a delivered Binding. The ML closure check (optional `health`) uses the ML consumer kind. Nothing here fabricates a generation, dataset or manifest: `generation_ref`/`vintage_mode`/`omissions` are supplied."""
         if self.gateway is None or result.feature_key is None: raise Refusal("not published", code="COMPOSITION_NOT_PUBLISHED")

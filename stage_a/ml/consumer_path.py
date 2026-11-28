@@ -31,7 +31,7 @@ class MLConsumerPath:
     def __init__(self, *, gateway, final_store, authority, generations, writer, tables):
         if any(x is None for x in (gateway, final_store, authority, generations, writer, tables)): raise Refusal("ports", code="ML_CONSUMER_PATH_PORT_MISSING")
         self._g, self._f, self._a, self._gr, self._w, self._t = gateway, final_store, authority, generations, writer, tables
-    def consume(self, caller, dataset_manifest, entry, outcome, request_id, *, row_id, generation_ref, generation_manifest_id, event, request_start_ts, joins, fence, vintage_mode="ORIGINAL_AS_OBSERVED", eligibility_reason, exclusion_reason_for_missing, catalog_snapshot=None, family_map=None, hypothesis_family_id=None, health=None, feature_view=None):
+    def consume(self, caller, dataset_manifest, entry, outcome, request_id, *, row_id, generation_ref, generation_manifest_id, event, request_start_ts, joins, fence, vintage_mode="ORIGINAL_AS_OBSERVED", eligibility_reason, exclusion_reason_for_missing, catalog_snapshot=None, family_map=None, hypothesis_family_id=None, health=None, feature_view=None, snapshot=None):
         bh = self._a.request_binding(caller, dataset_manifest, outcome, gateway=self._g, final_store=self._f, request_id=request_id)           # refuses foreign / forged / unissued / re-linked
         row = MLR.build_row(row_id, generation_ref, [entry], [outcome], self._g, vintage_mode, eligibility_reason, exclusion_reason_for_missing, tables=self._t, expected_request_ids={(entry.feature_id, entry.feature_version): getattr(outcome, "request_id", None)})
         if not row.included: return MLConsumption(row, bh, None, None, None, None, ("ROW_EXCLUDED_REQUIRED_DEPENDENCY_NOT_DELIVERED",), HELD)
@@ -51,6 +51,9 @@ class MLConsumerPath:
             consumed = {(b.entry.feature_id.hex(), b.entry.feature_version) for b in row.bindings} | {(a.feature_id.hex(), a.feature_version) for a in row.absence_applied}
             jr = SJ.check_six_joins(joins, self._gr, fence=fence, consumed_features=consumed, catalog_snapshot=catalog_snapshot, request_snapshot=snap, dataset_manifests=self._a._d.manifest_index(), binding_to_manifest=self._a._d.binding_index(), consumer_binding_id=bh["binding_id"], family_map=family_map, hypothesis_family_id=hypothesis_family_id)
             blockers += ["JOINS_" + c + "_" + s for c, s, _ in jr.correlation if s in (SJ.MISMATCH, SJ.MISSING)] + ["JOIN_" + j + "_" + s for j, s, _ in jr.statuses if s in (SJ.MISMATCH, SJ.MISSING)]
+        if snapshot is not None:                                                                          # R53: each consumed ROW against the Core's resolved per-timeframe composition (row_snapshot)
+            from ..tracker.row_snapshot import row_snapshot_blockers
+            for b in row.bindings: blockers += list(row_snapshot_blockers(snapshot, b.entry))
         held = HELD
         if feature_view is not None:                                                                      # R53: the Tracker REGISTRY section 14 thirteen duties over the registered view that this consumption reads
             blockers += self._view_blockers(feature_view, entry, row)
