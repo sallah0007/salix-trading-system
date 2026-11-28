@@ -11,6 +11,8 @@ EXPECTED = {
     "V232_FINITE_41_UNIT_QUALIFIER_RESIDUAL.json": "bfee4c8a4aa877f9ba436e1142184f790d0442a3e8942f7b57e82b724441fe3e",
 }
 STOP = set("a an and any are as at be by do does each every for from has have in is it its may must no not of on or only the to with without that this these those when where which who will".split())
+# MLCore459 (read in R47 evidence): sections 1-26 are the controlling contract; history is supporting lineage unless explicitly incorporated. Lines after 459 are therefore HISTORY here (the boundary line number is the Manager's R49 reading, not re-derived from section headings).
+MASTER_END = 459
 REF = re.compile(r"MLCore\s*:?\s*(\d+)(?:\s*[-–]\s*(\d+))?")
 
 
@@ -54,6 +56,7 @@ def main(d, out):
             elif pl <= cur: rel = "ALL_PRIOR_REFS_INSIDE_V235_RANGES"
             elif pl & cur: rel = "SOME_PRIOR_REFS_INSIDE_V235_RANGES"
             else: rel = "NO_PRIOR_REF_INSIDE_V235_RANGES"
+            hist = sorted(l for l in pl if l > MASTER_END); hist_only = bool(pl) and len(hist) == len(pl)
             qt = toks(q["qualifier"]); ct = toks(cm["qualifier_comparison"])
             ov = len(qt & ct) / len(qt) if qt else 0.0
             fl = []
@@ -62,7 +65,7 @@ def main(d, out):
             if cm["disposition"] != "INCORPORATED-AT": fl.append("V235_" + cm["disposition"])
             rows.append(dict(unit_id=u, qualifier_index=i, qualifier_sha256=hashlib.sha256(q["qualifier"].encode()).hexdigest(),
                              v232_status=q["status"][:34], prior_map_present=bool(p), v235_disposition=cm["disposition"],
-                             v235_cur_line_count=len(cur), prior_ref_line_count=len(pl), prior_vs_v235_ranges=rel,
+                             v235_cur_line_count=len(cur), prior_ref_line_count=len(pl), prior_vs_v235_ranges=rel, prior_refs_after_master_end=len(hist), prior_refs_history_only=hist_only,
                              v232_evidence_items=len(ev), v232_evidence_in_unit_cited=sum(1 for e in ev if e.get("in_unit_cited_ranges")),
                              v232_evidence_is_historical_not_controlling=sum(1 for e in ev if e.get("is_historical_element_not_controlling_equivalent")),
                              v235_comparison_sha256=hashlib.sha256(cm["qualifier_comparison"].encode()).hexdigest(),
@@ -73,7 +76,7 @@ def main(d, out):
         w = csv.DictWriter(fh, fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
     from collections import Counter
     print("qualifiers", len(rows), "units", len(x for x in [1]) if False else len({q["unit_id"] for q in rows}))
-    print(dict(Counter(q["prior_vs_v235_ranges"] for q in rows)))
+    print(dict(Counter(q["prior_vs_v235_ranges"] for q in rows))); print("prior refs history-only:", sum(1 for q in rows if q["prior_refs_history_only"]))
     print("NL-0178 in 41-unit residual:", "NL-0178" in {q["unit_id"] for q in rows}, "| in V232 loss list:", "NL-0178" in loss)
 
 
