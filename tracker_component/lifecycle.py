@@ -11,6 +11,7 @@ not a security control. Implemented (R7 section -> method):
 s6 strict A: only the GENERIC fail-closed lease interface exists here (`lease_admit_attempt` with an injected time-aware commit port; no port => the lease effect refuses). NOT implemented: the real atomic time-aware primitive, the approved clock domain/config and any duration (Branch B is never a fallback; no private counter or pre-CAS clock check); staged-report NON-ALLOCATION is by construction
 (nothing here allocates FEATURE_ID/FEATURE_VERSION/REGISTRY_ENTRY_REF and a report has no visibility before its REPORT_DISPOSITION record); wiring to the real principals/grants.
 This module changes no governance state; a merge or test pass clears no gate."""
+import copy
 from .journal_port import HeadMismatch
 from .claims import ClaimService, Refusal
 from .order import (CLAIM_ABANDONED, GRANT_REVOKED, ATTEMPT_ADMITTED, ATTEMPT_REJECTED, LINEAGE_REPLACED, REVIEW_DECIDED, REPORT_DISPOSITION, ORDER_REVOKED)
@@ -45,20 +46,26 @@ class ReplicaLifecycle(ClaimService):
         return self.settle()
 
     def settle(self):
-        """Reconcile OUTSTANDING consequences of issuer/builder grant revocation after any partial phase (idempotent, restart-safe): revoke a still-live affected order AND abandon every
-        still-BOUND claim of every grant-affected order, including orders already revoked by an earlier partial run. Consumed (accepted) history is never touched. Authority never depends on
-        this having run: ClaimService._verify_order derives the refusal from the same HEAD."""
+        """Reconcile OUTSTANDING consequences of issuer/builder grant revocation after any partial phase (idempotent, restart-safe, race-safe): revoke a still-live affected order AND abandon every
+        still-BOUND claim of every grant-affected order, including orders already revoked by an earlier partial run. Consumed (accepted) history is never touched. EVERY append is decided by a builder
+        that re-reads current state at the pinned basis on each retry (R50), so a concurrent settle can never produce a second revocation/abandonment. Authority never depends on this having run."""
         self._p.sync(self._j)
         done = []
-        for oid, raw in list(self._p.orders.items()):
-            if self._order_terminal(oid) or not self._order_grant_revoked(oid, raw["issued_by"]):
-                continue
-            acted = False
-            if oid not in self._p.revoked:
-                self.revoke_order(oid, "GRANT_REVOCATION"); acted = True
-            for c in list(self._p.claims.values()):
-                if c["order_id"] == oid and c["state"] == "BOUND":
-                    self._commit(lambda head, cid=c["claim_id"]: (CLAIM_ABANDONED, {"claim_id": cid, "reason": "GRANT_REVOCATION"})); acted = True
+        for oid in list(self._p.orders):
+            acted = []
+            def revoke(head, oid=oid):
+                raw = self._p.orders[oid]
+                if oid in self._p.revoked or self._order_terminal(oid) or not self._order_grant_revoked(oid, raw["issued_by"]):
+                    return None, None
+                acted.append(1); return ORDER_REVOKED, {"order_id": oid, "reason": "GRANT_REVOCATION"}
+            self._commit(revoke)
+            for cid in [c["claim_id"] for c in self._p.claims.values() if c["order_id"] == oid]:
+                def abandon(head, cid=cid, oid=oid):
+                    c = self._p.claims[cid]
+                    if c["state"] != "BOUND" or self._order_terminal(oid) or not self._order_grant_revoked(oid, self._p.orders[oid]["issued_by"]):
+                        return None, None
+                    acted.append(1); return CLAIM_ABANDONED, {"claim_id": cid, "reason": "GRANT_REVOCATION"}
+                self._commit(abandon)
             if acted: done.append(oid)
         return done
 
@@ -68,35 +75,40 @@ class ReplicaLifecycle(ClaimService):
             raise Refusal("INCOMPLETE_LOOKUP")
         if gate == DUPLICATE_OR_NEAR:
             raise Refusal("DUPLICATE_OR_NEAR_REUSE_CANONICAL_IDENTITY")
-        self._p.sync(self._j)
-        old = self._p.request_claim.get(old_creation_id)
-        if old is None:
-            raise Refusal("OLD_CREATION_UNKNOWN", old_creation_id)
-        st = self._p.claims[old]["state"]
-        old_order = self._p.claims[old]["order_id"]
-        if st == "CONSUMED":
-            raise Refusal("OLD_LINEAGE_SUCCEEDED_REUSE_NOT_RECREATE", old_creation_id)
-        if st == "BOUND" and old_order not in self._p.revoked and not self._order_grant_revoked(old_order, self._p.orders[old_order]["issued_by"]):
-            raise Refusal("OLD_LINEAGE_NOT_TERMINAL", old_creation_id)
-        if new_creation_id in self._p.request_claim or new_creation_id in self._p.lineage_parent:
-            raise Refusal("CREATION_ID_REUSED", new_creation_id)
-        if order_id == old_order:
-            raise Refusal("REPLACEMENT_NEEDS_NEW_ORDER", order_id)       # no same-order revalidation/resumption
-        self._verify_order_now(order_id, subject_key)
-        self._commit(lambda head: (LINEAGE_REPLACED, {"new_creation_id": new_creation_id, "parent_creation_id": old_creation_id}))
+        def build(head):
+            old = self._p.request_claim.get(old_creation_id)
+            if old is None:
+                raise Refusal("OLD_CREATION_UNKNOWN", old_creation_id)
+            st = self._p.claims[old]["state"]
+            old_order = self._p.claims[old]["order_id"]
+            if st == "CONSUMED":
+                raise Refusal("OLD_LINEAGE_SUCCEEDED_REUSE_NOT_RECREATE", old_creation_id)
+            if st == "BOUND" and old_order not in self._p.revoked and not self._order_grant_revoked(old_order, self._p.orders[old_order]["issued_by"]):
+                raise Refusal("OLD_LINEAGE_NOT_TERMINAL", old_creation_id)
+            if self._p.lineage_parent.get(new_creation_id) == old_creation_id:
+                return None, None                                               # exact replay / resume after a partial commit (the link is already durable)
+            if new_creation_id in self._p.request_claim or new_creation_id in self._p.lineage_parent:
+                raise Refusal("CREATION_ID_REUSED", new_creation_id)
+            if order_id == old_order:
+                raise Refusal("REPLACEMENT_NEEDS_NEW_ORDER", order_id)       # no same-order revalidation/resumption
+            self._verify_order(order_id, subject_key, head.seq)
+            return LINEAGE_REPLACED, {"new_creation_id": new_creation_id, "parent_creation_id": old_creation_id}
+        self._commit(build)
         return self.reserve(subject_key=subject_key, request_id=new_creation_id, order_id=order_id, lookup_outcome=lookup_outcome)
 
     def _verify_order_now(self, order_id, subject_key):
-        self._p.sync(self._j)
-        return self._verify_order(order_id, subject_key, self._j.head().seq)
+        return self._verify_order(order_id, subject_key, self._basis().seq)
 
     def parent_of(self, creation_id):
         self._p.sync(self._j)
         return self._p.lineage_parent.get(creation_id)
 
     # -- s4 RD4a -----------------------------------------------------------------------------------------------------
-    def _admit_build(self, binding, head):
+    def _admit_build(self, binding, head, deadline_ref=None):
+        """The ONE guarded admission path (R50): ordinary and lease admission both validate here; lease adds only the deadline binding."""
         build_id, order_id, claim_id = binding["build_id"], binding["order_id"], binding["claim_id"]
+        if not isinstance(build_id, str) or not build_id:
+            raise Refusal("BUILD_ID_REQUIRED")
         creation_request_id, builder_grant, correction_parent = binding["creation_request_id"], binding["builder_grant"], binding["correction_parent"]
         self._need_grant(builder_grant)
         self._verify_order(order_id, None, head.seq)
@@ -109,6 +121,8 @@ class ReplicaLifecycle(ClaimService):
         if prev is not None:
             if {k: prev[k] for k in binding if k != "correction_parent"} != {k: v for k, v in binding.items() if k != "correction_parent"} or prev["correction_parent"] != correction_parent:
                 raise Refusal("BUILD_ID_CONFLICT", build_id)
+            if prev.get("deadline_ref") != deadline_ref:
+                raise Refusal("BUILD_ID_CONFLICT", build_id)       # a leased attempt replays only through the lease path with the SAME deadline_ref, and vice versa
             return None, None                               # exact replay returns existing
         mine = sorted((a for a in self._p.attempts.values() if a["order_id"] == order_id), key=lambda a: a["seq"])
         if any(a["state"] == "ADMITTED" for a in mine):
@@ -117,16 +131,17 @@ class ReplicaLifecycle(ClaimService):
             raise Refusal("CORRECTION_PARENT_REQUIRED")
         if not mine and correction_parent is not None:
             raise Refusal("CORRECTION_PARENT_UNKNOWN")
-        return ATTEMPT_ADMITTED, dict(binding, reservation_generation=len(mine) + 1)
+        body = dict(binding, reservation_generation=len(mine) + 1)
+        if deadline_ref is not None:
+            body["deadline_ref"] = copy.deepcopy(deadline_ref)
+        return ATTEMPT_ADMITTED, body
 
     def admit_attempt(self, *, build_id, order_id, claim_id, creation_request_id, builder_grant, correction_parent=None):
         """NOT a lease effect: it carries no deadline. Lease-dependent admission is `lease_admit_attempt` (fail-closed without a qualified time-aware port)."""
         binding = {"build_id": build_id, "order_id": order_id, "claim_id": claim_id, "creation_request_id": creation_request_id,
                    "builder_grant": builder_grant, "correction_parent": correction_parent}
-        if not isinstance(build_id, str) or not build_id:
-            raise Refusal("BUILD_ID_REQUIRED")
         self._commit(lambda head: self._admit_build(binding, head))
-        return dict(self._p.attempts[build_id])
+        return copy.deepcopy(self._p.attempts[build_id])
 
     def reject_attempt(self, build_id, reason):
         def build(head):
@@ -135,12 +150,12 @@ class ReplicaLifecycle(ClaimService):
                 raise Refusal("ATTEMPT_NOT_ADMITTED", build_id)
             return ATTEMPT_REJECTED, {"build_id": build_id, "reason": reason}
         self._commit(build)
-        return dict(self._p.attempts[build_id])
+        return copy.deepcopy(self._p.attempts[build_id])
 
     def attempt(self, build_id):
         self._p.sync(self._j)
         a = self._p.attempts.get(build_id)
-        return None if a is None else dict(a)
+        return None if a is None else copy.deepcopy(a)
 
     # -- s5 RD4b -----------------------------------------------------------------------------------------------------
     def _final(self, package_id):
@@ -169,7 +184,7 @@ class ReplicaLifecycle(ClaimService):
                                     "decision": decision, "origin_grant": origin_grant, "decision_evidence_hash": decision_evidence_hash,
                                     "review_generation": have + 1}
         self._commit(build)
-        return dict(self._p.reviews[(package_id, prior_report_hash)])
+        return copy.deepcopy(self._p.reviews[(package_id, prior_report_hash)])
 
     def dispose(self, *, package_id, package_hash, report_id, report_hash, verdict, build_id, origin_grant, prior_report_hash=None):
         if verdict not in VERDICTS:
@@ -214,13 +229,13 @@ class ReplicaLifecycle(ClaimService):
     def current_disposition(self, package_id):
         self._p.sync(self._j)
         ds = self._p.dispositions.get(package_id, [])
-        return dict(ds[-1]) if ds else None
+        return copy.deepcopy(ds[-1]) if ds else None
 
     def report_readback(self, package_id, report_hash):
         """Exact old-report readback returns the OLD record; the current disposition resolves through the chain (current_disposition)."""
         self._p.sync(self._j)
         r = next((d for d in self._p.dispositions.get(package_id, []) if d["report_hash"] == report_hash), None)
-        return None if r is None else dict(r)
+        return None if r is None else copy.deepcopy(r)
 
 
     # -- s6 strict Branch A: GENERIC fail-closed lease interface (R49). The real time-aware primitive and the clock qualification are HELD ----------------------
@@ -233,6 +248,7 @@ class ReplicaLifecycle(ClaimService):
         for need in ("clock_domain_ref", "config_generation", "append_if_head_and_before"):
             if not hasattr(port, need):
                 raise Refusal("LEASE_PORT_INCOMPLETE", need)
+        deadline_ref = copy.deepcopy(deadline_ref)                              # detach the caller's nested input before any use
         dom, gen = (deadline_ref or {}).get("clock_domain_ref"), (deadline_ref or {}).get("config_generation")
         if not dom or gen is None or not isinstance(deadline_ref.get("deadline"), int) or isinstance(deadline_ref.get("deadline"), bool):
             raise Refusal("LEASE_DEADLINE_REF_UNBOUND", "deadline_ref")           # requester/builder cannot supply a bare deadline; the ref names source-owned domain/config
@@ -240,13 +256,13 @@ class ReplicaLifecycle(ClaimService):
             raise Refusal("LEASE_CLOCK_OR_CONFIG_DOMAIN_MISMATCH", "clock/config")
         binding = {"build_id": build_id, "order_id": order_id, "claim_id": claim_id, "creation_request_id": creation_request_id, "builder_grant": builder_grant, "correction_parent": correction_parent}
         for _ in range(self._max):
-            self._p.sync(self._j); head = self._j.head()
-            kind, body = self._admit_build(binding, head)
+            head = self._basis()
+            kind, body = self._admit_build(binding, head, deadline_ref)       # ALL ordinary validation runs BEFORE the port is asked
             if kind is None:
-                return dict(self._p.attempts[build_id])
+                return copy.deepcopy(self._p.attempts[build_id])
             try:
-                rec = port.append_if_head_and_before(head, kind, dict(body, deadline_ref=deadline_ref), deadline_ref)
+                rec = port.append_if_head_and_before(head, kind, copy.deepcopy(body), copy.deepcopy(deadline_ref))
             except HeadMismatch:
                 continue
-            self._p.apply(rec); return dict(self._p.attempts[build_id])
+            self._p.apply(rec); return copy.deepcopy(self._p.attempts[build_id])
         raise Refusal("FENCE_RACE_EXHAUSTED")

@@ -49,11 +49,20 @@ class ClaimService:
             raise Refusal("ORDER_REVOKED_BY_GRANT", order_id)
         return order
 
-    def _commit(self, build):
-        """build(head) verifies against self._p and returns (kind, body); retried on head race."""
+    def _basis(self):
+        """R50: the pinned conditional build basis. Sync, read HEAD, and require the projection seq/hash to EQUAL that HEAD; otherwise resync and re-read. Never build from a projection older than
+        the HEAD that will guard the append (the CAS only guards changes AFTER this basis). Non-converging => refuse closed. No cross-HEAD atomicity is claimed."""
         for _ in range(self._max):
             self._p.sync(self._j)
             head = self._j.head()
+            if head.seq == self._p.seq and head.hash == self._p.hash:
+                return head
+        raise Refusal("FENCE_RACE_EXHAUSTED", "projection never matched HEAD")
+
+    def _commit(self, build):
+        """build(head) verifies against self._p AT that exact head and returns (kind, body); retried on head race. Every builder re-checks its own state/idempotency on each retry."""
+        for _ in range(self._max):
+            head = self._basis()
             kind, body = build(head)
             if kind is None:
                 return None
@@ -95,8 +104,7 @@ class ClaimService:
 
     def verified_order(self, order_id: str):
         """The order if it verifies NOW on the synced journal (anchored issuer, anchored source binding, not revoked, not expired); raises Refusal otherwise. Subject is not checked: the content subject is not yet known at build start."""
-        self._p.sync(self._j)
-        return self._verify_order(order_id, None, self._j.head().seq)
+        return self._verify_order(order_id, None, self._basis().seq)
 
     def revoke_order(self, order_id: str, reason: str):
         def build(head):
@@ -131,14 +139,13 @@ class ClaimService:
                                  "request_id": request_id, "order_id": order_id,
                                  "bound_at_head_seq": head.seq}
         # idempotent replay path: no append when an identical live claim exists
-        self._p.sync(self._j)
-        build(self._j.head())
+        build(self._basis())
         if existing is not None:
-            return dict(existing)
+            return copy.deepcopy(existing)
         self._commit(build)
         if existing is not None:
-            return dict(existing)
-        return dict(self._p.claims[claim_id])
+            return copy.deepcopy(existing)
+        return copy.deepcopy(self._p.claims[claim_id])
 
     def consume(self, claim_id: str, identity_ref: str):
         def build(head):
@@ -151,7 +158,7 @@ class ClaimService:
             return CLAIM_CONSUMED, {"claim_id": claim_id, "identity_ref": identity_ref,
                                     "verified_at_head_seq": head.seq}
         self._commit(build)
-        return dict(self._p.claims[claim_id])
+        return copy.deepcopy(self._p.claims[claim_id])
 
     def release(self, claim_id: str, reason: str):
         def build(head):
@@ -162,7 +169,7 @@ class ClaimService:
                 raise Refusal("CLAIM_NOT_BOUND", c["state"])
             return CLAIM_RELEASED, {"claim_id": claim_id, "reason": reason}
         self._commit(build)
-        return dict(self._p.claims[claim_id])
+        return copy.deepcopy(self._p.claims[claim_id])
 
     def verify_projection(self):
         self._p.verify_against(self._j)
@@ -171,7 +178,7 @@ class ClaimService:
         """Fresh-synced copy of a claim row, or None."""
         self._p.sync(self._j)
         c = self._p.claims.get(claim_id)
-        return None if c is None else dict(c)
+        return None if c is None else copy.deepcopy(c)
 
     def lineage(self, order_id: str, request_id: str = ""):
         """Read-only governed lineage for an order id / request id on the freshly synced journal: [] if none, else reasons (ORDER_ISSUED, ORDER_REVOKED, REQUEST_CLAIM_EXISTS).
@@ -196,14 +203,14 @@ class ClaimService:
         """True only if, on the freshly synced journal, a BOUND claim for exactly this subject and request
         exists under an order that still verifies. Never raises: any doubt is False (fail-closed)."""
         try:
-            self._p.sync(self._j)
+            head = self._basis()
             cid = self._p.subject_claim.get(subject_key)
             if cid is None:
                 return False
             c = self._p.claims[cid]
             if c["state"] != "BOUND" or c["request_id"] != request_id:
                 return False
-            self._verify_order(c["order_id"], subject_key, self._j.head().seq)
+            self._verify_order(c["order_id"], subject_key, head.seq)
             return True
         except Exception:
             return False
