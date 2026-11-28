@@ -46,7 +46,10 @@ class ProcessSupervisor:
             if not r: continue
             try: chunk = os.read(fd, 4096)
             except OSError: chunk = b""
-            if not chunk: p.wait(); return "LOST", "CHILD_EXITED"
+            if not chunk:                                                # R41: EOF is bounded by the SAME whole-job deadline; a child that closed stdout but stays alive is killed and reaped
+                try: p.wait(timeout=max(deadline - time.monotonic(), 0.0))
+                except subprocess.TimeoutExpired: p.kill(); p.wait(); return "LOST", "CHILD_REPLY_TIMEOUT"
+                return "LOST", "CHILD_EXITED"
             buf += chunk
             if len(buf) > MAX_FRAME_BYTES and b"\n" not in buf[:MAX_FRAME_BYTES]: p.kill(); p.wait(); return "LOST", "CHILD_REPLY_OVERSIZED"
         line, rest = buf.split(b"\n", 1)

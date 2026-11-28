@@ -26,3 +26,6 @@ def malformed_complete_line(job):
 def two_frames_one_flush(job):
     import sys
     sys.stdout.write('{"a":1}\n{"b":2}\n'); sys.stdout.flush()
+def eof_then_stall(job):
+    import time                                                        # R41 fault: close stdout (parent sees EOF) while the process stays alive
+    os.close(1); time.sleep(8)
