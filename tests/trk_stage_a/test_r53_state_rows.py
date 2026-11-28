@@ -141,3 +141,36 @@ def test_independent_verifier_hash_equals_producer_for_every_built_row():
     rows = chain(builder(), [1.0, 2.0, 4.0])
     for r in rows: assert X.row_hash(_rowd(r), T.enums) == O.row_content_hash(T, r)
     assert X.row_hash(_rowd(rows[2]), T.enums) != X.row_hash(_rowd(rows[1]), T.enums)
+
+# ---- R53 alias finding: caller mutation after construction must NOT change the builder's declared profile ------------------------------------------
+import copy
+def _dyn_enc(st):
+    d = st.as_dict(); x = [d["acc"].data, *d["vec"].data]; return struct.pack(">%dd" % len(x), *x)
+def _dyn_dec(b):
+    x = struct.unpack(">%dd" % (len(b) // 8), b); return {"acc": x[0], "vec": list(x[1:])}
+
+def test_post_construction_mutation_of_caller_schema_does_not_change_builder():
+    c = copy.deepcopy(SCHEMA); b = StateRowBuilder(c, T, _dyn_enc, _dyn_dec, FIXED)
+    make = lambda n: b.step(lambda p, i: {"acc": 1.0, "vec": [2.0] * n}, None, {}, **kw(0, True))
+    r0 = make(2); assert len(r0.state_tuple) == 24
+    c[1]["SHAPE_DIMENSIONS"][0] = 3; c[0]["PUBLISHED"] = False; c.append(dict(c[0], COMPONENT_NAME="zz"))     # nested, scalar-field and list-level mutation
+    with pytest.raises(Refusal) as e: make(3)
+    assert e.value.code == "STATE_VALUE_SHAPE_MISMATCH" or e.value.code == "SHAPE_MISMATCH"
+    r1 = make(2); assert r1 == r0 and len(r1.state_tuple) == 24                              # genuine control: original declaration still works
+    assert b.step(lambda p, i: {"acc": 2.0, "vec": [3.0, 4.0]}, r0, {}, **kw(1)).step_index == 1       # restart control
+
+def test_new_supplied_schema_is_a_new_builder_not_an_in_place_change():
+    c = copy.deepcopy(SCHEMA); c[1]["SHAPE_DIMENSIONS"][0] = 3
+    b3 = StateRowBuilder(c, T, _dyn_enc, _dyn_dec, dict(FIXED, state_schema_version="s2"))      # explicit NEW supplied schema + version (no auto-versioning)
+    r = b3.step(lambda p, i: {"acc": 1.0, "vec": [2.0] * 3}, None, {}, **kw(0, True))
+    assert len(r.state_tuple) == 32 and r.state_schema_version == "s2"
+    with pytest.raises(Refusal): builder().decode_row_state(r)                                # the s1 builder refuses the s2 row (foreign profile)
+
+def test_post_construction_mutation_of_fixed_fields_and_tables_is_detached():
+    f = dict(FIXED); b = builder(fixed=f); f["feature_version"] = "evil"
+    assert b.step(step_fn, None, {"x": 1.0}, **kw(0, True)).feature_version == "f1"
+    t = CodeTables(enums={"SPECULATION_MODE": {"NONE": 1, "GATED_ONE_STEP": 2}}, ref_types={"RULE": 1, "ROW": 2}); b2 = builder(tables=t)
+    r0 = b2.step(step_fn, None, {"x": 1.0}, **kw(0, True))
+    t.ref_types["ROW"] = 9                                                                     # caller mutates its tables object after construction
+    r1 = b2.step(step_fn, r0, {"x": 1.0}, **kw(1))
+    assert r1.predecessor_row_hash == O.row_content_hash(T, r0)                                # predecessor hash still under the ORIGINAL tables
