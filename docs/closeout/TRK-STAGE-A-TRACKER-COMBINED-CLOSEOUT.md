@@ -93,7 +93,7 @@ EXACT = same path exists. ALIAS = responsibility lives under another path (renam
 | 45 | health/b0_adapter.py | ALIAS `stage_a/health/envelope.py` | REFERENCE_ONLY | D17/D18 |
 | 46 | health/quant_evidence.py | ALIAS `stage_a/health/evidence.py` | REFERENCE_ONLY | D17/D18 |
 | 47 | health/blast_radius.py | `stage_a/health/blast_radius.py` EXACT (+ `tracker/feature_lineage.py` source of deps) | REFERENCE_ONLY | persistence/adapter + instances + D3 ref types; action for UNDETERMINED non-required consumer has no source rule |
-| 48 | health/expectation.py | none (health/envelope.derive_silence covers silence only) | NOT_BUILT | expectation rule undefined in read sources; D17/D18 |
+| 48 | health/expectation.py | `stage_a/health/expectation.py` EXACT | BUILT_R40_GENERIC (enum, validity window and derive_silence were SOURCE-PRESENT; CORRECTED: the old 'rule undefined in read sources' was wrong. Missing input = the per-subject/profile/time ADMITTED expectation instance) | B0 p60/p80; MasterHealthV3 D117-123 |
 | 49 | coordination/interface.py | `stage_a/coordination/interface.py` EXACT | INVOKED | - |
 | 50 | coordination/transition_record.py | `.../transition_record.py` EXACT | INVOKED | D12 resolved by V0.38 text |
 | 51 | coordination/object_store_journal.py | `.../object_store_journal.py` EXACT | INVOKED | real provider absent (D10) |
