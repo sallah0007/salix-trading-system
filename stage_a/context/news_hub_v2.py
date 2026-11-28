@@ -103,9 +103,14 @@ def _need_ts(rec: dict, names, code: str) -> None:
     if bad:
         raise Refusal(",".join(bad), code=code)
 
+# Registry (S4) p293 names these four interpretive labels and adds "or equivalent": ONLY the four named tokens are enforced (exact, case-insensitive, as a field name or a top-level string value); the unenumerated equivalents are NOT guessed (held: needs an owner list).
+INTERPRETIVE_LABELS = ("BULLISH_FOR_GOLD", "BEARISH_FOR_GOLD", "CAUSED_MOVE", "MAJOR_MOVE")
 def check_event_record(rec: dict) -> None:
     if not isinstance(rec, dict):
         raise Refusal("event record not a mapping", code="EVENT_RECORD_MALFORMED")
+    bad = [k for k in rec if str(k).upper() in INTERPRETIVE_LABELS] + [v for v in rec.values() if isinstance(v, str) and v.strip().upper() in INTERPRETIVE_LABELS]
+    if bad:
+        raise Refusal(",".join(map(str, bad)), code="EVENT_RECORD_INTERPRETIVE_LABEL")      # Registry p293: event maintenance may not write interpretive labels into factual event truth
     missing = [("/".join(g)) for g in EVENT_REQUIRED if not _has(rec, g)]
     if missing:
         raise Refusal(",".join(missing), code="EVENT_RECORD_FIELD_MISSING")
