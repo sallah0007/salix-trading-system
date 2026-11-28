@@ -6,6 +6,7 @@ from stage_a.gateway.v038 import FinalResolutionIdentity as FI
 from stage_a.storage import authority_class as AC
 from stage_a.tracker import row_maintenance as RM, row_acceptance as RA
 from . import test_r53_row_route_delivery as RR
+from .test_r53_row_acceptance import acc as _acc
 from .test_r53_row_route_delivery import GTAB, code, NONE_, I, R, FA, FB, T
 from .test_r53_row_acceptance import SCHEMA, _ref_step, _i_enc, _i_dec
 
@@ -58,9 +59,45 @@ class RowL2(Maint):
         self.reg(); h0, h1 = (self.chain["B"][i][1].row_hash for i in (0, 1)); st = self.a.rig.store._i; k0 = AC._PREFIX + "pending-row/" + h0; d, e = st._d[k0]; st._d[k0] = (d[:-1] + bytes([d[-1] ^ 1]), e)
         r = RM.verify_stored_rows(self.o["B"][1]._sv[self.o["B"][0].key()]); self.assertEqual(r["overall"], "FAIL"); rs = dict(r["rows"]); self.assertTrue(rs[h0[:16]][0] == "FAIL" and rs[h1[:16]][0] == "FAIL")     # row 0 unreadable; row 1's predecessor unreadable
         self.assertEqual([x[2] for x in self.maint(13)], ["RECORDED_NOT_PASS"]); self.denied("B", "x0", 0, 14)
-    def test_an_unattributable_stored_row_sidecar_fails_closed_for_row_maintained_features(self):
+    def drop(self, key):                                                                                                      # the store-port fault: ONE object absent from get/list_prefix; journals, manifest, heads and all other data unchanged
+        st = self.a.rig.store._i; k = AC._PREFIX + key; d = st._d.pop(k); return d
+    def test_an_unparseable_sidecar_of_an_ACCEPTED_row_fails_that_feature_via_the_owning_journal_namespace(self):
         self.reg(); h = self.chain["B"][0][1].row_hash; st = self.a.rig.store._i; k = AC._PREFIX + "pending-row-fields/" + h; d, e = st._d[k]; st._d[k] = (b"{not json", e)
-        r = RM.verify_stored_rows(self.o["B"][1]._sv[self.o["B"][0].key()]); self.assertEqual((r["overall"], r["reason"]), ("FAIL", "STORED_ROW_SIDECAR_UNATTRIBUTABLE"))
+        r = RM.verify_stored_rows(self.o["B"][1]._sv[self.o["B"][0].key()]); self.assertEqual(r["overall"], "FAIL"); self.assertEqual(r["rows"][h[:16]], ("FAIL", "ACCEPTED_ROW_SIDECAR_ABSENT_OR_UNREADABLE"))
+        self.assertEqual(RM.verify_stored_rows(self.o["A"][1].register_row_maintenance(self.res["A"], self.prof(self.src)))["overall"], "VERIFIED_ROWS_EQUAL_RECOMPUTED")          # the unrelated feature is not failed
+    def test_a_missing_FINAL_accepted_row_sidecar_is_FAIL_not_a_silent_omission_and_both_consumers_deny(self):
+        b = self.reg(); r0 = RM.verify_stored_rows(b); self.assertEqual((r0["overall"], sorted(v[0] for v in r0["rows"].values())), ("VERIFIED_ROWS_EQUAL_RECOMPUTED", ["PENDING", "VERIFIED", "VERIFIED"]))      # full control
+        h1 = self.chain["B"][1][1].row_hash; heads = self.heads(); self.drop("pending-row-fields/" + h1); r = RM.verify_stored_rows(b)
+        self.assertEqual(r["overall"], "FAIL"); self.assertEqual(r["rows"][h1[:16]], ("FAIL", "ACCEPTED_ROW_SIDECAR_ABSENT_OR_UNREADABLE")); self.assertEqual(sorted(v[0] for v in r["rows"].values()), ["FAIL", "PENDING", "VERIFIED"])                                    # survivor still verifies; the missing tail is not silently omitted
+        self.assertEqual([x[2] for x in self.maint(13)], ["RECORDED_NOT_PASS"]); self.denied("B", "ms0", 0, 14); self.denied("B", "ms1", 1, 14); self.denied("A", "ms-a", 0, 14); self.assertEqual(self.heads(), heads)
+    def test_a_missing_INTERNAL_accepted_row_sidecar_or_row_bytes_is_FAIL_and_an_all_sidecars_missing_feature_is_HELD_not_a_clean_pass(self):
+        b = self.reg(); h0, h1 = (self.chain["B"][i][1].row_hash for i in (0, 1)); self.drop("pending-row-fields/" + h0); r = RM.verify_stored_rows(b)
+        self.assertEqual((r["overall"], r["rows"][h0[:16]][0]), ("FAIL", "FAIL")); self.assertEqual(r["rows"][h1[:16]][0], "FAIL")                                # h1's predecessor is gone too: unreadable
+        self.drop("pending-row-fields/" + h1); r = RM.verify_stored_rows(b); self.assertEqual((r["overall"], r["reason"]), ("FAIL", "ROW_FAIL"))             # the pending row's sidecar still attributes the feature_id: both accepted rows FAIL
+        self.drop("pending-row-fields/" + self.chain["B"][2][1].row_hash); r = RM.verify_stored_rows(b); self.assertEqual((r["overall"], r["reason"]), ("UNAVAILABLE", "ROW_ACCEPTED_NAMESPACE_UNATTRIBUTABLE_HELD")); self.assertEqual(len(r["unattributable"]), 2)   # nothing left to attribute by: HELD, never PASS, never a global verdict
+        self.assertEqual(RM.verify_stored_rows(self.o["A"][1].register_row_maintenance(self.res["A"], self.prof(self.src)))["overall"], "VERIFIED_ROWS_EQUAL_RECOMPUTED")                          # unrelated feature (different feature_id namespace) unaffected
+        self.assertEqual([x[2] for x in self.maint(13)], ["RECORDED_NOT_PASS"]); self.denied("B", "ms2", 0, 14)
+    def test_row_bytes_missing_with_the_sidecar_present_is_FAIL(self):
+        b = self.reg(); h1 = self.chain["B"][1][1].row_hash; self.drop("pending-row/" + h1); r = RM.verify_stored_rows(b); self.assertEqual((r["overall"], r["rows"][h1[:16]][0]), ("FAIL", "FAIL"))
+    def test_the_read_basis_must_be_coherent_a_journal_that_advances_during_the_pass_is_HELD_and_a_genuine_complete_history_is_VERIFIED(self):
+        from unittest import mock
+        b = self.reg(); self.assertEqual(RM.verify_stored_rows(b)["overall"], "VERIFIED_ROWS_EQUAL_RECOMPUTED")
+        real = RM.verify_row_step; state = {"done": False}
+        def advancing(**k):
+            if not state["done"]: state["done"] = True; _acc(self.acc, self.chain["B"][2][1].row_hash)                 # a legitimate NEW accepted row lands mid-pass
+            return real(**k)
+        with mock.patch.object(RM, "verify_row_step", advancing): r = RM.verify_stored_rows(b)
+        self.assertEqual((r["overall"], r["reason"]), ("UNAVAILABLE", "ROW_ACCEPTED_JOURNAL_ADVANCED_DURING_READ_HELD")); r2 = RM.verify_stored_rows(b); self.assertEqual(sorted(v[0] for v in r2["rows"].values()), ["VERIFIED", "VERIFIED", "VERIFIED"])   # re-run on the new basis: all three accepted rows
+    def test_an_incoherent_head_read_is_HELD(self):
+        class J:
+            def __init__(s, j): s.j, s.n = j, 0
+            def head(s):
+                s.n += 1; h = s.j.head(); return h if s.n % 2 else type(h)(h.seq + 1, h.hash)
+            def read_from(s, n): return s.j.read_from(n)
+        class JS:
+            def __init__(s, js): s.js = js
+            def journal(s, ns): return J(s.js.journal(ns)) if ns.startswith("rowtx/") else s.js.journal(ns)
+        b = self.reg(); b = RM.RowBinding(JS(b.journals), b.rows, b.store, b.feature_key, b.profile); r = RM.verify_stored_rows(b); self.assertEqual((r["overall"], r["reason"]), ("UNAVAILABLE", "ROW_ACCEPTED_JOURNAL_BASIS_NOT_COHERENT_HELD"))
     def test_an_unbound_or_incomplete_profile_is_HELD_UNAVAILABLE_not_PASS_and_zero_accepted_rows_is_not_a_completed_search(self):
         for p in (None, {}, dict(self.prof(self.src), resolve_inputs=None)):
             b = self.o["B"][1].register_row_maintenance(self.res["B"], p); r = RM.verify_stored_rows(b); self.assertEqual((r["overall"], r["reason"], r["l2"]), ("UNAVAILABLE", "ROW_PROFILE_HELD", "UNAVAILABLE"))
