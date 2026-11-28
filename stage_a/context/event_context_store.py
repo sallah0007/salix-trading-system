@@ -7,9 +7,11 @@ FACT, CORR, INTENT = "event-context/fact/", "event-context/corr/", "event-contex
 def _s(x): return isinstance(x, str) and bool(x)
 def _k(prefix, ident): return prefix + hashlib.sha256(ident.encode("utf-8")).hexdigest()
 class EventContextStore:
-    def __init__(self, store, *, encode, decode, identity_of, columns_of):
+    def __init__(self, store, *, encode, decode, identity_of, columns_of, semantic_validator=None):
         if store is None or not all(callable(f) for f in (encode, decode, identity_of, columns_of)): raise Refusal("encoding interface", code="EVENT_CONTEXT_ENCODING_INTERFACE_UNBOUND_HELD")
         self._s, self._e, self._d, self._i, self._c = store, encode, decode, identity_of, columns_of
+        if semantic_validator is not None and not callable(semantic_validator): raise Refusal("semantic_validator", code="EVENT_CONTEXT_SEMANTIC_VALIDATOR_NOT_CALLABLE")
+        self._sv = semantic_validator        # R52: OPTIONAL governed factual-semantics port (e.g. `context.news_hub_v2.check_event_record`). It governs SEMANTIC USE only; put()/get() keep storing and reading raw evidence unchanged.
     def put(self, fact, *, corrects=None):
         ident = self._i(fact); raw = self._e(fact)
         if not (_s(ident) and isinstance(raw, (bytes, bytearray)) and raw): raise Refusal("fact", code="EVENT_CONTEXT_FACT_INVALID")
@@ -35,6 +37,13 @@ class EventContextStore:
                 got = self._s.get(ck)
                 if got is None or got[0] != body: raise IntegrityFailure("correction lineage differs")
         return ident
+    def get_for_semantic_use(self, ident):
+        """R52 (Manager 21:03, Registry p293): the raw store PRESERVES any supplied evidence, but a fact may be used as FACTUAL Event/Context truth only if an explicit governed semantic-validation port is bound AND accepts it. Unbound port => semantic use is HELD (refusal, nothing returned); a port refusal propagates; a missing fact returns None. No label list or grammar is defined here: whatever the bound port enforces is the only semantic rule (the pure four-token check in `news_hub_v2.check_event_record` is a PARTIAL candidate, not a complete factual-semantics validator)."""
+        if self._sv is None: raise Refusal(str(ident), code="EVENT_CONTEXT_SEMANTIC_USE_HELD_NO_VALIDATION_PORT")
+        f = self.get(ident)
+        if f is None: return None
+        self._sv(f)
+        return f
     def _hidden(self, fact_key):
         """a correction whose intent exists but whose lineage is not (yet) confirmed. LEGACY facts (no intent record) are visible; a legacy fact-without-lineage partial write cannot be told apart and stays readable (explicit held compatibility)."""
         h = fact_key[len(FACT):]
