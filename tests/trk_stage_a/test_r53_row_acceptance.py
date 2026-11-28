@@ -40,7 +40,7 @@ def evidence_for(a, h):
     """ACTUAL independent verification of the stored row against its stored predecessor; returns (result, evidence ref naming it)."""
     row = a._rows.load(h); pred = None if row.predecessor_row_hash is None else a._rows.load(row.predecessor_row_hash.hex()); xs = {"in0": 1.0, "in1": 2.0, "in2": 4.0}
     res = VR.verify_row_step(row=row, predecessor=pred, schema=SCHEMA, reference_step=_ref_step, decode=_i_dec, encode=_i_enc,
-        resolve_inputs=lambda d: {"declared": [(r, hh, xs[r.target_id.decode()]) for r, hh in d], "values": {"x": xs[d[0][0].target_id.decode()]}},
+        resolve_inputs=lambda d: {"declared": [(r, hh, xs[r.target_id.decode()]) for r, hh in d]}, input_symbols={"x": 0},
         recompute_row_hash=lambda r: X.row_hash(RS.independent_dict(T, r), T.enums).hex(), expect_row_hash=h)
     return res, Ref("VERIFICATION_EVIDENCE_REF", b"row-step", b"v1", bytes.fromhex(res.result_hash))
 def acc(a, h, **kw):
@@ -152,7 +152,7 @@ def test_acceptance_requires_the_actual_verification_of_this_row_and_an_evidence
     assert e.value.code == "VERIFICATION_SCOPE_MISMATCH"                                                                    # wrong scope, even with a receipt
     bad = O.PendingRow(**{**rows.load(h1).__dict__, "state_tuple": rows.load(h1).state_tuple[:-1] + b"\x01"})            # a FAIL result (tampered row) is never acceptable
     fres = VR.verify_row_step(row=bad, predecessor=rows.load(h0), schema=SCHEMA, reference_step=_ref_step, decode=_i_dec, encode=_i_enc,
-        resolve_inputs=lambda d: {"declared": [(r, hh, 2.0) for r, hh in d], "values": {"x": 2.0}}, recompute_row_hash=lambda r: X.row_hash(RS.independent_dict(T, r), T.enums).hex(), expect_row_hash=O.row_content_hash(T, bad).hex())
+        resolve_inputs=lambda d: {"declared": [(r, hh, 2.0) for r, hh in d]}, input_symbols={"x": 0}, recompute_row_hash=lambda r: X.row_hash(RS.independent_dict(T, r), T.enums).hex(), expect_row_hash=O.row_content_hash(T, bad).hex())
     assert fres.status != "PASS"
     with pytest.raises(Refusal): a.accept(h1, verification_result=fres, verification_evidence_ref=Ref("VERIFICATION_EVIDENCE_REF", b"x", b"v1", bytes.fromhex(fres.result_hash)), currentness_state="CURRENT", status_event="PUBLISHABLE")
     assert [r.seq for r in js.journal(RA.row_namespace(out[0][0])).read_from(1)] == [1]                                       # nothing was accepted by any refusal

@@ -3,7 +3,7 @@ Producer/independent byte-hash equality alone does not show that; this re-derive
 Imports only stdlib and this verifier's own modules. It shares NO code with tracker/materialization/state_rows (own shape/finite checks, own projection rule).
 SUPPLIED (held when unbound; nothing defaulted or invented): `reference_step(prior_values|None, inputs)` = the independent reference implementation of the profile's declared program
 (profile math is source-owned, so tests use UNADMITTED SIM instances); `decode`/`encode` = the STATE_TUPLE codec (D13 bytes unadmitted); `resolve_inputs(declared)` re-reads the actual
-inputs (None => INSUFFICIENT_EVIDENCE, never PASS); `recompute_row_hash(row)` = the independent row hash. LIMIT: this layer cannot recompute an input VALUE's hash (the input-hash rule is
+inputs as {"declared": [(ref, hash, value), ...]} (None => INSUFFICIENT_EVIDENCE, never PASS) and `input_symbols` = the SUPPLIED symbol -> declared-input-index mapping from which the evaluation values are derived (None = held = INSUFFICIENT_EVIDENCE; never guessed); `recompute_row_hash(row)` = the independent row hash. LIMIT: this layer cannot recompute an input VALUE's hash (the input-hash rule is
 not defined here), so it binds inputs by the declared (ref, hash) pairs the resolver echoes, and states that limit in the result subject."""
 import hashlib, math, struct
 from .verification_result import _issue_result, PASS, FAIL, INSUFFICIENT_EVIDENCE
@@ -12,6 +12,12 @@ SCOPE_ROW_STEP = "COMPONENT_ROW_STEP_V1"
 ROW_STEP_PROFILE = frozenset(("schema_well_formed", "row_hash_recomputed", "predecessor_linkage", "predecessor_state_canonical", "inputs_reread_and_bound",
                               "successor_state_equals_reference", "projection_equals_reference"))
 INPUT_VALUE_HASH_LIMIT = "INPUT_VALUE_HASH_RULE_NOT_DEFINED_BINDING_BY_DECLARED_REF_HASH_ONLY"
+def _snap(x):
+    """Own deep snapshot of plain data (dict/list/tuple/str/int/float/bool/bytes/None); anything else is carried by reference (rows are frozen; refs are frozen)."""
+    if isinstance(x, dict): return {k: _snap(v) for k, v in x.items()}
+    if isinstance(x, list): return [_snap(v) for v in x]
+    if isinstance(x, tuple): return tuple(_snap(v) for v in x)
+    return x
 _DIMS = {"BINARY64_SCALAR": 0, "FIXED_VECTOR_BINARY64": 1, "FIXED_MATRIX_BINARY64": 2}
 
 def _f(x):
@@ -44,7 +50,8 @@ def _ordered(schema, st): return {c["COMPONENT_NAME"]: st[c["COMPONENT_NAME"]] f
 _IDENT = ("feature_id", "feature_version", "quant_manifest_hash", "instrument_id", "timeframe_id", "materialization_version", "state_schema_version",
           "logical_encoding_version", "arithmetic_contract_version")
 
-def verify_row_step(*, row, predecessor, schema, reference_step, decode, encode, resolve_inputs, recompute_row_hash, expect_row_hash):
+def verify_row_step(*, row, predecessor, schema, reference_step, decode, encode, resolve_inputs, input_symbols, recompute_row_hash, expect_row_hash):
+    schema = _snap(schema); input_symbols = _snap(input_symbols)      # R53: snapshot what is validated; a supplied port can never change it afterwards
     checks, reasons = [], []
     subject = {"row_content_hash": str(expect_row_hash), "state_tuple_sha256": hashlib.sha256(getattr(row, "state_tuple", b"") if isinstance(getattr(row, "state_tuple", b""), bytes) else b"").hexdigest(),
                "predecessor_row_hash": "" if getattr(row, "predecessor_row_hash", None) is None else row.predecessor_row_hash.hex(), "input_binding_limit": INPUT_VALUE_HASH_LIMIT}
@@ -74,13 +81,22 @@ def verify_row_step(*, row, predecessor, schema, reference_step, decode, encode,
     except Exception as e: res = None; reasons.append("input_port:%s" % type(e).__name__)
     if res is None:
         chk("inputs_reread_and_bound", False, "inputs could not be re-read"); pad(); return done(INSUFFICIENT_EVIDENCE)
-    try: bound = tuple((r, h) for r, h, _ in res["declared"]) == tuple(row.input_refs_and_hashes) and isinstance(res["values"], dict)
+    vals = None
+    try:
+        decl = _snap(list(res["declared"]))
+        bound = tuple((r, h) for r, h, _ in decl) == tuple(row.input_refs_and_hashes)
+        if input_symbols is None: bound = False; reasons.append("input_symbol_mapping_not_supplied_held")
+        elif bound:                                              # evaluation values are DERIVED from the bound re-read payloads through the SUPPLIED symbol -> declared-input mapping; no second value carrier exists
+            if not isinstance(input_symbols, dict) or not input_symbols or any(not isinstance(k, str) or type(i) is not int or not 0 <= i < len(decl) for k, i in input_symbols.items()): bound = False; reasons.append("input_symbol_mapping_invalid")
+            else: vals = {k: decl[i][2] for k, i in input_symbols.items()}
     except Exception: bound = False
-    chk("inputs_reread_and_bound", bound)
+    if input_symbols is None and res is not None:
+        chk("inputs_reread_and_bound", False, "symbol mapping held"); pad(); return done(INSUFFICIENT_EVIDENCE)
+    chk("inputs_reread_and_bound", bound and vals is not None)
     exp, ok_state, ok_proj = None, False, False
-    if bound and pc and ok:
+    if bound and vals is not None and pc and ok:
         try:
-            exp = _state(schema, reference_step(None if prior is None else dict(prior), res["values"]))
+            exp = _state(schema, reference_step(None if prior is None else _snap(prior), _snap(vals)))
             ok_state = encode(_ordered(schema, exp)) == row.state_tuple
             pub = [c for c in schema if c["PUBLISHED"]]
             ok_proj = len(pub) == 1 and pub[0]["COMPONENT_TYPE"] == "BINARY64_SCALAR" and row.published_projection_name == pub[0]["COMPONENT_NAME"] and row.published_projection_bits == struct.pack(">d", exp[pub[0]["COMPONENT_NAME"]])
