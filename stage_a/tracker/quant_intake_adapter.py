@@ -177,13 +177,31 @@ def _check_producer_binding(pkg, producer_authority, a):
 _LEARNED_EDGES = ("LEARNED_DERIVED_MODEL_EDGE", "MODEL_GENERATION_INPUT_EDGE")
 
 @dataclass(frozen=True)
+class AncestryQueryReceipt:
+    """R52: the resolver's IMMUTABLE echo of the exact query it answered. A cached or replayed binding made for another feature/version/generation/fit set carries THAT query's echo, so intake can compare the echo with THIS intake's own values before it uses the closure. Every field is a raw typed value copied from the query (no derived identity, no byte encoding, no guessed equality between different-typed things): instrument, timeframe, feature_id, feature_version, the raw UPSTREAM_MODEL_ID / UPSTREAM_GENERATION_ID strings, and the fit references as (generation, ref_hash) pairs. `closure_id` names the closure record the receipt was issued for (self-consistency with the binding's record only; it proves no provenance). Candidate: the resolver's appointment and any signature over the receipt are HELD."""
+    instrument: str; timeframe: str; feature_id: str; feature_version: str
+    upstream_model_id: str; upstream_generation_id: str
+    fit_refs: tuple          # sorted tuple of (generation, ref_hash)
+    closure_id: str
+
+def query_receipt_for(feature_key, upstream_model_id, upstream_generation_id, fit_refs, closure_id) -> AncestryQueryReceipt:
+    """What an honest resolver builds from the query it was handed (also used by the tests as the genuine-resolver positive control)."""
+    return AncestryQueryReceipt(feature_key.scope.instrument, feature_key.scope.timeframe, feature_key.feature_id, feature_key.feature_version, upstream_model_id, upstream_generation_id,
+                                tuple(sorted((r.get("generation"), r.get("ref_hash")) for r in fit_refs)), closure_id)
+
+@dataclass(frozen=True)
 class AncestryBinding:
-    """What an EXPLICIT owner-supplied ancestry resolver returns (R54). The resolver, not intake, owns the mapping from the package's two strings and its fit references to nodes of a closure record; intake assumes NO string/number equality between the package fields and node ids or hashes (the sources do not give one). The binding names: the closure `record` (ml/closure ClosureRecord), the node id the resolver says is this FEATURE (`subject_node`), the nodes it says correspond to UPSTREAM_MODEL_ID / UPSTREAM_GENERATION_ID, and one node per fit-reference generation. Intake then CHECKS those claims against the DERIVED closure. Candidate only: the completeness witness stays unadmitted."""
+    """What an EXPLICIT owner-supplied ancestry resolver returns (R54/R52). The resolver, not intake, owns the mapping from the package's two strings and its fit references to nodes of a closure record; intake assumes NO string/number equality between the package fields and node ids or hashes (the sources do not give one). The binding names: the closure `record` (ml/closure ClosureRecord), the node id the resolver says is this FEATURE (`subject_node`), the nodes it says correspond to UPSTREAM_MODEL_ID / UPSTREAM_GENERATION_ID, and one node per fit-reference generation (`fit_ref_nodes`, a mapping or pairs; normalised to an immutable tuple of pairs). `query_receipt` is the resolver's immutable echo of the query it answered: intake compares it with THIS intake before using anything else (a consistent binding for another query is refused). Intake then CHECKS the node claims against the DERIVED closure. Candidate only: the completeness witness stays unadmitted."""
     record: object
     subject_node: str
     upstream_model_node: str
     upstream_generation_node: str
-    fit_ref_nodes: dict          # fit-reference generation (int) -> closure node id
+    fit_ref_nodes: object
+    query_receipt: object = None
+    def __post_init__(self):
+        f = self.fit_ref_nodes
+        if isinstance(f, dict): object.__setattr__(self, "fit_ref_nodes", tuple(sorted(f.items(), key=lambda kv: repr(kv[0]))))
+        elif not (isinstance(f, tuple) and all(isinstance(x, tuple) and len(x) == 2 for x in f)): object.__setattr__(self, "fit_ref_nodes", None)
 
 def _check_ancestry(pkg, m, a, resolver):
     """R54 (Composer V9 s27/s28): UPSTREAM_MODEL_ID/UPSTREAM_GENERATION_ID are ancestry EDGES whose closure is governed by Contract DEPENDENCY_CLOSURE_RECORD / ANCESTRY_CLOSURE_REPORT. Two strings in the package correlate to nothing by themselves, and the narrow fit-reference currency (`check_fit_refs`) is not whole-ancestry completeness. A learned-derived build (fit_refs non-empty) is therefore ancestry UNKNOWN (held: intake does not proceed) unless an EXPLICIT `ancestry_resolver(feature_key, upstream_model_id, upstream_generation_id, fit_refs)` returns an AncestryBinding whose closure (1) is well-formed, (2) DERIVES to PASS, (3) has the claimed subject node as its own subject, (4) reaches the upstream-model and upstream-generation nodes AND every fit-reference node, (5) with at least one content-carrying learned/model-generation edge among the edges into reached model/generation nodes. Any contradiction FAILS; a missing resolver/binding stays UNKNOWN."""
@@ -198,16 +216,23 @@ def _check_ancestry(pkg, m, a, resolver):
     from ..ml import closure as CL
     b = resolver(a.feature_key, mid, gid, list(m.data["fit_refs"]))
     if b is None: return held("RESOLVER_RETURNED_NO_BINDING")
-    if not isinstance(b, AncestryBinding) or not isinstance(b.fit_ref_nodes, dict): return fail("ANCESTRY_BINDING_MALFORMED")
+    if not isinstance(b, AncestryBinding) or b.fit_ref_nodes is None: return fail("ANCESTRY_BINDING_MALFORMED")
+    qr = b.query_receipt
+    if qr is None: return held("QUERY_RECEIPT_ABSENT_MAPPING_NOT_ESTABLISHED")            # the mapping to THIS query cannot be established: UNKNOWN, never a pass
+    if not isinstance(qr, AncestryQueryReceipt): return fail("ANCESTRY_QUERY_RECEIPT_MALFORMED")
+    here = query_receipt_for(a.feature_key, mid, gid, m.data["fit_refs"], qr.closure_id)
+    if qr != here: return fail("ANCESTRY_BINDING_QUERY_MISMATCH")                        # a consistent binding issued for another feature/version/generation/fit set (cache or replay)
+    fit_nodes = dict(b.fit_ref_nodes)
     try: v = CL.derive(b.record)
     except Refusal as e: return fail("ANCESTRY_CLOSURE_MALFORMED:" + e.code)
     rec = b.record
+    if qr.closure_id != rec.closure_id: return fail("ANCESTRY_RECEIPT_FOR_ANOTHER_CLOSURE")
     if v.verdict != "PASS": return fail("ANCESTRY_CLOSURE_NOT_PASS:" + ",".join(v.reasons))
     if rec.subject_id != b.subject_node: return fail("ANCESTRY_CLOSURE_FOR_ANOTHER_SUBJECT")
     reached = set(v.reached)
     if b.upstream_model_node not in reached or b.upstream_generation_node not in reached: return fail("UPSTREAM_ID_NOT_IN_CLOSURE")
     gens = [r.get("generation") for r in m.data["fit_refs"]]
-    if any(g not in b.fit_ref_nodes or b.fit_ref_nodes[g] not in reached for g in gens): return fail("FIT_REFERENCE_NOT_IN_CLOSURE")
+    if any(g not in fit_nodes or fit_nodes[g] not in reached for g in gens): return fail("FIT_REFERENCE_NOT_IN_CLOSURE")
     if not any(e.edge_class in _LEARNED_EDGES and e.content_carrying and e.child in ({rec.subject_id} | reached) and e.parent in (b.upstream_model_node, b.upstream_generation_node) for e in rec.edges):
         return fail("NO_LEARNED_EDGE_TO_UPSTREAM_IDS")
     a.ancestry = ("PASS_CANDIDATE", "")
