@@ -43,13 +43,13 @@ class ShadowLedger:
         self._provisional[(logical_key, trigger_id)] = prediction_event_id; self._ids[prediction_event_id] = (logical_key, trigger_id, "PROVISIONAL")
         return "PROVISIONAL"
 
-    def record(self, logical_key, trigger_id, prediction_event_id, outcome, detail=""):
-        """The ONE terminal disposition of an expected trigger. Exact repeat (a retry) = no-op, never a second count; a different outcome/id for a finalized trigger is refused (immutable)."""
+    def _check_record(self, logical_key, trigger_id, prediction_event_id, outcome, detail=""):
+        """Every constraint of `record`, with NO write: returns ("DUPLICATE_NOOP"|"WRITE", slot, row) or raises the same refusals `record` raises."""
         self._slot(logical_key, trigger_id, prediction_event_id)
         if outcome not in OUTCOMES: raise Refusal(str(outcome), code="SHADOW_OUTCOME_NOT_ADMITTED")
         slot = (logical_key, trigger_id); cur = self._expected[slot]; row = (prediction_event_id, outcome, detail)
         if cur is not None:
-            if cur == row: return "DUPLICATE_NOOP"
+            if cur == row: return "DUPLICATE_NOOP", slot, row
             raise Refusal(trigger_id, code="SHADOW_EVENT_ID_CONFLICT" if cur[0] != prediction_event_id else "SHADOW_TERMINAL_IMMUTABLE")
         prev = self._ids.get(prediction_event_id)
         if prev is not None and prev[:2] != slot: raise Refusal(prediction_event_id, code="SHADOW_EVENT_ID_CONFLICT")
@@ -58,6 +58,16 @@ class ShadowLedger:
         if prov is not None and prov != prediction_event_id and outcome != "LIFECYCLE_FENCED": raise Refusal(trigger_id, code="SHADOW_EVENT_ID_CONFLICT")
         # a PROVISIONAL abstention may be finalized as MODEL_ABSTAINED or superseded by LIFECYCLE_FENCED (fence wins); PUBLISHED after a provisional abstention is not defined by source: refused
         if prov is not None and outcome == "PUBLISHED": raise Refusal(trigger_id, code="SHADOW_PUBLISHED_AFTER_PROVISIONAL_ABSTENTION_NOT_DEFINED")
+        return "WRITE", slot, row
+
+    def check_record(self, logical_key, trigger_id, prediction_event_id, outcome, detail=""):
+        """R51: read-only pre-validation (a caller with a publication side effect must know the record will be accepted BEFORE the effect). Returns "WRITE" or "DUPLICATE_NOOP"."""
+        return self._check_record(logical_key, trigger_id, prediction_event_id, outcome, detail)[0]
+
+    def record(self, logical_key, trigger_id, prediction_event_id, outcome, detail=""):
+        """The ONE terminal disposition of an expected trigger. Exact repeat (a retry) = no-op, never a second count; a different outcome/id for a finalized trigger is refused (immutable)."""
+        what, slot, row = self._check_record(logical_key, trigger_id, prediction_event_id, outcome, detail)
+        if what == "DUPLICATE_NOOP": return what
         self._expected[slot] = row; self._provisional.pop(slot, None); self._ids[prediction_event_id] = (logical_key, trigger_id, outcome)
         return "RECORDED"
 

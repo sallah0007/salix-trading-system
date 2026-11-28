@@ -62,3 +62,71 @@ class Emitter(unittest.TestCase):
         self.assertEqual(code(em.emit, fk, supplied(), **kw(sequence=2)), "BOUNDARY_EVIDENCE_CONFLICTS_WITH_COMMITTED_RECORD")          # a stale supplied prior state is refused: prior is derived from the journal
         r = em.emit(fk, supplied(), **kw(sequence=2, boundary_evidence=boundary(PRIOR_STATE="CANONICAL_ACCEPTED")))
         self.assertEqual(r["status_event"]["NEW_STATE"], "PUBLISHABLE"); self.assertEqual(r["status_event"]["PRIOR_STATE"], "CANONICAL_ACCEPTED"); self.assertEqual(r["audit"]["predecessor_hash"], acc.record_hash); self.assertEqual(r["audit"]["operation"], "PUBLISHABLE")
+
+
+# ---- R51: pinned owning/side HEAD races (genuine interleavings through public journal/path hooks; SIMULATION, TEST mapping) ----------------------------------------------------------
+from stage_a.tracker.status_projection import StatusProjection
+def publishable(fj, fk, body):
+    acc = fj.read_from(1)[0]
+    return lambda: fj.append(fj.head(), "PUBLISHABLE", {"feature_key": fk.key(), "feature_version": fk.feature_version, "accepted_seq": acc.seq, "accepted_hash": acc.record_hash, "verification_hash": body["verification_hash"]})
+class Races(unittest.TestCase):
+    M2 = {"CANONICAL_ACCEPTED": "SIM_CUR", "PUBLISHABLE": "SIM_OUT"}                 # TEST mapping: old -> CURRENT, new -> SUPERSEDED (no source defines one)
+    def test_a_publishable_append_between_the_origin_read_and_the_commit_never_leaves_an_old_origin_stamped_with_the_new_head(self):
+        rig, fk, fj, path, body = build(); em = StatusEmitter(path, kind_to_token=self.M2); real = fj.head; n = [0]; act = publishable(fj, fk, body)
+        def head():
+            n[0] += 1
+            if n[0] == 2: act()                                                # 1 = emitter's pinned basis, 2 = the path.commit capture: the owning HEAD moves between them
+            return real()
+        fj.head = head
+        r = em.emit(fk, supplied(), **kw(boundary_evidence=boundary(PRIOR_STATE="CANONICAL_ACCEPTED")))
+        recs = path.records(); self.assertEqual([b["origin"]["kind"] for b in recs], ["PUBLISHABLE"]); self.assertEqual(recs[0]["source_head_seq"], 2); self.assertEqual(r["status_event"]["NEW_STATE"], "PUBLISHABLE")      # re-derived from the NEW record, never CANONICAL_ACCEPTED/CURRENT on head 2
+        proj = path.status_projection(); self.assertTrue(proj.authoritative); g = gw(proj); path.feed(g)
+        self.assertNotIsInstance(g.resolve("r1", _entry(fid=F, ver=fk.feature_version), I, I, 3, 10, _health()), G.Binding)          # SUPERSEDED: the genuine latest-source result denies
+    def test_the_same_race_with_a_boundary_evidence_that_cannot_describe_the_new_record_refuses_and_writes_nothing(self):
+        rig, fk, fj, path, body = build(); em = StatusEmitter(path, kind_to_token=self.M2); real = fj.head; n = [0]; act = publishable(fj, fk, body)
+        def head():
+            n[0] += 1
+            if n[0] == 2: act()
+            return real()
+        fj.head = head
+        self.assertEqual(code(em.emit, fk, supplied(), **kw()), "BOUNDARY_EVIDENCE_CONFLICTS_WITH_COMMITTED_RECORD"); self.assertEqual(path.records(), [])
+    def test_two_emitters_one_effect_when_the_second_runs_between_the_first_ones_validation_and_append(self):
+        rig, fk, fj, path, body = build(); e1, e2 = StatusEmitter(path, kind_to_token=MAP), StatusEmitter(path, kind_to_token=MAP); real = path.records; fired = []
+        def records():
+            out = real()
+            if not fired: fired.append(1); self.assertFalse(e2.emit(fk, supplied(), **kw())["replay"])          # inner emitter commits seq1 AFTER the outer validated mine=[]
+            return out
+        path.records = records
+        r = e1.emit(fk, supplied(), **kw()); path.records = real
+        self.assertTrue(r["replay"]); self.assertEqual(len(path.records()), 1); p = path.status_projection(); self.assertTrue(p.authoritative)               # cold projection does NOT raise SEQUENCE_NOT_INCREASING
+    def test_different_origins_racing_keep_strictly_increasing_sequences_or_refuse(self):
+        rig, fk, fj, path, body = build(); e1 = StatusEmitter(path, kind_to_token=self.M2); e1.emit(fk, supplied(), **kw()); publishable(fj, fk, body)()
+        e2 = StatusEmitter(path, kind_to_token=self.M2); real = path.records; fired = []
+        def records():
+            out = real()
+            if not fired: fired.append(1); e2.emit(fk, supplied(), **kw(sequence=2, boundary_evidence=boundary(PRIOR_STATE="CANONICAL_ACCEPTED")))
+            return out
+        path.records = records
+        self.assertTrue(e1.emit(fk, supplied(), **kw(sequence=2, boundary_evidence=boundary(PRIOR_STATE="CANONICAL_ACCEPTED")))["replay"]); path.records = real
+        self.assertEqual(sorted(b["seq"] for b in path.records()), [1, 2]); path.status_projection()
+    def test_write_then_raise_restart_retry_makes_one_effect_and_unrelated_next_status_still_works(self):
+        rig, fk, fj, path, body = build(); em = StatusEmitter(path, kind_to_token=self.M2); sj = path._sj; real = sj.append; state = [0]
+        def flaky(h, k, b):
+            r = real(h, k, b)
+            if not state[0]: state[0] = 1; raise RuntimeError("WRITE_LANDED_OUTCOME_UNKNOWN")
+            return r
+        sj.append = flaky
+        with self.assertRaises(RuntimeError): em.emit(fk, supplied(), **kw())
+        sj.append = real; r = StatusEmitter(path, kind_to_token=self.M2).emit(fk, supplied(), **kw(sequence=2)); self.assertTrue(r["replay"]); self.assertEqual(len(path.records()), 1)       # restart + retry: the durable record is found by origin
+        publishable(fj, fk, body)(); r2 = em.emit(fk, supplied(), **kw(sequence=2, boundary_evidence=boundary(PRIOR_STATE="CANONICAL_ACCEPTED"))); self.assertFalse(r2["replay"]); self.assertEqual(len(path.records()), 2); path.status_projection()
+    def test_a_race_that_never_settles_refuses_closed(self):
+        rig, fk, fj, path, body = build(); em = StatusEmitter(path, kind_to_token=MAP); sj = path._sj; real = sj.head; n = [0]
+        def head():
+            h = real(); n[0] += 1
+            if n[0] % 2 == 1: return h
+            return h
+        from tracker_component.journal_port import HeadMismatch, Head
+        orig_append = sj.append
+        def append(h, k, b): raise HeadMismatch(h, h)
+        sj.append = append
+        self.assertEqual(code(em.emit, fk, supplied(), **kw()), "STATUS_EMIT_RACE_EXHAUSTED"); sj.append = orig_append; self.assertEqual(path.records(), [])
