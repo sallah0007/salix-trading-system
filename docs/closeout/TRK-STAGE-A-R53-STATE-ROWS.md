@@ -1,0 +1,10 @@
+# R53 — generic state tuple + PendingRow production
+
+CODER FINDING != SALIX DECISION. A merge/CI pass clears no gate. Hold list unchanged (A02 Class B, A07/COVERAGE, QC34, A08, Stage A, all A07 qualifiers UR).
+
+**Withdrawal.** My statement that no state-component schema machinery existed in the repo was a name-grep conclusion and was wrong in scope: `composer/expression/typed_shapes.py` already holds `validate_state_schema` and the immutable `Typed` values. What was absent was the generic step/restart/row layer, and a missing governed profile INSTANCE is not a missing source or Owner decision.
+
+**Built (`stage_a/tracker/materialization/state_rows.py`).** Supplied-schema `build_state` (exact component set, shape, finite binary64, canonical schema order), `StateRowBuilder.step/row_for/decode_row_state`: restart only from the exact prior committed tuple bytes (projection must agree with it, never the reverse), foreign-profile predecessor refusal, step_index = predecessor+1, predecessor hash from `row_content_hash`, origin-xor-predecessor via the existing row rules. Projection is derived only when exactly one PUBLISHED component is a BINARY64_SCALAR; otherwise `PROJECTION_RULE_NOT_SUPPLIED`.
+**Held (supplied, not invented):** schema instance, step function (profile math), STATE_TUPLE codec (D13 bytes unadmitted; round trip enforced), code tables, ceilings values, commit-point id rule, clock. Tests use SIM profiles/codec labelled unadmitted.
+**Evidence.** `tests/trk_stage_a/test_r53_state_rows.py` 20 tests, includes per-step positive values, restart == uninterrupted run, and independent verifier `schema/independent.row_hash` equality for every built row. Mutants run (each killed): projection-agree, foreign profile, step-index, codec state/bytes round trip, name set, canonical prior bytes, projection rule. Two initial survivors (codec byte round trip, canonical prior) were fixed by isolating tests. Full suite 2036 passed locally.
+**Not done:** connection to `StatefulMaterializer`/verifier stored-row path (materializer is probe-level), commit-point rule, PendingRow persistence/E05 index feed.
