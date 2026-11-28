@@ -12,11 +12,17 @@ from ..storage.authority_class import require_qualified
 from .chain_status import ChainStatusAuthority, StatusFact
 
 class StatusProjection:
-    def __init__(self, journal, decode_fact: Callable):
+    def __init__(self, journal, decode_fact: Callable, *, simulation: bool = False):
+        """Default: QUALIFIED journals only. `simulation=True` is the EXPLICIT same-class opt-in: the journal must then be EXACTLY a SIMULATION carrier (never a QUALIFIED one relabelled), the projection carries `simulation = True`, and a Gateway refuses it unless
+        that Gateway was itself constructed with `allow_simulation_status=True`. It never makes a simulated status qualified."""
         if not callable(decode_fact):
             raise Refusal("decoder", code="STATUS_DECODER_REQUIRED")
-        self._j, self._decode = journal, decode_fact
-        require_qualified(journal, "chain-status projection")
+        if type(simulation) is not bool: raise Refusal("simulation", code="STATUS_PROJECTION_SIMULATION_FLAG_INVALID")
+        self._j, self._decode = journal, decode_fact; self.simulation = simulation
+        if simulation:
+            from ..storage.authority_class import authority_class_of, SIMULATION
+            if authority_class_of(journal) != SIMULATION: raise Refusal("journal", code="SIMULATION_PROJECTION_REQUIRES_SIMULATION_JOURNAL")
+        else: require_qualified(journal, "chain-status projection")
         self._auth = ChainStatusAuthority()
         self._built: Optional[Head] = None
         self._invalid: Optional[str] = None

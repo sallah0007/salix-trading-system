@@ -28,8 +28,10 @@ class DatasetAuthority:
         if dataset_id in members: raise Refusal(dataset_id, code="UNION_SELF_MEMBERSHIP")
         for m in members:
             if self._d.manifest(m) is None: raise Refusal(m, code="UNION_MEMBER_DATASET_UNKNOWN")
+            if self._ambiguous(m): raise Refusal(m, code="UNION_NODE_ID_AMBIGUOUS")
         for g in generation_ids:
             if self._g is None or self._g.manifest_of(g) is None: raise Refusal(g, code="UNION_GENERATION_UNKNOWN")
+            if self._ambiguous(g): raise Refusal(g, code="UNION_NODE_ID_AMBIGUOUS")
         entry = (tuple(sorted(members)), tuple(sorted(generation_ids)))
         old = self._union.get(dataset_id)
         if old is not None:
@@ -47,15 +49,32 @@ class DatasetAuthority:
         if reach(dataset_id, set()): raise Refusal(dataset_id, code="UNION_CYCLE")
         self._union[dataset_id] = entry; return entry
     def union_of(self, dataset_id): return self._union.get(dataset_id)
+    def _ambiguous(self, n):
+        """True when one id names BOTH a registered dataset and a registered generation manifest: the two namespaces are not guaranteed disjoint by any source, so such an id can never be resolved by guess."""
+        return self._d.manifest(n) is not None and self._g is not None and self._g.manifest_of(n) is not None
     def derived_from(self, generation_lineage=None) -> dict:
-        """{node: [contributors]} from the DECLARED unions only (plus any SUPPLIED generation lineage). A registered dataset with no declaration is ABSENT here, so the gate reads it as unresolved; an explicit leaf is `declare_union(id, (), ())` (the caller's assertion that it has no ancestors)."""
+        """{node: [contributors]} from the DECLARED dataset unions, plus SUPPLIED generation lineage ONLY under keys that are registered GENERATIONS and not datasets (R37: a supplied map may never replace, extend or shadow a declared dataset union - MI s3/s7 ancestry is not erased by a caller). A key that is a dataset, an unknown id, an id naming both a dataset and a generation, or a malformed entry REFUSES. A registered dataset with no declaration is ABSENT, so the gate reads it as unresolved; an explicit leaf is `declare_union(id, (), ())`."""
         d = {k: list(v[0]) + list(v[1]) for k, v in self._union.items()}
-        for g, c in (generation_lineage or {}).items(): d[g] = list(c)
+        if generation_lineage is None: return d
+        if not isinstance(generation_lineage, dict): raise Refusal("generation_lineage", code="GENERATION_LINEAGE_MALFORMED")
+        for g, c in generation_lineage.items():
+            if not _s(g) or not isinstance(c, (list, tuple)) or not all(_s(x) for x in c): raise Refusal(str(g), code="GENERATION_LINEAGE_MALFORMED")
+            if self._d.manifest(g) is not None or g in self._union: raise Refusal(g, code="GENERATION_LINEAGE_KEY_IS_DATASET_NOT_GENERATION")
+            if self._g is None or self._g.manifest_of(g) is None: raise Refusal(g, code="GENERATION_LINEAGE_KEY_UNKNOWN_GENERATION")
+            d[g] = list(c)
         return d
     def gate(self, dataset_id, generation_lineage=None):
-        """Revoked-ancestry gate over the DECLARED union. No declaration for the root => UNKNOWN (an absent declaration is not a clean lineage); a member dataset/generation with no declaration => UNKNOWN; any revoked ancestor => BLOCKED."""
+        """Revoked-ancestry gate over the DECLARED union. No declaration for the root => UNKNOWN (an absent declaration is not a clean lineage); a member dataset/generation with no declaration => UNKNOWN; any revoked ancestor => BLOCKED; an id that names both a dataset and a generation => BLOCKED_UNKNOWN (ambiguous namespace)."""
         if dataset_id not in self._union: return {"verdict": "BLOCKED_UNKNOWN", "report": {"status": "UNKNOWN", "unresolved": (dataset_id,)}, "qualified": False}
-        return DM.revoked_ancestry_gate(dataset_id, self.derived_from(generation_lineage), self._d, self._g)
+        graph = self.derived_from(generation_lineage)
+        seen = set(); stack = [dataset_id]
+        while stack:
+            n = stack.pop()
+            if n in seen: continue
+            seen.add(n); stack.extend(graph.get(n, ()))
+        amb = tuple(sorted(n for n in seen if self._ambiguous(n)))
+        if amb: return {"verdict": "BLOCKED_UNKNOWN", "report": {"status": "UNKNOWN", "unresolved": amb, "reason": "NODE_ID_NAMES_BOTH_DATASET_AND_GENERATION"}, "qualified": False}
+        return DM.revoked_ancestry_gate(dataset_id, graph, self._d, self._g)
     def record_claim(self, claim: CC.ConsumptionClaim):
         m = self._d.manifest(claim.manifest_id) if isinstance(claim, CC.ConsumptionClaim) else None
         if m is None: raise Refusal("claim", code="CLAIM_DATASET_UNKNOWN")
