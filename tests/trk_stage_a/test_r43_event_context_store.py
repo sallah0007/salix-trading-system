@@ -32,4 +32,7 @@ class Store(unittest.TestCase):
     def test_columns_that_disagree_with_the_identity_refuse(self):
         raw = InMemoryObjectStore(); s = ECS(raw, encode=enc, decode=dec, identity_of=ident, columns_of=lambda f: dict(cols(f), event_context_identity="OTHER")); s.put(F1)
         self.assertEqual(code(E05Index().rebuild, {"ec": s.source()}), "E05_SOURCE_COLUMNS_DISAGREE_WITH_IDENTITY")
+    def test_a_fact_stored_under_another_key_is_not_content_addressed_and_refuses(self):
+        s = self.mk(); s.put(F1); self.assertTrue(self.raw.put_if_absent("event-context/fact/" + "f" * 64, enc(F1)))                      # same bytes, a key that is not the identity's key
+        self.assertEqual(code(E05Index().rebuild, {"ec": s.source()}), "E05_SOURCE_OBJECT_NOT_CONTENT_ADDRESSED")
 if __name__ == "__main__": unittest.main()

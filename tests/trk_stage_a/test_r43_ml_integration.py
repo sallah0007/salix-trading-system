@@ -33,7 +33,9 @@ class MLIntegration(_Caller):
         reg = GL.GenerationRegistry(); wf = WF.GenerationAuthority(reg, {"MANIFEST_WRITER": {"w1"}, "FINALIZER": {"f1"}}, "TEST-LABELS-NOT-PRINCIPALS")
         for g in ("G1", "G2"): wf.write_manifest("w1", man(g)); wf.finalize("f1", g, 10, "cert")
         dsr = DM.DatasetRegistry({"w"}, "TEST-GRANT-LABEL"); auth = DA.DatasetAuthority(dsr, reg)
-        for d in ("D1", "D2", "D3", "D4"): dsr.register("w", ds(d)); auth.declare_union("w", d, ())
+        for d in ("D1", "D2", "D3", "D4"): dsr.register("w", ds(d))
+        for d in ("D4", "D2", "D3"): auth.declare_union("w", d, ())
+        auth.declare_union("w", "D1", ("D4",))                                                                                          # D1 consumes D4 (its revocation must block D1 through the ancestry gate)
         cat = {}
         def path(co): return CP.MLConsumerPath(gateway=co.gateway, final_store=co.gateway.final_store, authority=auth, generations=reg, writer=wf, tables=T)
         def go(co, e, o, tag, bind, dsid, gid="G1", **k):
@@ -64,8 +66,12 @@ class MLIntegration(_Caller):
         w = go(coa, ea2, oa2, "A2", "BIND-A2", "D3"); self.assertEqual(w.blockers, ())
         # ---- revocation: dataset revoked -> BLOCKED; generation revoked around the facade -> no snapshot / correlate mismatch
         dsr.revoke("w", "D3", 20, "contamination", "AUTH"); self.assertIn("DATASET_REVOKED", go(coa, ea2, oa2, "A2", "BIND-A2", "D3").blockers)
+        miss = {k: v for k, v in self.joins(eb, "BIND-B1", "D1", "G1", reg.manifest_of("G1"), reg).items() if k != "J6_RESEARCH_FAMILY_EXPOSURE"}
+        self.assertTrue(any(b.startswith("JOIN") and b.endswith("_MISSING") for b in go(cob, eb, ob, "B1", "BIND-B1", "D1", joins=miss).blockers))   # an ABSENT join is a blocker, not a pass
+        m5 = {k: v for k, v in self.joins(eb, "BIND-B1", "D1", "G1", reg.manifest_of("G1"), reg).items() if k != "J5_LIFECYCLE_LEDGER"}; self.assertIn("JOINS_J4_J5_SAME_GENERATION_MISSING", go(cob, eb, ob, "B1", "BIND-B1", "D1", joins=m5).blockers)
+        dsr.revoke("w", "D4", 25, "contamination", "AUTH"); self.assertTrue(any(b.startswith("DATASET_ANCESTRY_") for b in go(cob, eb, ob, "B1", "BIND-B1", "D1").blockers))   # a revoked ANCESTOR blocks the consumed dataset though it is not itself revoked
         reg.append_lifecycle("G1", "REVOKED", 30, "bad", "ROGUE")
-        v = go(cob, eb, ob, "B1", "BIND-B1", "D1"); self.assertIn("SNAPSHOT_ML_GENERATION_NOT_SERVING_ELIGIBLE", v.blockers); self.assertFalse(v.usable_for_simulation)
+        v = go(cob, eb, ob, "B1", "BIND-B1", "D1"); self.assertIn("SNAPSHOT_ML_GENERATION_NOT_SERVING_ELIGIBLE", v.blockers); ux = go(cob, eb, ob, "B1", "BIND-B1", "D1", gid="GX", joins=self.joins(eb, "BIND-B1", "D1", "G1", reg.manifest_of("G1"), reg)); self.assertTrue(any(b.startswith("GENERATION_") for b in ux.blockers), ux.blockers); self.assertFalse(v.usable_for_simulation)
     def test_ports_must_be_supplied(self):
         self.assertEqual(code(CP.MLConsumerPath, gateway=None, final_store=1, authority=1, generations=1, writer=1, tables=1), "ML_CONSUMER_PATH_PORT_MISSING")
 if __name__ == "__main__": unittest.main()

@@ -69,4 +69,26 @@ class Elig(unittest.TestCase):
         with self.assertRaises(Refusal): rec(f, time_of=lambda r: None)
         self.assertEqual(rec(e).reasons, ("NO_LEDGER_ENTRIES",))
         _, ents = LE.ledger_entries(f.j, time_of); self.assertTrue(all(x.epoch is None for x in ents)); self.assertIn("EPOCH_NOT_RECORDED_HELD", rec(f, epoch_bound=1).reasons)
+class LyingHead:
+    """Delegates to the real journal but reports a different head (rollback / divergent head): the read basis must be refused, never reconciled silently."""
+    def __init__(self, j, head): self._j, self._h = j, head
+    def read_from(self, n): return self._j.read_from(n)
+    def head(self): return self._h
+class Basis(unittest.TestCase):
+    def test_head_behind_the_records_or_a_different_hash_at_the_same_seq_is_an_incoherent_read_basis(self):
+        f = ledger(); real = f.j.head(); H = type(real)
+        def code(head):
+            with self.assertRaises(Refusal) as c: LE.reconstruct(LyingHead(f.j, head), time_of=time_of, event_time=15, index_basis=f.basis(), eligible_states=EL, closure_rule=CR)
+            return c.exception.code
+        class Hd: pass
+        behind = Hd(); behind.seq, behind.hash = real.seq - 1, real.hash
+        self.assertEqual(code(behind), "LIFECYCLE_ELIG_READ_BASIS_INCOHERENT")
+        other = Hd(); other.seq, other.hash = real.seq, "0" * len(real.hash)
+        self.assertEqual(code(other), "LIFECYCLE_ELIG_READ_BASIS_INCOHERENT")
+    def test_a_closure_rule_returning_a_non_time_is_refused(self):
+        f = ledger()
+        for bad in (-1, "x", 1.5):
+            with self.assertRaises(Refusal) as c: rec(f, closure_rule=lambda es, t, h, b=bad: b)
+            self.assertEqual(c.exception.code, "LIFECYCLE_ELIG_CLOSURE_INVALID")
+
 if __name__ == "__main__": unittest.main()

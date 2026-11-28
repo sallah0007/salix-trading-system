@@ -27,7 +27,7 @@ M = [
  (CP, 'if gate["verdict"] != "CLEAR": blockers.append("DATASET_ANCESTRY_" + gate["verdict"])', 'pass'),
  (CP, 'if corr["status"] != "VERIFIED_AGAINST_REGISTRY": blockers.append("GENERATION_" + corr["status"])', 'pass'),
  (CP, 'except Refusal as e: blockers.append("SNAPSHOT_" + e.code)', 'except Refusal as e: pass'),
- (CP, 'if bh is None: return MLConsumption(row, None, None, None, None, None, ("NO_DATASET_BINDING_LINK",), HELD)', 'pass'),
+# NAMED EQUIVALENT (not a mutant): `if bh is None` after an included row is a defensive guard; request_binding returns None only for a non-Binding outcome and build_row never includes a row for one (R22: issuing Gateway required, non-delivery is excluded), so no input reaches it.
  (CP, 'if not row.included: return MLConsumption(', 'if False: return MLConsumption('),
  (CP, 'if s in (SJ.MISMATCH, SJ.MISSING)] + ["JOIN_"', 'if s in (SJ.MISMATCH,)] + ["JOIN_"'),
  (EC, 'if self._e(self._d(raw)) != raw: raise Refusal(ident, code="EVENT_CONTEXT_ENCODING_NOT_ROUND_TRIP")', 'pass'),
