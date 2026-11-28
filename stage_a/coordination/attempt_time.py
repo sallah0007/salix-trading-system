@@ -16,7 +16,7 @@ def port_ok(port):
     if not callable(getattr(port, "mint", None)): raise Refusal("attempt-time port", code="ATTEMPT_TIME_PORT_INVALID")
 
 def _t(v):
-    if type(v) is not int or v < 0: raise Refusal(repr(v), code="ATTEMPT_TIME_INVALID")
+    if type(v) is not int or v < 0 or v > 2**63 - 1: raise Refusal(repr(v), code="ATTEMPT_TIME_INVALID")          # must be encodable by the typed schema's timestamp_utc (i64, schema/encoding.py); no unit/domain is inferred
     return v
 
 def mint_fresh(port, seen):

@@ -41,7 +41,7 @@ def validate_body(kind: str, body: dict, *, legacy_read: bool = False):
     opt = OPTIONAL.get(kind, ())
     if "canonical_accepted_at" in opt and "canonical_accepted_at" in body:
         v = body["canonical_accepted_at"]
-        if type(v) is not int or v < 0: raise Refusal("%s canonical_accepted_at" % kind, code="TRANSITION_ACCEPTED_AT_INVALID")
+        if type(v) is not int or v < 0 or v > 2**63 - 1: raise Refusal("%s canonical_accepted_at" % kind, code="TRANSITION_ACCEPTED_AT_INVALID")
     extra = set(body) - set(req) - set(opt)
     if extra:
         raise Refusal("%s unexpected %s" % (kind, sorted(extra)), code="TRANSITION_BODY_UNEXPECTED_FIELDS")
