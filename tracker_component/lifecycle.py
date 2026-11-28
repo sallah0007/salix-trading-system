@@ -1,14 +1,17 @@
-"""R7 PROPOSED SUCCESSOR lifecycle semantics on the ONE owning journal HEAD (CANDIDATE; Composer_Binding_V2_R7 Drive 17s4MY6_..., sha256 464724759119a752...ba282,
-status in its own words: NOT ADOPTED / NOT CURRENT SOURCE / NO CODING OR RUN AUTHORITY). No principal, grant authority, clock, provider or deadline is appointed or proven here:
-grant ids are OPAQUE strings and a revocation is a journal fact, not a security control. Implemented (R7 section -> method):
+"""R7 lifecycle semantics on the ONE owning journal HEAD. SOURCE STATUS (R49 correction; Matrix 1RRZD4i_81Q4L6koxqyNs4INELOuI8aKVupznM-aBmTc head, "R7 SOURCE-SELECTION CHANGE SET 01", read in full for this
+status): the exact 33,636 B R7 (Drive 17s4MY6_..., sha256 464724759119a752...ba282) is selected as CURRENT CONDITIONAL DESIGN SOURCE, sections 1-6 only, for the isolated Stage A replica; sections 7-9 fences remain;
+within those named intersections it controls Composer Binding V1, outside them V1 controls; the immutable body's dated NOT ADOPTED wrapper is historical at that scoped selection. THIS RUNTIME CODE REMAINS CANDIDATE/UNQUALIFIED:
+a design-source selection is not operational reliance. No principal, grant authority, trust anchor, clock domain, provider or deadline is appointed or proven: grant ids are OPAQUE strings and a revocation is a journal fact,
+not a security control. Implemented (R7 section -> method):
   s3 R5 terminal rule      revoke_grant + derived refusal in _verify_order (issuer/builder grant revocation REVOKES every nonterminal affected order, claim ABANDONED, no same-order revival;
                            accepted/consumed history immutable; verifier/intake/acceptance-origin grant revocation only refuses NEW dispositions, no order consequence).
   s3 creation lineage      replace_creation (terminal unsuccessful lineage never relabelled/reused; new creation id + explicit parent link; fresh lookup gate; consumed lineage => reuse, never recreate).
   s4 RD4a                  admit_attempt / reject_attempt (distinct BUILDER_BUILD_ID, bound to order/claim/creation/builder grant/reservation generation/correction parent).
   s5 RD4b                  record_review / dispose (REVIEW_REQUIRED nonterminal, immutable old report, one current disposition, final accept/reuse unique, no revival).
-NOT implemented (named): s6 Branch A trusted-clock deadline predicate (no clock authority/domain/duration exists; Branch B is never a fallback); staged-report NON-ALLOCATION is by construction
+s6 strict A: only the GENERIC fail-closed lease interface exists here (`lease_admit_attempt` with an injected time-aware commit port; no port => the lease effect refuses). NOT implemented: the real atomic time-aware primitive, the approved clock domain/config and any duration (Branch B is never a fallback; no private counter or pre-CAS clock check); staged-report NON-ALLOCATION is by construction
 (nothing here allocates FEATURE_ID/FEATURE_VERSION/REGISTRY_ENTRY_REF and a report has no visibility before its REPORT_DISPOSITION record); wiring to the real principals/grants.
 This module changes no governance state; a merge or test pass clears no gate."""
+from .journal_port import HeadMismatch
 from .claims import ClaimService, Refusal
 from .order import (CLAIM_ABANDONED, GRANT_REVOKED, ATTEMPT_ADMITTED, ATTEMPT_REJECTED, LINEAGE_REPLACED, REVIEW_DECIDED, REPORT_DISPOSITION, ORDER_REVOKED)
 from .lookup_adapter import construction_gate, INCOMPLETE_LOOKUP, DUPLICATE_OR_NEAR
@@ -92,33 +95,37 @@ class ReplicaLifecycle(ClaimService):
         return self._p.lineage_parent.get(creation_id)
 
     # -- s4 RD4a -----------------------------------------------------------------------------------------------------
+    def _admit_build(self, binding, head):
+        build_id, order_id, claim_id = binding["build_id"], binding["order_id"], binding["claim_id"]
+        creation_request_id, builder_grant, correction_parent = binding["creation_request_id"], binding["builder_grant"], binding["correction_parent"]
+        self._need_grant(builder_grant)
+        self._verify_order(order_id, None, head.seq)
+        c = self._p.claims.get(claim_id)
+        if c is None or c["order_id"] != order_id or c["request_id"] != creation_request_id:
+            raise Refusal("ATTEMPT_BINDING_MISMATCH")      # CREATION_REQUEST_ID == claim request id is a CANDIDATE reading
+        if c["state"] != "BOUND":
+            raise Refusal("CLAIM_NOT_BOUND", c["state"])
+        prev = self._p.attempts.get(build_id)
+        if prev is not None:
+            if {k: prev[k] for k in binding if k != "correction_parent"} != {k: v for k, v in binding.items() if k != "correction_parent"} or prev["correction_parent"] != correction_parent:
+                raise Refusal("BUILD_ID_CONFLICT", build_id)
+            return None, None                               # exact replay returns existing
+        mine = sorted((a for a in self._p.attempts.values() if a["order_id"] == order_id), key=lambda a: a["seq"])
+        if any(a["state"] == "ADMITTED" for a in mine):
+            raise Refusal("ATTEMPT_ALREADY_LIVE")
+        if mine and correction_parent != mine[-1]["build_id"]:
+            raise Refusal("CORRECTION_PARENT_REQUIRED")
+        if not mine and correction_parent is not None:
+            raise Refusal("CORRECTION_PARENT_UNKNOWN")
+        return ATTEMPT_ADMITTED, dict(binding, reservation_generation=len(mine) + 1)
+
     def admit_attempt(self, *, build_id, order_id, claim_id, creation_request_id, builder_grant, correction_parent=None):
+        """NOT a lease effect: it carries no deadline. Lease-dependent admission is `lease_admit_attempt` (fail-closed without a qualified time-aware port)."""
         binding = {"build_id": build_id, "order_id": order_id, "claim_id": claim_id, "creation_request_id": creation_request_id,
                    "builder_grant": builder_grant, "correction_parent": correction_parent}
         if not isinstance(build_id, str) or not build_id:
             raise Refusal("BUILD_ID_REQUIRED")
-        def build(head):
-            self._need_grant(builder_grant)
-            self._verify_order(order_id, None, head.seq)
-            c = self._p.claims.get(claim_id)
-            if c is None or c["order_id"] != order_id or c["request_id"] != creation_request_id:
-                raise Refusal("ATTEMPT_BINDING_MISMATCH")      # CREATION_REQUEST_ID == claim request id is a CANDIDATE reading
-            if c["state"] != "BOUND":
-                raise Refusal("CLAIM_NOT_BOUND", c["state"])
-            prev = self._p.attempts.get(build_id)
-            if prev is not None:
-                if {k: prev[k] for k in binding if k != "correction_parent"} != {k: v for k, v in binding.items() if k != "correction_parent"} or prev["correction_parent"] != correction_parent:
-                    raise Refusal("BUILD_ID_CONFLICT", build_id)
-                return None, None                               # exact replay returns existing
-            mine = sorted((a for a in self._p.attempts.values() if a["order_id"] == order_id), key=lambda a: a["seq"])
-            if any(a["state"] == "ADMITTED" for a in mine):
-                raise Refusal("ATTEMPT_ALREADY_LIVE")
-            if mine and correction_parent != mine[-1]["build_id"]:
-                raise Refusal("CORRECTION_PARENT_REQUIRED")
-            if not mine and correction_parent is not None:
-                raise Refusal("CORRECTION_PARENT_UNKNOWN")
-            return ATTEMPT_ADMITTED, dict(binding, reservation_generation=len(mine) + 1)
-        self._commit(build)
+        self._commit(lambda head: self._admit_build(binding, head))
         return dict(self._p.attempts[build_id])
 
     def reject_attempt(self, build_id, reason):
@@ -214,3 +221,32 @@ class ReplicaLifecycle(ClaimService):
         self._p.sync(self._j)
         r = next((d for d in self._p.dispositions.get(package_id, []) if d["report_hash"] == report_hash), None)
         return None if r is None else dict(r)
+
+
+    # -- s6 strict Branch A: GENERIC fail-closed lease interface (R49). The real time-aware primitive and the clock qualification are HELD ----------------------
+    def lease_admit_attempt(self, *, port, deadline_ref, build_id, order_id, claim_id, creation_request_id, builder_grant, correction_parent=None):
+        """Lease-dependent effect. `port` must provide `clock_domain_ref`, `config_generation` and `append_if_head_and_before(expected_head, kind, body, deadline_ref)`: ONE atomic conditional
+        append that rejects at/after the deadline even when HEAD is unchanged (the primitive itself, not this module, owns that proof). Without a port the effect REFUSES; the plain journal
+        append, a counter or a clock read before an ordinary CAS are never substituted. A port's claimed qualification is not proof here (CLAIMED_FIELDS_ONLY)."""
+        if port is None:
+            raise Refusal("LEASE_EFFECT_REFUSED_TIME_PRIMITIVE_UNQUALIFIED", "lease effect")
+        for need in ("clock_domain_ref", "config_generation", "append_if_head_and_before"):
+            if not hasattr(port, need):
+                raise Refusal("LEASE_PORT_INCOMPLETE", need)
+        dom, gen = (deadline_ref or {}).get("clock_domain_ref"), (deadline_ref or {}).get("config_generation")
+        if not dom or gen is None or not isinstance(deadline_ref.get("deadline"), int) or isinstance(deadline_ref.get("deadline"), bool):
+            raise Refusal("LEASE_DEADLINE_REF_UNBOUND", "deadline_ref")           # requester/builder cannot supply a bare deadline; the ref names source-owned domain/config
+        if port.clock_domain_ref != dom or port.config_generation != gen:
+            raise Refusal("LEASE_CLOCK_OR_CONFIG_DOMAIN_MISMATCH", "clock/config")
+        binding = {"build_id": build_id, "order_id": order_id, "claim_id": claim_id, "creation_request_id": creation_request_id, "builder_grant": builder_grant, "correction_parent": correction_parent}
+        for _ in range(self._max):
+            self._p.sync(self._j); head = self._j.head()
+            kind, body = self._admit_build(binding, head)
+            if kind is None:
+                return dict(self._p.attempts[build_id])
+            try:
+                rec = port.append_if_head_and_before(head, kind, dict(body, deadline_ref=deadline_ref), deadline_ref)
+            except HeadMismatch:
+                continue
+            self._p.apply(rec); return dict(self._p.attempts[build_id])
+        raise Refusal("FENCE_RACE_EXHAUSTED")

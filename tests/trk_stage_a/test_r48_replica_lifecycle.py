@@ -238,3 +238,53 @@ def test_r49_4_base_claimservice_and_composed_authority_route_fail_closed_in_cra
     from stage_a.tracker import authority_bridge as AB
     import inspect; assert "authorizes" in inspect.getsource(AB)                       # the composed route calls claim_service.authorizes
     j.fail_kind = None; assert s.settle() == ["O1"] and base2.claim("CLAIM:C1")["state"] == "ABANDONED" and base2.authorizes("S2", "C2") is True
+
+
+# ---- strict A: generic fail-closed lease interface (the real primitive/clock are HELD; this fake PORT is a TEST double, not qualification) -----------
+class FakeTimePort:
+    clock_domain_ref, config_generation = "DOM1", 7
+    def __init__(self, j, now=5): self.j, self.now, self.calls = j, now, []
+    def append_if_head_and_before(self, head, kind, body, ref):
+        self.calls.append(kind)
+        if self.now >= ref["deadline"]: raise Refusal("LEASE_DEADLINE_PASSED", "deadline")             # at/after the deadline, HEAD unchanged
+        return self.j.append(head, kind, {k: v for k, v in body.items()})
+
+
+REF = {"clock_domain_ref": "DOM1", "config_generation": 7, "deadline": 10}
+
+
+def lease(s, port, ref=REF, **k):
+    kw = dict(build_id="B1", order_id="O1", claim_id="CLAIM:C1", creation_request_id="C1", builder_grant="BG1"); kw.update(k)
+    return s.lease_admit_attempt(port=port, deadline_ref=ref, **kw)
+
+
+def test_lease_effect_refuses_without_a_port_and_never_falls_back_to_plain_append():
+    j, s = base(); n = j.head().seq
+    with pytest.raises(Refusal, match="LEASE_EFFECT_REFUSED_TIME_PRIMITIVE_UNQUALIFIED"): lease(s, None)
+    assert j.head().seq == n and s.attempt("B1") is None
+
+
+def test_lease_effect_routes_only_through_the_port_and_binds_domain_and_config():
+    j, s = base(); port = FakeTimePort(j)
+    for ref, code in [({"clock_domain_ref": "X", "config_generation": 7, "deadline": 10}, "LEASE_CLOCK_OR_CONFIG_DOMAIN_MISMATCH"), ({"clock_domain_ref": "DOM1", "config_generation": 8, "deadline": 10}, "LEASE_CLOCK_OR_CONFIG_DOMAIN_MISMATCH"),
+                      ({"clock_domain_ref": "DOM1", "config_generation": 7}, "LEASE_DEADLINE_REF_UNBOUND"), ({"clock_domain_ref": "DOM1", "config_generation": 7, "deadline": True}, "LEASE_DEADLINE_REF_UNBOUND"), (None, "LEASE_DEADLINE_REF_UNBOUND")]:
+        with pytest.raises(Refusal, match=code): lease(s, port, ref)
+    with pytest.raises(Refusal, match="LEASE_PORT_INCOMPLETE"): lease(s, object())
+    assert port.calls == [] and s.attempt("B1") is None
+    a = lease(s, port); assert a["reservation_generation"] == 1 and port.calls == ["ATTEMPT_ADMITTED"] and a["build_id"] == "B1"
+    assert lease(s, port) == a and port.calls == ["ATTEMPT_ADMITTED"]                                    # exact replay appends nothing and needs no second commit
+
+
+def test_lease_effect_at_or_after_deadline_is_refused_by_the_port_even_if_head_unchanged():
+    j, s = base(); port = FakeTimePort(j, now=10); n = j.head().seq
+    with pytest.raises(Refusal, match="LEASE_DEADLINE_PASSED"): lease(s, port)
+    assert j.head().seq == n and s.attempt("B1") is None
+    port.now = 9; assert lease(s, port)["build_id"] == "B1"                                              # mint-before / commit-after boundary is the PORT's proof, not asserted here
+
+
+def test_lease_effect_keeps_all_binding_refusals():
+    j, s = base(); port = FakeTimePort(j)
+    with pytest.raises(Refusal, match="ATTEMPT_BINDING_MISMATCH"): lease(s, port, creation_request_id="OTHER")
+    s.revoke_grant("BG1", "builder") if False else None
+    j.append(j.head(), "GRANT_REVOKED", {"grant_id": "BG1", "role": "builder"})
+    with pytest.raises(Refusal, match="GRANT_REVOKED"): lease(s, port)
