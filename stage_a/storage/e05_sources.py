@@ -90,3 +90,15 @@ def combined_resolver(*resolvers):
             if v is not None: return v
         return None
     return res
+def ledger_source(journal, namespace, *, accepted_at_of, epoch_of=None, vintage_mode="HELD_UNMAPPED_VINTAGE_MODE"):
+    """R42: `stagea_transition_index` rows for ANY chain-verified journal whose record kinds are NOT the feature transition kinds (e.g. the LifecycleFramework ledger): no replay, no current-status. The per-record epoch is `epoch_of(record)` if the owner supplies one, else the explicit marker EPOCH_NOT_RECORDED (never the current epoch applied to old records)."""
+    if not (isinstance(namespace, str) and namespace and callable(accepted_at_of)): raise Refusal("source", code="E05_SOURCE_INPUT_INVALID")
+    def head():
+        h = journal.head(); return (h.seq, h.hash)
+    def rows():
+        for r in (journal.read_from(1) if journal.head() != GENESIS_HEAD else []):
+            at = accepted_at_of(r)
+            if at is None: raise Refusal(str(r.seq), code="E05_SOURCE_TIME_NOT_SUPPLIED")
+            b = json.loads(r.body_json)
+            yield "stagea_transition_index", dict(transition_hash=r.record_hash, namespace_id=namespace, epoch=("EPOCH_NOT_RECORDED" if epoch_of is None else epoch_of(r)), sequence=r.seq, subject_id=b.get("subject", namespace), accepted_at=at, ref=_ref(namespace, r.seq), ref_hash=r.record_hash, data_vintage_mode=vintage_mode)
+    return head, rows

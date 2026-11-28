@@ -1,22 +1,22 @@
 """R41: generic candidate oracle for MLCore (native paragraphs) p313/p319/p361 and A07 NL0030/0034/0250/0258/0262/0266.
   * Historical eligibility of a generation for a past event may be reconstructed ONLY when BOTH `CURRENT_READ_FRESHNESS` (the lifecycle resolver has resolved through at least the ledger position the read requires) AND `HISTORICAL_SLICE_COMPLETENESS` (the ledger positions covering the event time are contiguous and closed through the event time) pass; otherwise the event is MISSED_QUARANTINED. There is NO input for the currently authoritative generation, so a current-generation fallback cannot be expressed.
   * Present-day trust of a historical contributor is UNKNOWN_STALE (never TRUSTED) when the resolver lags the required position (the artificial-index-lag negative).
-This module defines no lifecycle graph, no eligible/revoked state names, no closure producer and no deployed resolver: `eligible_states` / `revoked_states` and the closure assertion are SUPPLIED by the source owner; it only enforces the two-part gate. Entries are (epoch, seq, event_time, generation_id, state) from an authoritative ledger reader."""
+This module defines no lifecycle graph, no eligible/revoked state names, no closure producer and no deployed resolver: `eligible_states` / `revoked_states` and the closure assertion are SUPPLIED by the source owner; it only enforces the two-part gate. Entries are (epoch or None when no per-record epoch is recorded - never fabricated, seq, event_time, generation_id, state) from an authoritative ledger reader."""
 from dataclasses import dataclass
 from ..errors import Refusal
 READY, MISSED = "ELIGIBLE", "MISSED_QUARANTINED"
 @dataclass(frozen=True)
 class Entry:
-    epoch: int; seq: int; event_time: int; generation_id: str; state: str
+    epoch: object; seq: int; event_time: int; generation_id: str; state: str
 @dataclass(frozen=True)
 class Decision:
     status: str; generation_id: str; reasons: tuple; resolved_through: int
     def __bool__(self): raise TypeError("Decision has no truthiness; compare .status")
 def _int(x): return type(x) is int and x >= 0
 def _entries(entries):
-    if not (isinstance(entries, (list, tuple)) and all(isinstance(e, Entry) and _int(e.epoch) and _int(e.seq) and e.seq >= 1 and _int(e.event_time) and isinstance(e.generation_id, str) and e.generation_id and isinstance(e.state, str) and e.state for e in entries)): raise Refusal("entries", code="HIST_ELIG_ENTRIES_INVALID")
+    if not (isinstance(entries, (list, tuple)) and all(isinstance(e, Entry) and (e.epoch is None or _int(e.epoch)) and _int(e.seq) and e.seq >= 1 and _int(e.event_time) and isinstance(e.generation_id, str) and e.generation_id and isinstance(e.state, str) and e.state for e in entries)): raise Refusal("entries", code="HIST_ELIG_ENTRIES_INVALID")
     out = sorted(entries, key=lambda e: e.seq)
-    if len({e.seq for e in out}) != len(out) or any(a.epoch > b.epoch or a.event_time > b.event_time for a, b in zip(out, out[1:])): raise Refusal("entries", code="HIST_ELIG_ENTRIES_NOT_MONOTONIC")
+    if len({e.seq for e in out}) != len(out) or any((a.epoch is not None and b.epoch is not None and a.epoch > b.epoch) or a.event_time > b.event_time for a, b in zip(out, out[1:])): raise Refusal("entries", code="HIST_ELIG_ENTRIES_NOT_MONOTONIC")
     return out
 def reconstruct_eligibility(entries, *, event_time, required_through_seq, resolved_through_seq, slice_closed_through_time, eligible_states):
     if not all(_int(x) for x in (event_time, required_through_seq, resolved_through_seq, slice_closed_through_time)) or not (isinstance(eligible_states, frozenset) and eligible_states): raise Refusal("inputs", code="HIST_ELIG_INPUT_INVALID")
