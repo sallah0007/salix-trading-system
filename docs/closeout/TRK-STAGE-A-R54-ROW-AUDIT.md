@@ -9,7 +9,7 @@ Equality of this table with the generator proves transcription only. WIRING is r
 | B03 | IA | S4 Reg p104-124; S5 | tracker/registry_semantics: importers=registry_entry,registry_integrity,snapshot_binding,snapshot_carrier | YES | not re-read in R54 |
 | B04 | SD | S4/S3 s6 | tracker/quant_intake_adapter: importers=pipeline,request_classification,separated_caller | YES | not re-read in R54 |
 | B05 | MR | S3 s6 p6-8 | n/a (no module cited) | YES | not re-read in R54 |
-| B06 | SD | S4 Reg p129 | storage/byte_primitives: importers=atomic_publication,composition,evidence_resolver,object_store_journal+13; tracker/accepted_manifest: importers=composition,sim_publication_path | YES | not re-read in R54 |
+| B06 | SD | S4 Reg p129 | storage/byte_primitives: importers=atomic_publication,composition,evidence_resolver,object_store_journal+13; tracker/accepted_manifest: importers=composition,row_publication,sim_publication_path | YES | not re-read in R54 |
 | B07 | IA | S4 Reg p130-134,194-195 | n/a (no module cited) | YES | R54: composer/expression operators exercised by R45-R47 parity tests; invoked by the intake/verification path, normative bytes held. |
 | B08 | SD | S4 Reg p133-136,167-170,192-199 | n/a (no module cited) | YES | not re-read in R54 |
 | B09 | SD | S4 Reg p137-165,322,377 | n/a (no module cited) | YES | not re-read in R54 |
@@ -54,7 +54,7 @@ Equality of this table with the generator proves transcription only. WIRING is r
 | TR-01 | SD | S2 s27 | n/a (no module cited) | YES | not re-read in R54 |
 | TR-02 | MR | S2 s27 | n/a (no module cited) | YES | not re-read in R54 |
 | TR-03 | SD | S2 s27 | composer/expression/canonical_encoding: importers=artifacts,hashing,pipeline,reverification+1 | YES | not re-read in R54 |
-| TR-04 | SD | S2 s27 | expression/manifest: importers=accepted_manifest,artifacts,build_output_check,canonical_encoding+19 | YES | not re-read in R54 |
+| TR-04 | SD | S2 s27 | expression/manifest: importers=accepted_manifest,artifacts,build_output_check,canonical_encoding+20 | YES | not re-read in R54 |
 | TR-05 | MR | S2 s27; S7 | composer/request_record: importers=intake,quant_intake_adapter | YES | not re-read in R54 |
 | TR-06 | SF | S2 s27; Manager input | n/a (no module cited) | YES | not re-read in R54 |
 | TR-07 | IA | S2 s27; S6 | fw/receiver: importers=augmented_desk,composition,consumer_path,lanes+1; ml/receiver: importers=augmented_desk,composition,consumer_path,lanes+1 | YES | not re-read in R54 |
