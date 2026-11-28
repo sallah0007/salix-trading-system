@@ -33,7 +33,7 @@ class Composition:
         for n, o in (("pipeline", pipeline), ("journals", journals), ("store", store), ("core", core), ("path", path)):
             if o is None: raise Refusal(n, code="COMPOSITION_PART_MISSING")
         if not callable(gateway_factory): raise Refusal("gateway_factory", code="COMPOSITION_PART_MISSING")
-        self._p, self._js, self._st, self._core, self._path, self._gf = pipeline, journals, store, core, path, gateway_factory; self._up = dict(upstream or {}); self.gateway = None; self._l2r = l2_scope_resolver; self._sv = {}
+        self._p, self._js, self._st, self._core, self._path, self._gf = pipeline, journals, store, core, path, gateway_factory; self._up = dict(upstream or {}); self.gateway = None; self._l2r = l2_scope_resolver; self._sv = {}; self._pub = {}
     @staticmethod
     def _report_scope_defect(rep, key, pkg, now, max_age):
         from .registry_integrity import IntegrityReport
@@ -97,15 +97,18 @@ class Composition:
             else:
                 try: rec = lifecycle.apply(key, *lifecycle_transition); r.log("lifecycle", "APPLIED" if rec is not None else "IDEMPOTENT_NOOP", lifecycle_transition[0])
                 except Refusal as e: r.log("lifecycle", "HELD" if e.code in ("LIFECYCLE_POLICY_HELD", "LIFECYCLE_EVIDENCE_CHECK_HELD") else "REFUSED", e.code)
-        r.status = "PUBLISHED_SIMULATION" if l2_ok[0] else "PUBLISHED_SIMULATION_L2_NOT_PASS"; return r
-    def register_stored_maintenance(self, result, stored_inputs):
-        """R52 owning connection: the ALL-SEGMENT stored-value maintenance (`stored_values.run_stored_value_pass`) was never fed by the assembly. A `StoredBinding` is registered here ONLY for a feature this Composition accepted and published (result.status PUBLISHED_*, same journal/store/Core class as the acceptance), from the SAME fetch/series_hash the acceptance used; nothing is registered for an unaccepted or unpublished result. Idempotent for the same inputs, a different fetch/series_hash for the same subject refuses."""
-        if not (isinstance(result, CompositionResult) and result.feature_key is not None and str(result.status).startswith("PUBLISHED_")): raise Refusal(getattr(result, "status", None), code="COMPOSITION_MAINTENANCE_NOT_PUBLISHED")
-        if not (isinstance(stored_inputs, dict) and callable(stored_inputs.get("fetch")) and callable(stored_inputs.get("series_hash"))): raise Refusal("stored_inputs", code="COMPOSITION_MAINTENANCE_INPUT_INVALID")
-        fk = result.feature_key; j = self._js.journal(fk.namespace()); SV._require_same_class(self._core, j, self._st)
-        b = SV.StoredBinding(j, self._st, fk, stored_inputs["fetch"], stored_inputs["series_hash"]); old = self._sv.get(fk.key())
-        if old is not None and (old.fetch, old.series_hash) != (b.fetch, b.series_hash): raise Refusal(fk.key(), code="COMPOSITION_MAINTENANCE_BINDING_IMMUTABLE")
-        self._sv[fk.key()] = b; return b
+        r.status = "PUBLISHED_SIMULATION" if l2_ok[0] else "PUBLISHED_SIMULATION_L2_NOT_PASS"
+        if stored_inputs is not None and callable(stored_inputs.get("fetch")) and callable(stored_inputs.get("series_hash")): self._pub[key] = (r, r.status, stored_inputs["fetch"], stored_inputs["series_hash"])           # R53: the OWNING registration basis: THIS Composition accepted, persisted and published this feature with exactly these stored-value inputs
+        return r
+    def register_stored_maintenance(self, result, stored_inputs=None):
+        """R53 owning connection: `stored_values.run_stored_value_pass` had no caller in the assembly. A `StoredBinding` is registered ONLY for a result THIS Composition itself accepted, persisted stored values for and published (`accept_and_publish` records the basis privately: the result object, its status at that moment and the exact fetch/series_hash callables used). The caller-mutable `result.status` label and a result from another Composition are NOT evidence; the stored basis is. The fetch/series_hash used by the pass are the acceptance inputs (a caller may repeat them, any different callable refuses). Same-class preflight; idempotent.
+        Limit (honest): identity of the callables is object identity, not proof the fetched bytes are unchanged since acceptance (the pass re-fetches and re-hashes every stored segment for that)."""
+        fk = getattr(result, "feature_key", None); basis = self._pub.get(fk.key()) if fk is not None else None
+        if basis is None or basis[0] is not result: raise Refusal(getattr(result, "status", None), code="COMPOSITION_MAINTENANCE_NOT_PUBLISHED")
+        _r, _st, fetch, sh = basis
+        if stored_inputs is not None and not (isinstance(stored_inputs, dict) and stored_inputs.get("fetch") is fetch and stored_inputs.get("series_hash") is sh): raise Refusal(fk.key(), code="COMPOSITION_MAINTENANCE_INPUT_NOT_THE_ACCEPTANCE_INPUT")
+        j = self._js.journal(fk.namespace()); SV._require_same_class(self._core, j, self._st)
+        b = SV.StoredBinding(j, self._st, fk, fetch, sh); self._sv[fk.key()] = b; return b
     def run_maintenance(self, events=(), *, now, max_age, max_items, subjects=None):
         """One bounded all-segment L2 pass over the registered subjects through the existing `run_stored_value_pass` (Core due-ness UNION supplied (subject, trigger) events; no daemon/cadence here). Results are recorded in the SAME Core the Gateway reads health from, so a failing/unavailable segment makes later delivery NON_DELIVERY."""
         return SV.run_stored_value_pass(self._core, dict(self._sv), sorted(self._sv) if subjects is None else list(subjects), events, now=now, max_age=max_age, max_items=max_items)
