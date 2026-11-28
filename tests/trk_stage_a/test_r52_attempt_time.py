@@ -20,7 +20,7 @@ class AttemptTime(unittest.TestCase):
         self.assertEqual(code(awt, j, T.CANONICAL_ACCEPTED, body_for, None), "ATTEMPT_TIME_PORT_UNBOUND_HELD")
         self.assertEqual(code(awt, j, T.CANONICAL_ACCEPTED, body_for, SystemClock()), "ATTEMPT_TIME_PORT_IS_IDENTITY_CLOCK"); self.assertEqual(code(awt, j, T.CANONICAL_ACCEPTED, body_for, FixedClock()), "ATTEMPT_TIME_PORT_IS_IDENTITY_CLOCK")
         self.assertEqual(code(awt, j, T.CANONICAL_ACCEPTED, body_for, object()), "ATTEMPT_TIME_PORT_INVALID")
-        for bad in (-1, True, 1.5, "5"):
+        for bad in (-1, True, 1.5, "5", 2**63):
             class P:
                 def mint(self, v=bad): return v
             self.assertEqual(code(awt, j, T.CANONICAL_ACCEPTED, body_for, P()), "ATTEMPT_TIME_INVALID", repr(bad))
@@ -74,3 +74,10 @@ class AttemptTime(unittest.TestCase):
         from tracker_component.canonical import canonical_json
         self.assertIsNone(find_attempt(j, h1, T.CANONICAL_ACCEPTED, canonical_json(b)))          # an identical body earlier in the chain is NOT this attempt (old kind+body matching would say COMMITTED)
         self.assertEqual(find_attempt(j, h0, T.CANONICAL_ACCEPTED, canonical_json(b)).record_hash, r1.record_hash)
+    def test_the_largest_i64_is_accepted_and_the_next_value_is_refused_at_the_record_validator_too(self):
+        class P:
+            def __init__(self, v): self.v = v
+            def mint(self): return self.v
+        s, j = mk(); rec, t = awt(j, T.CANONICAL_ACCEPTED, body_for, P(2**63 - 1)); self.assertEqual(accepted_time_of(rec), 2**63 - 1)
+        b = accepted_body(); b[TIME_KEY] = 2**63
+        self.assertEqual(code(T.validate_body, T.CANONICAL_ACCEPTED, b), "TRANSITION_ACCEPTED_AT_INVALID")
