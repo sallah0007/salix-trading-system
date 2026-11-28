@@ -2,7 +2,8 @@
 Candidate/SIM only: the completeness witness stays unadmitted, nothing here admits, qualifies or clears a gate."""
 import dataclasses, unittest
 from stage_a.ml import closure as CL
-from stage_a.tracker.quant_intake_adapter import AncestryBinding, admit
+from stage_a.tracker.quant_intake_adapter import AncestryBinding, AncestryQueryReceipt, query_receipt_for, admit
+from stage_a.identifiers import Scope, FeatureKey
 from tracker_component import report as R
 from .fixtures import Rig, package, momentum_manifest, SIM_CONF
 
@@ -19,8 +20,14 @@ def record(edges=None, nodes=("FEAT", "MODEL", "GEN", "FIT2"), **k):
              ml_fw_augmented_ancestry_present=False, admission_input_verdict="PASS", research_exposure_flags=(), computed_ts=5,
              resolver_id="R", resolver_version="1", resolver_hash="rh", final_closure_hash="fh")
     d.update(k); return CL.ClosureRecord(**d)
+DEFAULT_FK = FeatureKey(Scope("XAUUSD", "H4"), "mom3", "1")
+def receipt(**k):
+    d = dict(instrument="XAUUSD", timeframe="H4", feature_id="mom3", feature_version="1", upstream_model_id="MODEL-TEST", upstream_generation_id="GEN-TEST", fit_refs=((2, "b" * 64),), closure_id="C1"); d.update(k); return AncestryQueryReceipt(**d)
 def binding(rec=None, **k):
-    d = dict(record=rec or record(), subject_node="FEAT", upstream_model_node="MODEL", upstream_generation_node="GEN", fit_ref_nodes={2: "FIT2"}); d.update(k); return AncestryBinding(**d)
+    d = dict(record=rec or record(), subject_node="FEAT", upstream_model_node="MODEL", upstream_generation_node="GEN", fit_ref_nodes={2: "FIT2"}, query_receipt=receipt()); d.update(k); return AncestryBinding(**d)
+def genuine_resolver(fk, mid, gid, fit_refs):
+    """An honest resolver: builds the closure for the query it was handed and echoes THAT query in its receipt."""
+    return binding(query_receipt=query_receipt_for(fk, mid, gid, fit_refs, "C1"))
 
 def run(resolver, fit_refs=FR):
     rig = Rig(fits=FITS, ancestry_resolver=resolver); p = package(momentum_manifest(fit_refs=fit_refs)); rig.issue(p); o = rig.pipe.run(p)
@@ -83,3 +90,48 @@ class NarrowFitRefSeparate(unittest.TestCase):
         adm_of(lambda fk, m, g, fr: seen.append((m, g, fr)) or binding()); self.assertEqual(seen[0][:2], ("MODEL-TEST", "GEN-TEST"))
     def test_witness_stays_unadmitted(self):
         self.assertFalse(CL.derive(record()).qualified)
+
+class QueryBoundReceipt(unittest.TestCase):
+    """R52: a consistent binding issued for ANOTHER query (public resolver-cache misassociation) is refused; an absent receipt is UNKNOWN; an honest resolver is accepted. SIM/candidate only."""
+    def test_genuine_resolver_positive_control_echoes_the_actual_query(self):
+        rig, o = run(genuine_resolver); self.assertTrue(o.accepted_ok, o.failures); self.assertEqual(anc(o), "PASS")
+    def test_absent_receipt_cannot_establish_the_mapping_so_it_is_unknown(self):
+        rig, o = run(lambda *a: binding(query_receipt=None)); self.assertFalse(o.accepted_ok); self.assertEqual(anc(o), "UNKNOWN")
+    def test_receipt_wrong_type_is_malformed(self):
+        rig, o = run(lambda *a: binding(query_receipt="x")); self.assertEqual(anc(o), "FAIL")
+    def replay(self, **query):
+        """ONE cached genuine binding (made for the default query) is returned for a different query."""
+        cache = {}
+        def cached(fk, m, g, fr):
+            if "b" not in cache: cache["b"] = binding()
+            return cache["b"]
+        mkw = {k: query.pop(k) for k in ("feature_id", "version", "window") if k in query}; fr = query.pop("fit_refs", FR); bo = query.pop("bo", None)
+        m = momentum_manifest(fit_refs=fr, **mkw); p = package(m)
+        if bo: p = dataclasses.replace(p, build_output=dict(p.build_output, **bo))
+        return admit(p, accepted_fit_generations={**FITS, 3: "c" * 64}, conformance=SIM_CONF, ancestry_resolver=cached)
+    def test_consistent_foreign_binding_replayed_for_other_feature_version_generation_or_fit_hash_fails(self):
+        for what, kw in (("feature id", dict(feature_id="mom9")), ("feature version", dict(version="2")), ("window (another feature definition)", dict(window=5, feature_id="mom5")),
+                         ("generation id", dict(bo={"UPSTREAM_GENERATION_ID": "FOREIGN-GENERATION-999"})), ("model id", dict(bo={"UPSTREAM_MODEL_ID": "FOREIGN-MODEL"})),
+                         ("fit hash", dict(fit_refs=[{"generation": 2, "ref_hash": "d" * 64}])), ("fit generation", dict(fit_refs=[{"generation": 3, "ref_hash": "c" * 64}]))):
+            a = self.replay(**kw)
+            if what == "fit hash": self.assertTrue([f for f in a.failed if f[0] == "FIT_ANCESTRY"], what); continue          # the narrow currency check already refuses a stale hash; the receipt also differs
+            self.assertEqual(a.ancestry[0], "FAIL", what); self.assertIn("ANCESTRY_BINDING_QUERY_MISMATCH", a.ancestry[1], what)
+    def test_the_same_cached_binding_is_accepted_only_for_its_own_query(self):
+        self.assertEqual(self.replay().ancestry[0], "PASS_CANDIDATE")
+    def test_instrument_or_timeframe_replay_fails(self):
+        for k in ("instrument", "timeframe"):
+            self.assertEqual(adm_of(lambda *a: binding(query_receipt=receipt(**{k: "OTHER"}))).ancestry[0], "FAIL", k)
+    def test_a_receipt_for_another_closure_record_fails(self):
+        a = adm_of(lambda *x: binding(query_receipt=receipt(closure_id="C-OTHER"))); self.assertEqual(a.ancestry, ("FAIL", "ANCESTRY_RECEIPT_FOR_ANOTHER_CLOSURE"))
+    def test_binding_is_immutable_and_normalised(self):
+        b = binding(); self.assertIsInstance(b.fit_ref_nodes, tuple)
+        with self.assertRaises(dataclasses.FrozenInstanceError): b.subject_node = "X"
+        with self.assertRaises(dataclasses.FrozenInstanceError): b.query_receipt.feature_id = "x"
+    def test_refused_replay_has_no_registry_effects(self):
+        from .test_pipeline import feature_records
+        rig = Rig(fits=FITS, ancestry_resolver=lambda *a: binding(query_receipt=receipt(feature_id="mom-other"))); p = package(momentum_manifest(fit_refs=FR)); rig.issue(p); o = rig.pipe.run(p)
+        self.assertFalse(o.accepted_ok); self.assertEqual(feature_records(rig), []); self.assertEqual(anc(o), "FAIL")
+    def test_foreign_fit_hash_is_caught_by_the_receipt_even_when_currency_passes(self):
+        fr = [{"generation": 2, "ref_hash": "d" * 64}]; p = package(momentum_manifest(fit_refs=fr))
+        a = admit(p, accepted_fit_generations={2: "d" * 64}, conformance=SIM_CONF, ancestry_resolver=lambda *x: binding())      # currency is current for THIS query; the cached receipt echoes hash b*64
+        self.assertFalse([f for f in a.failed if f[0] == "FIT_ANCESTRY"]); self.assertEqual(a.ancestry, ("FAIL", "ANCESTRY_BINDING_QUERY_MISMATCH"))
