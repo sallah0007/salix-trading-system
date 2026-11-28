@@ -851,6 +851,6 @@ Scope correction: "128-459 read" in 28.7 is now accurate only together with this
 
 ### 28.10 R52 continuation 4: batch-2 source-side read (S4 234-440 in full) and event interpretive-label guard
 - Record: `TRK-STAGE-A-R52-SOURCE-SIDE-REREAD-BATCH2.md` (agreement only where a test asserts the behaviour; grep presence not counted).
-- FOUND AND REPAIRED: Registry p293 interpretive labels in event truth had no check; `check_event_record` now refuses the four named tokens (unenumerated "equivalents" held).
+- WITHDRAWN (earlier wording "FOUND AND REPAIRED" was too broad): Registry p293 is only PARTIALLY handled. `check_event_record` is a pure validator that refuses four named tokens as a field name or top-level string value; it does not establish factual-semantic validity (unenumerated equivalents such as other-instrument variants are not shown to be factual or not). EventContextStore stays a raw evidence carrier; semantic use goes through `get_for_semantic_use`, which is HELD (`EVENT_CONTEXT_SEMANTIC_USE_HELD_NO_VALIDATION_PORT`) until a governed semantic-validation port is bound. The owning port implementation and its appointment remain an open input; the resolver/Gateway wiring review is still pending.
 - FOUND, NOT yet repaired (authorable next): no dedicated tests for the p398 families "stale source-contract registry" and "split-brain currentness"; p238/p242/p246 registry-path clauses need one named test each; the p335-352 thirteen ML requirements are not individually matched.
 - Holds unchanged; nothing cleared; full Tracker NOT complete.

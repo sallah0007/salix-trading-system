@@ -97,4 +97,25 @@ class R52InterpretiveLabels(unittest.TestCase):
             for rec in (ev(EVENT_TYPE=lab), ev(**{lab: "x"}), ev(NOTE=" " + lab.lower() + " ")):
                 with self.assertRaises(Refusal) as e: check_event_record(rec)
                 self.assertEqual(e.exception.code, "EVENT_RECORD_INTERPRETIVE_LABEL", lab)
-        check_event_record(ev(NOTE="BULLISH_FOR_SILVER"))                                           # an unenumerated equivalent is NOT guessed (held)
+        check_event_record(ev(NOTE="BULLISH_FOR_SILVER"))                                           # LIMIT, not a positive: this passes ONLY because the pure check knows four tokens; it is another interpretive label and is NOT shown to be factual (semantic use is governed by the store port, see R52EventStoreSemanticPort)
+
+
+class R52EventStoreSemanticPort(unittest.TestCase):
+    """R52 (Manager 21:03): the raw store preserves evidence; SEMANTIC USE needs a bound governed port. Unbound => HELD; bound => the port decides."""
+    def store(self, port=None):
+        import json
+        from stage_a.context.event_context_store import EventContextStore
+        from stage_a.storage.object_store import InMemoryObjectStore
+        return EventContextStore(InMemoryObjectStore(), encode=lambda f: json.dumps(f, sort_keys=True).encode(), decode=json.loads, identity_of=lambda f: f["EVENT_ID"], columns_of=lambda f: {"event_context_identity": f["EVENT_ID"]}, semantic_validator=port)
+    def test_raw_evidence_is_preserved_but_semantic_use_is_held_without_a_port(self):
+        st = self.store(); bad = ev(EVENT_TYPE="BULLISH_FOR_GOLD"); st.put(bad); self.assertEqual(st.get("E1")["EVENT_TYPE"], "BULLISH_FOR_GOLD")      # preserved, never deleted/rewritten
+        self.assertEqual(code(st.get_for_semantic_use, "E1"), "EVENT_CONTEXT_SEMANTIC_USE_HELD_NO_VALIDATION_PORT")
+    def test_bound_port_refuses_the_interpretive_fact_and_passes_the_clean_one(self):
+        st = self.store(N.check_event_record); st.put(ev(EVENT_TYPE="BULLISH_FOR_GOLD")); self.assertEqual(code(st.get_for_semantic_use, "E1"), "EVENT_RECORD_INTERPRETIVE_LABEL")
+        st.put(ev(i="E2")); self.assertEqual(st.get_for_semantic_use("E2")["EVENT_ID"], "E2"); self.assertIsNone(st.get_for_semantic_use("NOPE"))
+    def test_a_stricter_bound_port_is_the_only_semantic_rule(self):
+        def strict(f):
+            if f.get("NOTE"): raise Refusal("note", code="NOTE_NOT_FACTUAL")
+        st = self.store(strict); st.put(ev(NOTE="BULLISH_FOR_SILVER")); self.assertEqual(code(st.get_for_semantic_use, "E1"), "NOTE_NOT_FACTUAL")
+    def test_non_callable_port_is_refused(self):
+        self.assertEqual(code(self.store, "x"), "EVENT_CONTEXT_SEMANTIC_VALIDATOR_NOT_CALLABLE")
