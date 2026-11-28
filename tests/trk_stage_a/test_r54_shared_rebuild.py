@@ -44,4 +44,19 @@ class SharedRebuild(unittest.TestCase):
         raw, ix = index(a.raws['B']); k = raw.list_prefix("final-resolution/id/")[0]; b, et = raw.get(k); raw.put_if_match(k, b.replace(b"XAUUSD", b"EURUSD"), et)
         with self.assertRaises(IntegrityFailure): ix.verify_all(S.object_resolver(raw))
         raw.put_if_absent("final-resolution/id/" + "0" * 64, raw.get(k)[0]); self.assertEqual(code(index, raw), "E05_SOURCE_OBJECT_NOT_CONTENT_ADDRESSED")      # a record filed under another key is refused, not projected
+from stage_a.gateway.h1_record import TypedH1
+from stage_a.gateway import outcome_series as H3
+from .test_r50_h1_augmented import h1, pkg, ctx
+class SharedH1Desk(unittest.TestCase):
+    def test_h1_correlates_with_the_composition_gateway_final_identity_and_survives_a_cold_restart(self):
+        cr, (a, c, fkB, coB, rB, bB, eB, fw, ml) = rig(self)
+        fw(coB, rB, "f0", "W0"); ident = FI("FW", "M-f0", "XAUUSD", "W0"); d = coB.outcome_desk(); self.assertIs(coB.outcome_desk(), d)
+        rec = TypedH1(h1(REQUEST_ID="f0", MANIFEST_OR_DATASET_BINDING_ID="M-f0", CONSUMER_BINDING_ID="B1")); d.register_h1(rec, identity=ident); r = d.request("f0", pkg(), ctx(), identity=ident); self.assertEqual((r.consumer_binding_id, r.decision.status, r.delivered), ("B1", H3.PASS_STRUCTURAL, False))
+        self.assertIsNotNone(code(d.register_h1, TypedH1(h1(REQUEST_ID="never", MANIFEST_OR_DATASET_BINDING_ID="M-never", CONSUMER_BINDING_ID="B9")), identity=FI("FW", "M-never", "XAUUSD", "W9")))   # an identity this Gateway never issued is refused
+        c2, co2 = cr._restart(a, c, fkB, rB); r2 = co2.recover_publication(fkB); d2 = co2.outcome_desk(); self.assertIsNot(d2, d)                                  # a rebuilt Composition gets its OWN desk over the re-hydrated durable final store
+        d2.register_h1(rec, identity=ident); self.assertEqual(code(d2.request, "f0", pkg(), ctx(), identity=ident), "OUTCOME_REQUEST_WINDOW_OUTCOME_NOT_A_BINDING")      # fail-closed: the rebuilt Gateway's in-memory outcome is not a Binding until the window is retried
+        fw(co2, r2, "f0", "W0"); r2r = d2.request("f0", pkg(), ctx(), identity=ident); self.assertEqual((r2r.consumer_binding_id, r2r.decision.status, r2r.delivered), ("B1", H3.PASS_STRUCTURAL, False))
+        bad = TypedH1(h1(REQUEST_ID="f0", MANIFEST_OR_DATASET_BINDING_ID="M-OTHER", CONSUMER_BINDING_ID="B1")); self.assertIsNotNone(code(d2.register_h1, bad, identity=ident))                    # manifest binding id != the issued identity's
+    def test_unpublished_composition_has_no_desk(self):
+        cr, (a, c, fkB, coB, rB, bB, eB, fw, ml) = rig(self); c2, co2 = cr._restart(a, c, fkB, rB); co2.gateway = None; self.assertEqual(code(co2.outcome_desk), "COMPOSITION_NOT_PUBLISHED")
 if __name__ == "__main__": unittest.main()
