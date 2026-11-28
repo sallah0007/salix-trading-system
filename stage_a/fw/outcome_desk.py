@@ -26,6 +26,12 @@ class OutcomeSeriesDesk:
         other = self._by_req.get(rec.request_id)
         if other is not None and other != rec.consumer_binding_id: raise Refusal(rec.request_id, code="CONSUMER_BINDING_REQUEST_ALREADY_CORRELATED")
         self._cb[rec.consumer_binding_id] = rec; self._by_req[rec.request_id] = rec.consumer_binding_id; return rec
+    def register_h1(self, h1, *, identity):
+        """R50: the typed H1 CONSUMER_BINDING record is the source of the CBID relation (never a loose string triple): the record must be a TypedH1 for the FW consumer; its own MANIFEST_OR_DATASET_BINDING_ID must equal the issued identity's. Same immutability rules as register_consumer_binding."""
+        from ..gateway.h1_record import TypedH1
+        if not isinstance(h1, TypedH1): raise Refusal(type(h1).__name__, code="H1_RECORD_NOT_TYPED")
+        if h1.fields["CONSUMER_ID"] != "FW": raise Refusal(h1.fields["CONSUMER_ID"], code="CONSUMER_BINDING_NOT_THE_ISSUED_WINDOW_IDENTITY")
+        return self.register_consumer_binding(h1.correlation(identity), identity=identity)
     def request(self, request_id, pkg, ctx, *, identity):
         if not isinstance(pkg, H.OutcomeSeriesPackage) or not isinstance(request_id, str) or not request_id: raise Refusal("request", code="OUTCOME_REQUEST_MALFORMED")
         fs = getattr(self._g, "final_store", None)
