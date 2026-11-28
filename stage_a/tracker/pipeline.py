@@ -233,7 +233,8 @@ class TrackerPipeline:
         for _ in range(3):
             if not j.epoch_is_current():          # check the fence BEFORE exercising one-shot authority
                 raise StaleFence("fence lost before acceptance")
-            states = replay(ns, j.read_from(1))
+            basis = j.head()          # R52 (Manager 21:31 acceptance race): ONE HEAD basis is pinned BEFORE the replay/semantic decision, the decision is made only on records through that basis, and the CAS below is against THIS SAME basis (never a refreshed head after port/claim/mint work).
+            states = replay(ns, [r for r in j.read_from(1) if r.seq <= basis.seq])
             st = states.get(version)
             if st is not None:
                 if st.accepted_body["manifest_hash"] == rec["manifest_hash"]:
@@ -259,7 +260,7 @@ class TrackerPipeline:
             if self._attempt_time_port is not None: body[AT.TIME_KEY] = AT.mint_fresh(self._attempt_time_port, seen_times)        # a FRESH time for THIS CAS attempt; a failed CAS rebuilds body/hash/key (loop) and re-mints
             T.validate_body(T.CANONICAL_ACCEPTED, body)
             T.check_transition(None, T.CANONICAL_ACCEPTED)
-            head = j.head()
+            head = basis
             if not j.epoch_is_current():
                 raise StaleFence("fence lost before acceptance commit")
             try:
