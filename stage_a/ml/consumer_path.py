@@ -69,15 +69,23 @@ class MLConsumerPath:
 
     def _view_blockers(self, fv, entry, row):
         """`fv` = {"store": FeatureViewStore, "manifest_id": str, "resolvers": {evaluate keyword resolvers}, "symbol_of": callable(feature_id bytes) -> declared symbol | None}. Every non-PASS duty blocks (FAIL and HELD alike: an unbound duty is never a pass); a consumed feature
-        must be one the registered view declares (exact symbol + version through the SUPPLIED subject-bound `symbol_of`; unmapped => blocked, never guessed). Satisfying the duties authorizes nothing (p351)."""
+        must be one the registered view declares (exact symbol + version through the SUPPLIED subject-bound `symbol_of`; unmapped => blocked, never guessed), and the actual consumed ROW (via the supplied `row_of_transition` bridge from the delivered entry's canonical transition ref) must be one of the view's declared rows; without the bridge the row relation is HELD. Satisfying the duties authorizes nothing (p351)."""
         from . import tracker_ml_contract as TM
         if not isinstance(fv, dict) or any(k not in fv for k in ("store", "manifest_id", "resolvers", "symbol_of")): return ["TRACKER_ML_VIEW_INPUT_INVALID"]
         m = fv["store"].get(fv["manifest_id"])
         if m is None: return ["TRACKER_ML_VIEW_NOT_REGISTERED"]
         out = ["TRACKER_ML_DUTY_%s_%s" % (p, st) for p, (_n, st, _d) in TM.evaluate(m, store=fv["store"], **fv["resolvers"])["duties"].items() if st != TM.PASS]
-        declared = {(f[0], f[1]) for f in m.features}
+        declared = {(f[0], f[1]) for f in m.features}; view_rows = set(m.rows); bridge = fv.get("row_of_transition")
         for b in row.bindings:
             sym = fv["symbol_of"](b.entry.feature_id) if callable(fv["symbol_of"]) else None
-            if sym is None: out.append("CONSUMED_FEATURE_SYMBOL_UNMAPPED_HELD")
-            elif (sym, b.entry.feature_version) not in declared: out.append("CONSUMED_FEATURE_NOT_DECLARED_IN_VIEW")
+            if sym is None: out.append("CONSUMED_FEATURE_SYMBOL_UNMAPPED_HELD"); continue
+            if (sym, b.entry.feature_version) not in declared: out.append("CONSUMED_FEATURE_NOT_DECLARED_IN_VIEW"); continue
+            # exact consumed ROW: the delivered entry carries the canonical transition ref of the row the Gateway served (RowPublication's committed origin). The SUPPLIED subject-bound `row_of_transition(ref)` must read that record back and
+            # return (row_content_hash, materialization_version, step_index); the row-content hash is NOT compared with the delivered-feature hash (different domains). No bridge / unresolved (e.g. a legacy feature-version row) => explicit HELD, never a pass.
+            try: got = None if bridge is None else bridge(b.entry.canonical_transition_ref)
+            except Exception: got = None
+            if not (isinstance(got, tuple) and len(got) == 3): out.append("CONSUMED_ROW_NOT_BOUND_TO_VIEW_HELD"); continue
+            h, mv, step = got
+            if mv != b.entry.materialization_version or step != b.entry.step_index: out.append("CONSUMED_ROW_DIFFERS_FROM_DELIVERED_ENTRY")
+            elif (sym, h) not in view_rows: out.append("CONSUMED_ROW_NOT_IN_VIEW")
         return out
