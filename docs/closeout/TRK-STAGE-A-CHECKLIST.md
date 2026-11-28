@@ -1,13 +1,13 @@
 # Tracker Stage A — persistent work checklist (Coder; code state only, governance state lives in Drive)
 A fixed finding or merged PR does NOT mark the larger task complete. Holds unchanged: A02 Class B HOLD; A07/COVERAGE OPEN; A07/P12/N2 UNSATISFIED; QC34 ALERT(HOLD); A08 READY_TO_CODE NO; Stage A HOLD; all 100 A07 qualifiers UR/QUALIFIED false; full Tracker NOT complete; no Sallah sign-off. No gate cleared by any merge/CI.
-Main at last update: a79158e (#151 invariant stage, #152 row publication, #153 route delivery tests, invariant-identity fix merged). Full suite 2106 passed.
+Main at last update: 31b9422 (#159 race fix) + this PR; suite 2114 passed at #159. Merged this stretch: #151 invariant stage, #152 row publication, #153 route delivery, #154 invariant identity, #155 checklist, #156 E05 route, #157 cold restart, #158 Composition.publish_accepted_row, #159 side-HEAD pinning. Root-verified: #159, #154 (PASS); #151-#158 CI/trees matched; child-process tests root-STATIC+CI only.
 
 | # | Task | Status | Evidence / branch / resume point |
 |---|---|---|---|
 | 1 | Supplied-profile row runtime: StateRowBuilder/CommittedRowChain -> independent verifier -> invariant stage -> epoch-fenced RowAcceptor | PARTIAL (merged #139-#146, #150, #151, invariant identity) | profile math/codec/clock/commit-point rule HELD (SIM only) |
-| 2 | journaled status/currentness for rows | PARTIAL | RowPublication -> SIM_STATUS_FACT merged; no per-row A1 event (vocabulary gap); status token mapping HELD |
+| 2 | journaled status/currentness for rows | PARTIAL (publication race closed in covered SIM cases, #159) | RowPublication -> SIM_STATUS_FACT merged; no per-row A1 event (vocabulary gap); status token mapping HELD |
 | 3 | E05 rebuild over per-row records | PARTIAL-> tested | #147 sources + new route test: E05 rebuild over row namespace + durable FW/ML final resolutions on the per-row route, drift refused. SIM status side records (SIM_STATUS_FACT) have NO E05 table in the plan list (not invented) |
-| 4 | Core/Gateway + BOTH FW/ML for per-row route | PARTIAL | tests merged (test_r53_row_route_delivery, SIM-merged code tables; admitted table = source-owner input). Needs: first-class Composition per-row publish method (currently reuses recover_publication), restart/cold recovery of row route, separated-worker route for rows (#149 is feature-VERSION only), exact source/manifest/version/row/currentness/consumer evidence |
+| 4 | Core/Gateway + BOTH FW/ML for per-row route | MOSTLY TESTED (SIM) | merged: route delivery (#153), E05 over route (#156), cold restart (#157), first-class Composition.publish_accepted_row (#158; its `authoritative` re-check is a shadowed guard), side-HEAD pinning (#159). THIS PR: separated per-ROW child-process verify/accept handlers (stage_a/ops/separated_row_handlers.py, profile = supplied port SALIX_ROW_PROFILE, SIM profile in tests) + publication + FW/ML delivery. OPEN: admitted code table (SIM-merged table limit), per-row A1 event vocabulary, exact consumer/source evidence matrix, status mapping/clock/commit-point/profile math HELD |
 | 5 | Invariant port identity (PR151 review) | FIXED, merged | reported identity only; artifact-hash recomputation needs a bound codec input (HELD) |
 | 6 | ML Registry §14 p337-349 thirteen duties + orchestration | PENDING (not started this stretch) | |
 | 7 | All-segment stored SOURCEVALUE L2 / triggers / maintenance / snapshot minima / per-TF vintage / quarantine / restoration / planes / restart / read-model, for the per-row route | PENDING | feature-version route exists (test_r53_real_assembly_base) |
@@ -18,8 +18,4 @@ Main at last update: a79158e (#151 invariant stage, #152 row publication, #153 r
 | 12 | ONE CURRENT combined closeout (source/callpath/commit/positive+negative/review limit or irreducible input/source-owner ROLE/consequence/recommendation) | PENDING | TRK-STAGE-A-TRACKER-COMBINED-CLOSEOUT.md §28.11 is the last |
 | 13 | Refreshed fetch + untracked/stash/local-only inventory (no cleanup) | PENDING | last: 135 tracking refs, 0 stashes, 0 untracked, none unreachable |
 
-<<<<<<< HEAD
-Cold restart of the row route: tested (merged). Composition.publish_accepted_row first-class (this PR; the `authoritative` re-check is a shadowed/equivalent guard: commit stamps the current head). Next resume point: item 4 remainder (separated-worker rows), then item 6 (ML Registry §14), then 6-13 in order. Preserve all branches/WIP; no cleanup.
-=======
-Next resume point: item 4 remainder (Composition per-row publish method, cold restart of row route, separated-worker rows), then 6-13 in order. Preserve all branches/WIP; no cleanup.
->>>>>>> origin/main
+Next resume point (CURRENT): item 4 closed in candidate/SIM tests except the SOURCEVALUE/L2 and Health parts (items 7-8); then item 6 (ML Registry §14), then 7-13 in order. Preserve all branches/WIP; no cleanup.
