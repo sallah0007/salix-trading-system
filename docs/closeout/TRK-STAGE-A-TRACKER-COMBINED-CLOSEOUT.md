@@ -715,7 +715,7 @@ AUTHOR-RUN. Full suite run locally before PR; CI checkout SHA: see PR.
 Residuals named: no caller invokes ShadowLedger (the publication path is not in this repository); extra J2 entries are permitted pending a source choice; a pre-R46 correction fact without lineage is indistinguishable from a normal fact.
 ### 25.2 New source-supported engineering
 - Typed fixed-shape candidate operators (`typed_shapes.py`): state-schema validation, vector/matrix elementwise, FIXED_SUM, FIXED_DOT (product rounded first), NOT_ADMITTED names refused. NOT wired into the manifest DAG (grammar/opcode codes unsupplied). The R45 statement "no source gives shape typing" is WITHDRAWN.
-- H3 outcome/target-label delivery decision (`gateway/outcome_delivery.py`), not yet wired into the Gateway resolve path.
+- CORRECTION (R46b): the H3 module added in PR69 duplicated existing `gateway/outcome_series.py` and is removed; no new H3 work stands from R46.
 - R06 original members: 11/11 dependency hashes recomputed; exact V03 proposal in `docs/a07/A07_R46_V03_AND_R06_MEMBER_READ.md`.
 - Decision pack revision `docs/proposals/R46_DECISION_PACK_REVISION.md` (B11 text corrected; branch-ceiling wording; H1 token audit; options with recommendations).
 ### 25.3 Preservation
