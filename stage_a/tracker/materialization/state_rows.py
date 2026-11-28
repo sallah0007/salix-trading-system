@@ -7,7 +7,7 @@ This is MECHANICS only. Everything the profile owns is SUPPLIED by the caller an
  - the STATE_TUPLE byte encoder/decoder (D13 byte layout is NOT admitted: refused when unbound; a round trip is enforced),
  - the CodeTables used for the row hash (candidate tables stay provisional) and every identity/version field.
 NOT built here: model math, initialization rule, opcodes/grammar, commit-point id rule, clock, ceilings VALUES (caller supplies)."""
-import math, struct
+import copy, math, struct
 from dataclasses import replace
 from ...errors import Refusal
 from ...composer.expression.typed_shapes import Typed, validate_state_schema, TYPES
@@ -53,10 +53,10 @@ def projection_of(schema, state):
 
 class StateRowBuilder:
     def __init__(self, components, tables, encode, decode, fixed, ceilings=None):
-        self._schema = validate_state_schema(components, ceilings)
+        self._schema = validate_state_schema(copy.deepcopy(components), ceilings)      # R53: detach from caller-owned (mutable, nested) profile data
         if not callable(encode) or not callable(decode): raise Refusal("encoder/decoder", code="STATE_TUPLE_CODEC_NOT_SUPPLIED")
         if not isinstance(fixed, dict) or set(fixed) != set(_FIXED): raise Refusal(sorted(fixed) if isinstance(fixed, dict) else "fixed", code="ROW_FIXED_FIELD_SET")
-        self._t, self._enc, self._dec, self._fixed = tables, encode, decode, dict(fixed)
+        self._t, self._enc, self._dec, self._fixed = copy.deepcopy(tables), encode, decode, copy.deepcopy(dict(fixed))
 
     def _encode(self, state):
         b = self._enc(state)

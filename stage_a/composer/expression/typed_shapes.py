@@ -34,7 +34,7 @@ def validate_state_schema(components, ceilings=None):
         if ceilings is not None:
             if t == "FIXED_VECTOR_BINARY64" and d[0] > ceilings["MAX_VECTOR_LENGTH"]: raise Refusal(n, code="CEILING_VECTOR_LENGTH_EXCEEDED")
             if t == "FIXED_MATRIX_BINARY64" and (d[0] > ceilings["MAX_MATRIX_ROWS"] or d[1] > ceilings["MAX_MATRIX_COLS"]): raise Refusal(n, code="CEILING_MATRIX_SHAPE_EXCEEDED")
-        names.add(n); out.append(dict(c))
+        names.add(n); cc = dict(c); cc["SHAPE_DIMENSIONS"] = list(d); out.append(cc)      # R53: detach the nested dims list from the caller's component dict
     return tuple(out)
 
 class Typed:
