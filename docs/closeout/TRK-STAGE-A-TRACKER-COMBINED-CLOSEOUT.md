@@ -727,3 +727,22 @@ A02 Class B HOLD; A07/COVERAGE OPEN; A07/P12/N2 UNSATISFIED; QC34 ALERT(HOLD); A
 ### 25.6 Evidence
 AUTHOR-RUN; full suite 1767 passed locally; CI checkout SHA: see PR.
 
+
+## 26. R47/R48 current view (from origin/main 5205c1722663bd61600f47cac4c7486911637dd3; sections 12-25 are HISTORY where they differ; nothing here is a gate, acceptance or appointment; the full Tracker is NOT complete)
+Evidence classes are kept apart: REPORTED (Manager statements), AUTHOR-RUN (my runs), INDEPENDENTLY REVIEWED (none claimed), SIMULATED (all provider/path results), QUALIFIED (none), ACCEPTED (none).
+### 26.1 Done and merged
+| PR | What | Evidence |
+|---|---|---|
+| #72 | the three R47-reproduced defects (incremental select demand parity, finite-constant validation at evaluation/incremental construction, ShadowLedger global event-id binding) | tests + mutation sweep; CI 1771 passed on the merge ref |
+| #73 | A07 oracle members decoded and hash-verified (xz + 4 members); per-qualifier reconciliation: 12 loss-listed read per qualifier (6 carried/replaced, 4 partial, 2 not established); 21 disagreements read against V235 wording (3 carried by wording, 1 by source, 1 anchor mismatch, 6 partial, 6 container-only, 1 self-admitted residual, 1 divergence, 1 inherited, 1 not-a-clause); NL0178 separate = INSUFFICIENT_EVIDENCE per qualifier | `docs/a07/A07_R47_MEMBER_RECONCILIATION.md`, CSV, tool refuses on hash mismatch (negative control run) |
+| (this PR) | R7 body read (sha256 verified) and compared (`TRK-STAGE-A-R48-R7-BODY-COMPARISON.md`); ten R06 dependencies semantically read (`A07_R48_R06_DEPENDENCIES_SEMANTIC_READ.md`); clause table regenerated (`TRK-STAGE-A-R43-CLAUSE-RECONCILIATION.md`, now the CURRENT table; B07/TR-01/TR-12/TR-14/B23/D2/D10/A07-1/A07-2 updated) | generator-equality test |
+| #74 | R7 PROPOSED lifecycle on the one HEAD: grant-revocation terminal rule (derived refusal + settle), creation-lineage replacement with parent link, RD4a attempt admission, RD4b review/successor/one-final disposition | 15 tests; 19-mutant sweep all killed; R7 stays NOT ADOPTED |
+### 26.2 Still not built (exact owner/input)
+- FW 10-field / H3 owning request/return and the exact H1 CBID versus final-identity manifest: Contract H1/H3 text read earlier; existing `gateway/outcome_series.py` and `fw/outcome_desk.py` stand; unbuilt: the owning request emitter, the typed H1 record (REVOCATION_WATERMARK_REF, APPLICABILITY_MAP_ID/VERSION lack repository tokens), the boundary convention, segment model and unseal resolver (H3 source owner = Contract/Spec function).
+- ML_FW_AUGMENTED governed FW-return/rebind; all stored-source-value L2 segments/triggers; snapshot minimum fields and per-TF watermark source; quarantine/restoration end to end; Health required-unknown ancestry denial plus unrelated-baseline delivery on the real consumer: not re-engineered this round (named, not closed).
+- Unbuilt owners: status emitter (Annex IX), principal for acceptance-origin / replica-commit-service (names only), subject-MV binding, shadow publication caller (no caller of ShadowLedger exists in the repository), Branch A trusted-clock predicate.
+- BuildPlan: E-03 module map has 20 of 56 file names absent by basename; sections 21-26 and the second half of the 11-14/14A/27/29A functional comparison were not completed in this round.
+### 26.3 Preservation
+Enumerated again: `git rev-list --all --reflog --not --remotes` lists 6 commits (the heads of merged PR branches); all 6 confirmed present on GitHub by `gh api commits/<sha>`; no stash; no untracked work; the 170 earlier SHAs remain reachable from `preserve/r46-local-only-anchor`. No branch deleted.
+### 26.4 Holds unchanged
+A02 Class B HOLD; A07/COVERAGE OPEN; A07/P12/N2 UNSATISFIED; QC34 ALERT(HOLD); A08 READY_TO_CODE NO; Stage A HOLD. A merge or test clears none. 41 units / 100 qualifiers UR; 65 no-current-refs, 35 cited-not-awarded and the four programme obligations unresolved.
