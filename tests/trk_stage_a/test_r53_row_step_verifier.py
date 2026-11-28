@@ -126,3 +126,19 @@ def test_schema_cannot_be_changed_by_a_supplied_callback_after_validation():
     r2 = _built(SCHEMA, 1.0, 2); assert verify(r2, None, schema=declared2, reference_step=_ref_d(2), decode=_dec_d, encode=_enc_d, resolve_inputs=lambda d: {"declared": [(rf, h, 1.0) for rf, h in d]}).status == PASS
     # explicit NEW schema (length 3, new version) is a separate declaration and verifies the length-3 row on its own terms
     assert verify(r3, None, schema=s3, reference_step=_ref_d(3), decode=_dec_d, encode=_enc_d, resolve_inputs=lambda d: {"declared": [(rf, h, 1.0) for rf, h in d]}).status == PASS
+
+def test_independent_schema_check_requires_shape_rank_and_coherence_like_the_producer():
+    from stage_a.composer.expression.typed_shapes import validate_state_schema
+    r = chain()[0]
+    def mod(f):
+        sc = copy.deepcopy(SCHEMA); f(sc); return sc
+    bad = {"missing rank": lambda sc: sc[1].pop("SHAPE_RANK"), "rank 2 vs dims [2]": lambda sc: sc[1].__setitem__("SHAPE_RANK", 2), "bool rank": lambda sc: sc[1].__setitem__("SHAPE_RANK", True),
+           "float rank": lambda sc: sc[1].__setitem__("SHAPE_RANK", 1.0), "unknown field": lambda sc: sc[1].__setitem__("EXTRA", 1), "scalar rank 1": lambda sc: sc[0].__setitem__("SHAPE_RANK", 1),
+           "dim too large": lambda sc: sc[1].__setitem__("SHAPE_DIMENSIONS", [2 ** 32]), "missing published": lambda sc: sc[1].pop("PUBLISHED"), "vector rank 2 with two dims": lambda sc: (sc[1].__setitem__("SHAPE_RANK", 2), sc[1].__setitem__("SHAPE_DIMENSIONS", [2, 3]))}
+    for name, f in bad.items():
+        sc = mod(f)
+        with pytest.raises(Exception): validate_state_schema(copy.deepcopy(sc))                                  # the producer refuses each ...
+        res = verify(r, None, schema=sc); assert res.status == FAIL and dict(res.checks)["schema_well_formed"] is False, name      # ... and so must the independent check
+    mat = [dict(COMPONENT_NAME="m", COMPONENT_TYPE="FIXED_MATRIX_BINARY64", SHAPE_RANK=2, SHAPE_DIMENSIONS=[2, 3], PUBLISHED=False), dict(SCHEMA[0], INVARIANT_REF="inv")]
+    assert V._schema_ok(mat) and V._schema_ok(SCHEMA)                                                           # genuine scalar / vector / matrix (+ optional INVARIANT_REF) controls
+    assert not V._schema_ok([dict(mat[0], SHAPE_DIMENSIONS=[2])])                                               # matrix rank 2 with one dimension

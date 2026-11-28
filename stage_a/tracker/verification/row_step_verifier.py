@@ -18,6 +18,7 @@ def _snap(x):
     if isinstance(x, list): return [_snap(v) for v in x]
     if isinstance(x, tuple): return tuple(_snap(v) for v in x)
     return x
+_REQ = {"COMPONENT_NAME", "COMPONENT_TYPE", "SHAPE_RANK", "SHAPE_DIMENSIONS", "PUBLISHED"}
 _DIMS = {"BINARY64_SCALAR": 0, "FIXED_VECTOR_BINARY64": 1, "FIXED_MATRIX_BINARY64": 2}
 
 def _f(x):
@@ -36,9 +37,11 @@ def _schema_ok(schema):
     names = set()
     for c in schema:
         try:
-            n, t, d = c["COMPONENT_NAME"], c["COMPONENT_TYPE"], c["SHAPE_DIMENSIONS"]
+            if not isinstance(c, dict) or not _REQ <= set(c) or not set(c) <= _REQ | {"INVARIANT_REF"}: return False          # SHAPE_RANK is MANDATORY (Annex STATE_COMPONENTS); unknown fields refused
+            n, t, d, rk = c["COMPONENT_NAME"], c["COMPONENT_TYPE"], c["SHAPE_DIMENSIONS"], c["SHAPE_RANK"]
+            if type(rk) is not int or not 0 <= rk <= 255 or t not in _DIMS or rk != _DIMS[t]: return False                  # rank: integer (not bool), coherent with the component type
             if not (isinstance(n, str) and n) or n in names or t not in _DIMS or not isinstance(c["PUBLISHED"], bool): return False
-            if not isinstance(d, (list, tuple)) or len(d) != _DIMS[t] or any(type(x) is not int or x < 1 for x in d): return False
+            if not isinstance(d, (list, tuple)) or len(d) != rk or any(type(x) is not int or x < 1 or x >= 2 ** 32 for x in d): return False
             names.add(n)
         except Exception: return False
     return True
