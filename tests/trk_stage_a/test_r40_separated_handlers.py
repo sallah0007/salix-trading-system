@@ -77,4 +77,15 @@ class Sep(unittest.TestCase):
         from tracker_component.journal_port import HeadMismatch
         with self.assertRaises(StaleFence): old.append(old.head(), "CANONICAL_ACCEPTED", body)
         self.assertEqual(len(self._accepted()), 1)
+    def test_in_process_handler_guards_uncertified_manifest_and_feature_swap_are_refused(self):
+        from unittest import mock
+        with mock.patch.object(SH, "certify", lambda m, probe: type("C", (), {"status": "REJECTED"})()):
+            with self.assertRaises(Refusal) as c: SH.materialize(job("tracker.materialize", "u", ("manifest", self.mh)))
+        self.assertEqual(c.exception.code, "SEP_CERTIFICATION_NOT_CERTIFIED"); self.assertIsNone(self._ptr("mat-by-manifest", self.mh))
+        SH.materialize(job("tracker.materialize", "m", ("manifest", self.mh))); matH = self._ptr("mat-by-manifest", self.mh)
+        SH.verify(job("tracker.verify", "v", ("materialization", matH), ("declared", self.mh))); rh = self._ptr("ver-by-mat", matH)
+        raw = self.rig.store._i; key = "SIMULATION/sep/acceptin/" + self.mh; ai = json.loads(raw.get(key)[0]); ai["feature_id"] = ai["feature_id"][:-1] + ("x" if ai["feature_id"][-1] != "x" else "y")
+        raw.put_if_match(key, canonical_bytes(ai), raw.get(key)[1])
+        with self.assertRaises(Refusal) as c: SH.accept(job("tracker.accept", "a", ("verification", rh), ("materialization", matH), ("acceptin", self.mh)))
+        self.assertEqual(c.exception.code, "SEP_ACCEPT_FEATURE_DIFFERS_FROM_MATERIALIZATION"); self.assertEqual(self._accepted(), [])
 if __name__ == "__main__": unittest.main()
