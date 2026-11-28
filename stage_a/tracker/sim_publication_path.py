@@ -34,7 +34,7 @@ class SimulationPublicationPath:
         if type(status_journal) is not ObjectStoreJournal or authority_class_of(status_journal) != SIMULATION: raise Refusal("status journal", code="SIM_PUBLICATION_REQUIRES_SIMULATION_JOURNAL")
         if status_journal is feature_journal or not isinstance(status_spec, dict) or status_spec.get("record_kind") != STATUS_KIND: raise Refusal("spec", code="SIM_PUBLICATION_SPEC_INVALID")
         self._st, self._fj, self._sj, self._spec = store, feature_journal, status_journal, status_spec; self._decode = make_decoder(status_spec)
-    def commit(self, feature_key, supplied: SuppliedRowInputs, status_token, *, sequence, correction=False):
+    def commit(self, feature_key, supplied: SuppliedRowInputs, status_token, *, sequence, correction=False, origin=None):
         """Also the lawful REBUILD after a source-head advance: re-commits against the CURRENT owning head, only while the version is live."""
         if not isinstance(supplied, SuppliedRowInputs) or status_token not in self._spec["status_map"] or type(sequence) is not int or sequence < 1 or type(correction) is not bool: raise Refusal("inputs", code="SIM_PUBLICATION_INPUT_INVALID")
         src = self._fj.head()                                                                    # read BEFORE the state: a race can only make the recorded head older than the state seen, which the guard fails closed on
@@ -50,7 +50,17 @@ class SimulationPublicationPath:
         body = {n: (v.hex() if n in bf else v) for n, v in zip(mvn, vals)}
         body.update({self._spec["status_field"]: status_token, self._spec["sequence_field"]: sequence, self._spec["available_asof_field"]: supplied.available_asof, self._spec["correction_field"]: correction,
                      "feature_key": rb.feature_key, "accepted_seq": rb.accepted_seq, "accepted_hash": rb.accepted_hash, "source_head_seq": src.seq, "source_head_hash": src.hash, "row": row})
+        if origin is not None:
+            if not (isinstance(origin, dict) and all(isinstance(k, str) and isinstance(v, (str, int)) and not isinstance(v, bool) for k, v in origin.items())): raise Refusal("origin", code="SIM_PUBLICATION_INPUT_INVALID")
+            body["origin"] = dict(origin)                                                          # R50: the emitter's pointer to the committed lifecycle record this status was derived from (provenance, not authority)
         return self._sj.append(self._sj.head(), STATUS_KIND, body)
+    @property
+    def feature_journal(self):
+        """Read-only handle to the OWNING journal this path re-reads (the emitter reads the committed lifecycle record from it)."""
+        return self._fj
+    def records(self):
+        """Decoded committed side records (read-only copies)."""
+        return self._records()
     def _records(self):
         head = self._sj.head(); out = []
         for r in (self._sj.read_from(1) if head != GENESIS_HEAD else []):
