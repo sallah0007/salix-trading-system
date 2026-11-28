@@ -6,7 +6,7 @@ CM = [("if not self._order_terminal(order_id) and self._order_grant_revoked(orde
       ("roles.get(issued_by) == \"issuer\"", "roles.get(issued_by) == \"x\""),
       ("if not self._order_terminal(order_id) and self._order_grant_revoked(order_id, order.issued_by):\n            raise", "if False:\n            raise")]
 M = [
-     ('if c["state"] != "BOUND":\n                raise Refusal("CLAIM_NOT_BOUND", c["state"])\n            prev', 'if False:\n                raise Refusal("CLAIM_NOT_BOUND", c["state"])\n            prev'),
+     ('if c["state"] != "BOUND":\n            raise Refusal("CLAIM_NOT_BOUND", c["state"])\n        prev', 'if False:\n            raise Refusal("CLAIM_NOT_BOUND", c["state"])\n        prev'),
      ('raise Refusal("ATTEMPT_ALREADY_LIVE")', "pass"),
      ('if mine and correction_parent != mine[-1]["build_id"]', "if False"),
      ('raise Refusal("BUILD_ID_CONFLICT", build_id)', "pass"),
@@ -24,8 +24,8 @@ M = [
      ('raise Refusal("REVIEW_GENERATION_MISMATCH")', "pass"),
      ('raise Refusal("PACKAGE_OWNED_BY_ANOTHER_ATTEMPT", package_id)      #', 'pass      #'),
      ('raise Refusal("ATTEMPT_ALREADY_HAS_FINAL_EFFECT", build_id)', "pass"),
-     ("if oid not in self._p.revoked:", "if oid not in self._p.revoked and False:"),
-     ("if self._order_terminal(oid) or not self._order_grant_revoked", "if self._order_terminal(oid) or oid in self._p.revoked or not self._order_grant_revoked"),
+     ("if oid in self._p.revoked or self._order_terminal(oid) or not self._order_grant_revoked", "if True or not self._order_grant_revoked"),
+     ("if c[\"state\"] != \"BOUND\" or self._order_terminal(oid) or not", "if self._order_terminal(oid) or not"),
      ('self._need_grant(origin_grant)\n            a = self._p.attempts.get(build_id)\n            if a is None or a["state"] != "ADMITTED":\n                raise Refusal("ATTEMPT_NOT_ADMITTED", build_id)\n            self._verify_order(a["order_id"], None, head.seq)\n            if self._final', 'a = self._p.attempts.get(build_id)\n            if a is None or a["state"] != "ADMITTED":\n                raise Refusal("ATTEMPT_NOT_ADMITTED", build_id)\n            self._verify_order(a["order_id"], None, head.seq)\n            if self._final')]
 for i, (a, b) in enumerate(CM):
     co = C.read_text()

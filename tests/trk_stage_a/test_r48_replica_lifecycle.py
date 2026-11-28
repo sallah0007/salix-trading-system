@@ -104,10 +104,13 @@ def test_replacement_parent_link_and_rules():
     with pytest.raises(Refusal, match="REPLACEMENT_NEEDS_NEW_ORDER"): s.replace_creation(old_creation_id="C1", new_creation_id="C9", subject_key="S1", order_id="O1", lookup_outcome=ABS)
     with pytest.raises(Refusal, match="CREATION_ID_REUSED"): s.replace_creation(old_creation_id="C1", new_creation_id="C1", subject_key="S1", order_id="O2", lookup_outcome=ABS)
     with pytest.raises(Refusal, match="INCOMPLETE_LOOKUP"): s.replace_creation(old_creation_id="C1", new_creation_id="C9", subject_key="S1", order_id="O2", lookup_outcome=LookupOutcome.INCOMPLETE_LOOKUP)
-    with pytest.raises(Refusal, match="DUPLICATE_OR_NEAR"): s.replace_creation(old_creation_id="C1", new_creation_id="C9", subject_key="S1", order_id="O2", lookup_outcome=LookupOutcome.NEAR_MATCH)
+    n0 = j.head().seq
+    with pytest.raises(Refusal, match="DUPLICATE_OR_NEAR_REUSE_CANONICAL_IDENTITY"): s.replace_creation(old_creation_id="C1", new_creation_id="C9", subject_key="S1", order_id="O2", lookup_outcome=LookupOutcome.NEAR_MATCH)
+    assert j.head().seq == n0                                                           # refused BEFORE any write: no lineage link is left behind by a refused lookup gate
     c = s.replace_creation(old_creation_id="C1", new_creation_id="C9", subject_key="S1", order_id="O2", lookup_outcome=ABS)
     assert s.parent_of("C9") == "C1" and c["request_id"] == "C9"
-    with pytest.raises(Refusal, match="CREATION_ID_REUSED"): s.replace_creation(old_creation_id="C1", new_creation_id="C9", subject_key="S1", order_id="O2", lookup_outcome=ABS)
+    n = j.head().seq                                                                    # R50: the EXACT same replacement replays (resumes a partial commit) and appends nothing; a different parent stays refused
+    assert s.replace_creation(old_creation_id="C1", new_creation_id="C9", subject_key="S1", order_id="O2", lookup_outcome=ABS)["request_id"] == "C9" and j.head().seq == n
 
 
 def test_consumed_lineage_is_reused_not_recreated():
