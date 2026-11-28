@@ -122,3 +122,27 @@ def test_per_duty_claims_are_bounded_to_what_is_checked_presence_alone_is_held()
     assert status(E(lineage_of=None), "p341") == M.HELD and status(E(lineage_of=lambda f, v: {"LBL/outcome"}), "p341") == M.FAIL        # a label that IS in a feature's actual lineage
     assert status(E(split_policy=None), "p342") == M.HELD and status(E(split_policy=lambda sp: False), "p342") == M.FAIL and status(E(split_policy=None), "p343") == M.HELD
     assert not E(lineage_of=None)["satisfied"] and not E(target_known=None)["satisfied"] and not E(split_policy=None)["satisfied"]
+
+def _from_lists(m, **o):
+    d = {f.name: getattr(m, f.name) for f in dataclasses.fields(m)}; d.update(o); return M.FeatureViewManifest(**d)
+def test_registered_manifest_is_detached_from_caller_mutable_input_and_get_returns_an_immutable_view():
+    m, res, st, fk, hs, rows = setup(); snap = M._body(m)
+    split_input = [["train", 0, 100], ["validation", 100, 150], ["test", 150, 200]]; feats = [[fk.feature_id, fk.feature_version, m.features[0][2]]]
+    cand = _from_lists(m, manifest_id="fv-drift", splits=split_input, features=feats); cand = dataclasses.replace(cand, replay_identity=ident(M._body(cand))); st.register("ml-writer", cand)
+    before = M._body(st.get("fv-drift")); split_input[0][1] = 5; split_input[0] = ["train", 0, 101]; feats.append(["x", "y", "z"]); feats[0][1] = "tampered"       # caller mutates AFTER registration
+    assert M._body(st.get("fv-drift")) == before and st.get("fv-drift").splits[0] == ("train", 0, 100) and len(st.get("fv-drift").features) == 1
+    got = st.get("fv-drift"); assert isinstance(got.splits, tuple) and all(isinstance(x, tuple) for x in got.splits)
+    with pytest.raises((AttributeError, TypeError)): got.splits[0] = ("train", 0, 1)                                    # get-view cannot be mutated in place
+    with pytest.raises(AttributeError): got.splits[0].append(1)
+    with pytest.raises(dataclasses.FrozenInstanceError): got.target_id = "x"
+    assert M._body(m) == snap                                                                                             # untouched original
+def test_exact_retry_tuple_input_and_a_new_explicit_manifest_still_work_and_unsupported_mutable_shapes_refuse():
+    m, res, st, fk, hs, rows = setup()
+    assert st.register("ml-writer", m) == m                                                                               # exact retry
+    asl = _from_lists(m, splits=[list(x) for x in m.splits]); assert asl == m and M._body(asl) == M._body(m) and st.register("ml-writer", asl) == m   # genuine list input equal by content => same retry
+    new = dataclasses.replace(m, manifest_id="fv-2", target_id="tgt-2"); new = dataclasses.replace(new, replay_identity=ident(M._body(new))); assert st.register("ml-writer", new) == new and st.get("fv-1") == m   # explicit new ID, no auto-versioning
+    for bad in ({"a": 1}, {1, 2}, bytearray(b"x"), object()):
+        with pytest.raises(Refusal) as e: _from_lists(m, manifest_id="fv-bad", splits=[bad])
+        assert e.value.code == "FEATURE_VIEW_UNSUPPORTED_SHAPE"
+    with pytest.raises(Refusal) as e: st.register("ml-writer", dataclasses.replace(m, target_id="other")); 
+    assert e.value.code == "FEATURE_VIEW_MANIFEST_IMMUTABLE"

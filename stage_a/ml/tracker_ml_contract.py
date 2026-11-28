@@ -22,6 +22,11 @@ PASS, FAIL, HELD = "PASS", "FAIL", "HELD"
 DUTIES = (("p337", "IMMUTABLE_MANIFEST"), ("p338", "EXACT_FEATURE_IDS_VERSIONS_HASHES"), ("p339", "SOURCE_IDENTITIES_AND_VINTAGE"), ("p340", "TARGET_HORIZON_IDENTITY"), ("p341", "LABEL_OUTCOME_SEPARATION"), ("p342", "TRAIN_VALIDATION_TEST_SEPARATION"),
           ("p343", "FITTING_WINDOWS_HOLDOUT_EXPOSURE"), ("p344", "TRANSFORM_IDENTITIES_FITTING_LINEAGE"), ("p345", "CAUSAL_AVAILABILITY"), ("p346", "INSTRUMENT_TIMEFRAME_SCOPE"), ("p347", "ELIGIBILITY_AS_OF_T"), ("p348", "LEARNED_FEATURE_LINEAGE"), ("p349", "REPLAYABLE_DATASET_IDENTITY"))
 def _s(x): return isinstance(x, str) and bool(x)
+def _freeze(x):
+    """Recursively detach a load-bearing value into immutable shapes: list/tuple -> tuple; str/int/bool/None unchanged. Anything else (dict, set, bytearray, objects...) is an UNSUPPORTED mutable/opaque shape and refuses: no silent aliasing of caller containers."""
+    if isinstance(x, (list, tuple)): return tuple(_freeze(i) for i in x)
+    if x is None or type(x) in (str, int, bool): return x
+    raise Refusal(type(x).__name__, code="FEATURE_VIEW_UNSUPPORTED_SHAPE")
 
 @dataclass(frozen=True)
 class FeatureViewManifest:
@@ -36,6 +41,8 @@ class FeatureViewManifest:
     rows: tuple                                # ((feature_id, row_content_hash), ...) rows the view reads
     learned_lineage: tuple                     # (fit_generation_ref_str, ...)
     replay_identity: str
+    def __post_init__(self):
+        for k, v in list(self.__dict__.items()): object.__setattr__(self, k, _freeze(v))          # detached at CONSTRUCTION: a caller's list can no longer alias the stored manifest
 
 def _body(m): d = dict(m.__dict__); d.pop("replay_identity"); return d
 
