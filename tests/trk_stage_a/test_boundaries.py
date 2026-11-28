@@ -328,23 +328,39 @@ def test_health_is_evidence_only_and_objects_validate():
     with pytest.raises(Refusal): HE.canonical_model_metrics([m("a"), m("a")])
     with pytest.raises(Refusal): HE.ModelMetric("a", R("p"), R("w"), 1, "BAD", 1)
 
+def _imports_of(src):
+    """R52: every module path an import statement can reach, INCLUDING the alias names of `from .. import x` / `from . import x` (where `module` is None, so x is the module), and a marker for dynamic imports (importlib / __import__), which a static graph cannot follow and therefore fails closed."""
+    t = ast.parse(src); out = set()
+    for n in ast.walk(t):
+        if isinstance(n, ast.ImportFrom):
+            base = ("." * n.level) + (n.module or ""); out.add(base)
+            for a in n.names: out.add(base + ("." if base and not base.endswith(".") else "") + a.name)
+        if isinstance(n, ast.Import): out |= {a.name for a in n.names}
+        if isinstance(n, ast.Call):
+            f = n.func; nm = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else "")
+            if nm in ("import_module", "__import__"): out.add("<dynamic-import>")
+    return out
+
+def test_q18_import_scanner_sees_alias_form_relative_imports_and_dynamic_imports():
+    assert any("composer" in m for m in _imports_of("from .. import composer"))
+    assert any("composer" in m for m in _imports_of("from ..composer import intake"))
+    assert any("composer" in m for m in _imports_of("import stage_a.composer.intake"))
+    assert "<dynamic-import>" in _imports_of("import importlib\nx = importlib.import_module('stage_a.composer')")
+    assert "<dynamic-import>" in _imports_of("x = __import__('stage_a.composer')")
+    assert not any("composer" in m for m in _imports_of("import json\nfrom . import clocks"))
+
 def test_direct_paths_do_not_exist_q18_q19_q20():
     root = pathlib.Path(__file__).resolve().parents[2] / "stage_a"
-    def imports(p):
-        t = ast.parse(p.read_text()); out = set()
-        for n in ast.walk(t):
-            if isinstance(n, ast.ImportFrom): out.add(("." * n.level) + (n.module or ""))
-            if isinstance(n, ast.Import): out |= {a.name for a in n.names}
-        return out
+    def imports(p): return _imports_of(p.read_text())
     for consumer in ("fw/receiver.py", "ml/receiver.py"):
-        bad = [m for m in imports(root / consumer) if "composer" in m or "health" in m or "tracker" in m and "chain_status" not in m]
+        bad = [m for m in imports(root / consumer) if "composer" in m or "health" in m or "tracker" in m and "chain_status" not in m or m == "<dynamic-import>"]
         assert not bad, (consumer, bad)                                                    # FW/ML never import Composer/Health/Tracker internals
     for p in (root / "composer").rglob("*.py"):
-        assert not any(("fw" in m.split(".") or "ml" in m.split(".") or "gateway" in m.split(".")) for m in imports(p)), p
+        assert not any(("fw" in m.split(".") or "ml" in m.split(".") or "gateway" in m.split(".") or m == "<dynamic-import>") for m in imports(p)), p
     for p in (root / "health").rglob("*.py"):
-        assert not any(("fw" in m.split(".") or "ml" in m.split(".")) for m in imports(p)), p
+        assert not any(("fw" in m.split(".") or "ml" in m.split(".") or m == "<dynamic-import>") for m in imports(p)), p
     for p in (root / "context").rglob("*.py"):
-        assert not any(("composer" in m or "materializ" in m) for m in imports(p)), p
+        assert not any(("composer" in m or "materializ" in m or m == "<dynamic-import>") for m in imports(p)), p
 
 def test_context_edge_declared_only():
     assert CE.assert_declared([(I, "c1")], [(I, "c1")]) == ((I, "c1"),)
