@@ -62,3 +62,51 @@ def test_row_carrying_another_feature_version_than_the_accepted_one_is_refused()
     fixed = dict(FX, feature_id=bytes(range(16, 32)), feature_version="other-version", quant_manifest_hash=out[0][0].quant_manifest_hash, instrument_id=BI, timeframe_id=BI, materialization_version="m3")
     row, rc = RS.CommittedRowChain(StateRowBuilder(SCHEMA, T, enc, dec, fixed), rows).step(step_fn, None, {"x": 1.0}, **kw(0, origin=True)); acc(a, rc.row_hash)
     assert codeof(pub, p, fk, rc.row_hash) == "ROW_FEATURE_BINDING_MISMATCH" and path._sj.read_from(1) == []
+
+
+# ---- R53 side-HEAD pinning: concurrent publishers (public ports; one-shot wrapper on the real path.commit) ------------------------------------------
+from stage_a.errors import UnknownCommit
+def two(rig_=None):
+    r, fk, fj, path, rows, out, a, p1 = rig(); p2 = RP.RowPublication(path, r.journals, rows, T, r.store); return r, fk, path, rows, out, a, p1, p2
+def race(path, hook):
+    real = path.commit; state = {"armed": True}
+    def wrapped(*a, **k):
+        if state["armed"]: state["armed"] = False; hook()                                  # a concurrent publisher lands AFTER p1's preflight and BEFORE p1's real commit
+        return real(*a, **k)
+    path.commit = wrapped
+def kws(**o):
+    d = dict(sequence=1, visible_at=500, published_projection_hash=H, data_vintage_mode="SIM_VINTAGE", source_or_causal_policy_ref=R("pol")); d.update(o); return d
+def n_side(path): return len(path._sj.read_from(1)) if path._sj.head().seq else 0
+
+def test_concurrent_exact_replay_is_ONE_effect_returns_the_genuine_winner_and_the_cold_projection_is_authoritative():
+    r, fk, path, rows, out, a, p1, p2 = two(); h0 = out[0][1].row_hash; acc(a, h0); won = {}
+    race(path, lambda: won.setdefault("rec", p2.publish(fk, h0, "SIM_CUR", **kws())))
+    rec = p1.publish(fk, h0, "SIM_CUR", **kws()); assert rec == won["rec"] and n_side(path) == 1
+    assert [json.loads(x.body_json)["seq"] for x in path._sj.read_from(1)] == [1] and path.status_projection().authoritative                    # cold projection: no SEQUENCE_NOT_INCREASING
+
+def test_a_different_row_taking_the_same_sequence_concurrently_is_refused_and_leaves_one_effect():
+    r, fk, path, rows, out, a, p1, p2 = two(); h0, h1 = out[0][1].row_hash, out[1][1].row_hash; acc(a, h0); acc(a, h1)
+    race(path, lambda: p2.publish(fk, h1, "SIM_CUR", **kws()))
+    assert codeof(p1.publish, fk, h0, "SIM_CUR", **kws()) == "ROW_PUBLICATION_SEQUENCE_NOT_INCREASING" and n_side(path) == 1 and path.status_projection().authoritative
+    assert codeof(p1.publish, fk, h0, "SIM_CUR", **kws(sequence=2)) == "ROW_PUBLICATION_ASOF_DECREASED" and n_side(path) == 1 and path.status_projection().authoritative   # the older accepted row cannot follow a newer one for the same MV (cold projection would refuse)
+
+def test_an_unrelated_scope_does_not_conflict_with_a_concurrent_publication():
+    r, fk, path, rows, out, a, p1, p2 = two(); h0 = out[0][1].row_hash; acc(a, h0)
+    fixed = dict(FX, feature_id=bytes(range(16, 32)), feature_version=fk.feature_version, quant_manifest_hash=out[0][0].quant_manifest_hash, instrument_id=BI, timeframe_id=BI, materialization_version="m9")
+    row, rc = RS.CommittedRowChain(StateRowBuilder(SCHEMA, T, enc, dec, fixed), rows).step(step_fn, None, {"x": 1.0}, **kw(0, origin=True)); acc(a, rc.row_hash)
+    race(path, lambda: p2.publish(fk, rc.row_hash, "SIM_CUR", **kws()))
+    p1.publish(fk, h0, "SIM_CUR", **kws()); assert n_side(path) == 2 and path.status_projection().authoritative                                  # different materialization version: both sequence 1 are lawful
+
+def test_unknown_landed_is_found_as_the_replay_and_unknown_absent_is_retried():
+    for landed in (True, False):
+        r, fk, path, rows, out, a, p1, p2 = two(); h0 = out[0][1].row_hash; acc(a, h0); sj = path._sj; real = sj.append; st = {"n": 0}
+        def append(*x, **y):
+            st["n"] += 1
+            if st["n"] == 1:
+                if landed: real(*x, **y)
+                raise UnknownCommit("ack lost" if landed else "dropped")
+            return real(*x, **y)
+        sj.append = append; rec = p1.publish(fk, h0, "SIM_CUR", **kws()); assert n_side(path) == 1 and path.status_projection().authoritative and json.loads(rec.body_json)["origin"]["row_content_hash"] == h0, landed
+
+def test_the_stale_preflight_control_a_sequential_exact_replay_is_one_effect():
+    r, fk, path, rows, out, a, p1, p2 = two(); h0 = out[0][1].row_hash; acc(a, h0); x = p1.publish(fk, h0, "SIM_CUR", **kws()); assert p2.publish(fk, h0, "SIM_CUR", **kws()) == x and n_side(path) == 1
