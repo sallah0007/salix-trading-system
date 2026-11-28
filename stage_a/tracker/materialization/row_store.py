@@ -75,7 +75,12 @@ class PendingRowStore:
         if not self._s.put_if_absent(row_key(h), b):
             got = self._s.get(row_key(h))
             if got is None or got[0] != b: raise IntegrityFailure("row key %s holds different bytes" % h)
-        self._s.put_if_absent(fields_key(h), _to_json(row))
+        fj = _to_json(row)
+        if not self._s.put_if_absent(fields_key(h), fj):                         # never overwrite: an existing sidecar is judged by the exact readback below
+            got = self._s.get(fields_key(h))
+            if got is None: raise IntegrityFailure("field document for %s vanished" % h)
+        back = self.load(h)                                                      # exact persisted readback BEFORE any success claim (unreadable/conflicting sidecar => no receipt)
+        if back != row: raise IntegrityFailure("persisted row for %s differs from the committed row" % h)
         return RowReceipt(h, row_key(h), len(b), True)
 
     def load(self, h):

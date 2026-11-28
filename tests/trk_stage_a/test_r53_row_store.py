@@ -76,3 +76,28 @@ def test_commit_refuses_when_row_key_already_holds_different_bytes():
     s, b, rows, _ = rig(); r = b.step(step_fn, None, {"x": 1.0}, **kw(0, True)); h = O.row_content_hash(T, r).hex()
     assert s.put_if_absent(RS.row_key(h), b"planted")
     with pytest.raises(IntegrityFailure): rows.commit(r)
+
+def test_commit_refuses_unreadable_or_conflicting_sidecar_and_does_not_overwrite():
+    s, b, rows, _ = rig(); r = b.step(step_fn, None, {"x": 1.0}, **kw(0, True)); h = O.row_content_hash(T, r).hex()
+    assert s.put_if_absent(RS.fields_key(h), b"{}")
+    with pytest.raises(IntegrityFailure): rows.commit(r)                        # no false success receipt
+    assert s.get(RS.fields_key(h))[0] == b"{}"                                  # the conflicting object is preserved, not overwritten
+    with pytest.raises(IntegrityFailure): rows.load(h)
+    s2, b2, rows2, _ = rig(); q = b2.step(step_fn, None, {"x": 5.0}, **kw(0, True)); hq = O.row_content_hash(T, q).hex()
+    assert s2.put_if_absent(RS.fields_key(hq), RS._to_json(r))                  # a VALID document of a DIFFERENT row planted under this row's key
+    with pytest.raises(IntegrityFailure): rows2.commit(q)
+
+def test_interrupted_commit_recovers_on_exact_retry_without_rewriting():
+    s, b, rows, _ = rig(); r = b.step(step_fn, None, {"x": 1.0}, **kw(0, True)); h = O.row_content_hash(T, r).hex()
+    real = s.put_if_absent; calls = []
+    def crash_on_fields(k, d):
+        if k.startswith("pending-row-fields/"): raise RuntimeError("process died before the sidecar landed")
+        calls.append(k); return real(k, d)
+    s.put_if_absent = crash_on_fields
+    with pytest.raises(RuntimeError): rows.commit(r)
+    s.put_if_absent = real
+    assert s.get(RS.row_key(h)) is not None and s.get(RS.fields_key(h)) is None       # state after the interruption: bytes+claim landed, sidecar did not
+    with pytest.raises(Refusal): rows.load(h)                                          # not loadable => not committed
+    rc = rows.commit(r)                                                                # exact retry completes it
+    assert rc.row_hash == h and rows.load(h) == r and rows.commit(r) == rc             # and a further retry is idempotent
+    k = s.get(RS.row_key(h)); rows.commit(r); assert s.get(RS.row_key(h)) == k          # nothing rewritten
