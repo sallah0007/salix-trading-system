@@ -77,6 +77,58 @@ class Sep(unittest.TestCase):
         from tracker_component.journal_port import HeadMismatch
         with self.assertRaises(StaleFence): old.append(old.head(), "CANONICAL_ACCEPTED", body)
         self.assertEqual(len(self._accepted()), 1)
+    def _mv(self):
+        SH.materialize(job("tracker.materialize", "m", ("manifest", self.mh))); matH = self._ptr("mat-by-manifest", self.mh)
+        SH.verify(job("tracker.verify", "v", ("materialization", matH), ("declared", self.mh))); return matH, self._ptr("ver-by-mat", matH)
+    def _acc(self, rh, matH): return SH.accept(job("tracker.accept", "a", ("verification", rh), ("materialization", matH), ("acceptin", self.mh)))
+    def _code(self, rh, matH):
+        with self.assertRaises(Refusal) as c: self._acc(rh, matH)
+        self.assertEqual(self._accepted(), []); return c.exception.code
+    def _edit(self, key, fn):
+        raw = self.rig.store._i; k = "SIMULATION/" + key; cur = raw.get(k); raw.put_if_match(k, canonical_bytes(fn(json.loads(cur[0]))), cur[1])
+    def test_r41_fabricated_pass_receipt_with_no_verifier_run_is_refused_in_real_child_processes(self):
+        with ProcessSupervisor(W.JobQueue(), HS, reply_timeout=60, max_attempts=1) as s:
+            s._q.submit(job("tracker.materialize", "m", ("manifest", self.mh))); self.assertEqual(s.run_one(), ("idem-m", "DONE")); matH = self._ptr("mat-by-manifest", self.mh); rh = "f" * 64
+            self.assertTrue(self.rig.store._i.put_if_absent("SIMULATION/sep/verification/" + rh, canonical_bytes({"result_hash": rh, "materialization_hash": matH, "status": "PASS"})))
+            s._q.submit(job("tracker.accept", "a", ("verification", rh), ("materialization", matH), ("acceptin", self.mh))); self.assertEqual(s.run_one(), ("idem-a", "DEAD")); self.assertEqual(s.dead["idem-a"][1], "SEP_ACCEPT_RECEIPT_MALFORMED_OR_MISADDRESSED")
+        self.assertEqual(self._accepted(), [])
+    def test_r41_materialization_altered_after_verification_is_refused_in_real_child_processes(self):
+        with ProcessSupervisor(W.JobQueue(), HS, reply_timeout=60, max_attempts=1) as s:
+            s._q.submit(job("tracker.materialize", "m", ("manifest", self.mh))); s.run_one(); matH = self._ptr("mat-by-manifest", self.mh)
+            s._q.submit(job("tracker.verify", "v", ("materialization", matH), ("declared", self.mh))); self.assertEqual(s.run_one(), ("idem-v", "DONE")); rh = self._ptr("ver-by-mat", matH)
+            self._edit("sep/materialization/" + matH, lambda r: dict(r, probe_batch=["ALTERED-AFTER-VERIFY"]))
+            s._q.submit(job("tracker.accept", "a", ("verification", rh), ("materialization", matH), ("acceptin", self.mh))); self.assertEqual(s.run_one(), ("idem-a", "DEAD")); self.assertEqual(s.dead["idem-a"][1], "SEP_ACCEPT_RECORD_NOT_CONTENT_ADDRESSED")
+        self.assertEqual(self._accepted(), [])
+    def test_r41_receipt_defects_each_refuse_with_their_own_code(self):
+        matH, rh = self._mv(); orig = json.loads(self.rig.store.get("SIMULATION/sep/verification/" + rh)[0]) if False else None
+        key = "sep/verification/" + rh
+        self._edit(key, lambda r: dict(r, checks=[[n, False] for n, _ in r["checks"]])); self.assertEqual(self._code(rh, matH), "SEP_ACCEPT_RECEIPT_HASH_NOT_REDERIVED")
+        self._edit(key, lambda r: dict(r, materialization_hash="9" * 64)); self.assertEqual(self._code(rh, matH), "SEP_ACCEPT_RECEIPT_MALFORMED_OR_MISADDRESSED")
+        self._edit(key, lambda r: dict(r, encoding="X")); self.assertEqual(self._code(rh, matH), "SEP_ACCEPT_RECEIPT_MALFORMED_OR_MISADDRESSED")
+        self._edit(key, lambda r: {"result_hash": rh, "materialization_hash": matH, "status": "PASS"}); self.assertEqual(self._code(rh, matH), "SEP_ACCEPT_RECEIPT_MALFORMED_OR_MISADDRESSED")
+    def test_r41_post_verify_artifact_tamper_foreign_receipt_and_unlinked_receipt_are_refused_then_genuine_accepts(self):
+        matH, rh = self._mv(); raw = self.rig.store._i; ak = "SIMULATION/" + artifact_key(self.mh); good = raw.get(ak)
+        raw.put_if_match(ak, good[0] + b" ", good[1]); self.assertEqual(self._code(rh, matH), "SEP_ACCEPT_ARTIFACT_NOT_CONTENT_ADDRESSED"); raw.put_if_match(ak, good[0], good[1] + 1)
+        lk = "SIMULATION/sep/ver-by-mat/" + matH; cur = raw.get(lk); raw.put_if_match(lk, b"e" * 64, cur[1]); self.assertEqual(self._code(rh, matH), "SEP_ACCEPT_RECEIPT_NOT_LINKED_BY_VERIFIER_HANDLER")
+        raw.put_if_match(lk, rh.encode(), cur[1] + 1); self.assertEqual(self._code("0" * 64, matH), "SEP_VERIFICATION_ABSENT")
+        self._acc(rh, matH); self.assertEqual(len(self._accepted()), 1)
+    def _forge(self, matH, rec_changes=None, status="PASS", subject_changes=None):
+        """Test-only forgery of a SELF-CONSISTENT record+receipt pair (hashes recomputed) to prove the acceptor's cross-bindings, not just its hash arithmetic."""
+        from stage_a.tracker.verification.verification_result import make_result
+        from stage_a.tracker.verification.independent_hashing import materialization_digest
+        from stage_a.tracker.verification.independent_encoding import enc_bytes
+        rec = json.loads(self.rig.store.get("sep/materialization/" + matH)[0]); rec.update(rec_changes or {}); rec["materialization_hash"] = materialization_digest(rec, enc_bytes); m2 = rec["materialization_hash"]
+        old = json.loads(self.rig.store.get("sep/verification/" + self._ptr("ver-by-mat", matH))[0]); sub = dict(old["subject"]); sub["materialization_hash"] = m2; sub.update(subject_changes or {})
+        res = make_result(status, old["scope"], sub, [(a, b) for a, b in old["checks"]], old["reasons"]); body = SH._receipt(res, m2); raw = self.rig.store._i
+        for k, v in (("sep/materialization/" + m2, canonical_bytes(rec)), ("sep/verification/" + res.result_hash, canonical_bytes(body)), ("sep/ver-by-mat/" + m2, res.result_hash.encode())): raw.put_if_absent("SIMULATION/" + k, v)
+        return m2, res.result_hash
+    def test_r41_self_consistent_forgeries_still_fail_the_cross_bindings(self):
+        matH, rh = self._mv()
+        m2, r2 = self._forge(matH, status="FAIL"); self.assertEqual(self._code(r2, m2), "SEP_ACCEPT_RECEIPT_NOT_A_COMPLETE_PASS")
+        m2, r2 = self._forge(matH, rec_changes={"object_key": "artifact/" + "0" * 64}); self.assertEqual(self._code(r2, m2), "SEP_ACCEPT_REFS_DO_NOT_BIND")
+        m2, r2 = self._forge(matH, subject_changes={"graph_hash": "7" * 64}); self.assertEqual(self._code(r2, m2), "SEP_ACCEPT_RECEIPT_SUBJECT_DIFFERS_FROM_RECORD")
+        m2, r2 = self._forge(matH, subject_changes={"materialization_hash": "6" * 64}); self.assertEqual(self._code(r2, m2), "SEP_ACCEPT_RECEIPT_SUBJECT_DIFFERS_FROM_RECORD")
+        m2, r2 = self._forge(matH, subject_changes={"record_manifest_hash": "8" * 64}); self.assertEqual(self._code(r2, m2), "SEP_ACCEPT_RECEIPT_SUBJECT_DIFFERS_FROM_RECORD")
     def test_in_process_handler_guards_uncertified_manifest_and_feature_swap_are_refused(self):
         from unittest import mock
         with mock.patch.object(SH, "certify", lambda m, probe: type("C", (), {"status": "REJECTED"})()):

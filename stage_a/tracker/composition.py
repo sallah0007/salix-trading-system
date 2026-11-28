@@ -34,7 +34,7 @@ class Composition:
             if o is None: raise Refusal(n, code="COMPOSITION_PART_MISSING")
         if not callable(gateway_factory): raise Refusal("gateway_factory", code="COMPOSITION_PART_MISSING")
         self._p, self._js, self._st, self._core, self._path, self._gf = pipeline, journals, store, core, path, gateway_factory; self._up = dict(upstream or {}); self.gateway = None; self._l2r = l2_scope_resolver
-    def accept_and_publish(self, pkg, supplied, status_token, *, sequence, now, max_age, stored_inputs=None, l2_applicability=None, research_lineage=None, lineage_expect=None, lifecycle=None, lifecycle_transition=None, registry_gate=None):
+    def accept_and_publish(self, pkg, supplied, status_token, *, sequence, now, max_age, stored_inputs=None, l2_applicability=None, research_lineage=None, lineage_expect=None, lifecycle=None, lifecycle_transition=None, registry_gate=None, accept_fn=None):
         if l2_applicability is not None and not isinstance(l2_applicability, L2Applicability): raise Refusal("l2_applicability", code="COMPOSITION_L2_APPLICABILITY_INVALID")
         r = CompositionResult("STARTED")
         if research_lineage is not None:                                     # R40: the attempt checked is the one the PACKAGE actually records (never a caller-chosen known id); family/battery/input lineage must match a caller-supplied expectation (no universal family vocabulary is defined here)
@@ -43,7 +43,7 @@ class Composition:
             if att is None: r.status = "ATTEMPT_UNRESOLVED"; return r.log("attempt_lineage", "REFUSED", "the package's own attempt id is not held by the research ledger")
             if (att["family"], att["battery"], att["input_hash"]) != lineage_expect: r.status = "ATTEMPT_LINEAGE_MISMATCH"; return r.log("attempt_lineage", "REFUSED", "family/battery/input lineage differs from the expectation")
         elif lineage_expect is not None: r.status = "HELD_ATTEMPT_LINEAGE_INPUT_INCOMPLETE"; return r.log("attempt_lineage", "HELD", "lineage_expect without research_lineage")
-        out = self._p.run(pkg); r.outcome = out
+        out = self._p.run(pkg) if accept_fn is None else accept_fn(pkg); r.outcome = out
         if getattr(out, "accepted", None) is None or out.accepted.kind != "CANONICAL_ACCEPTED": r.status = "NOT_ACCEPTED"; return r.log("accept", "REFUSED", str(getattr(out, "stage", "")))
         fk = out.admission.feature_key; r.feature_key = fk; key = fk.key(); r.log("accept", "OK", out.accepted.kind)
         j = self._js.journal(fk.namespace())

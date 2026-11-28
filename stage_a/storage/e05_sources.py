@@ -33,3 +33,60 @@ def journal_resolver(journals):
             if r.seq == int(seq): return r.record_hash
         return None
     return res
+# ---- R41: object-store-backed and queue-backed source adapters (canonical OWNING objects -> E05 rows; owner-specific column values are CALLBACKS, never invented here) ----
+import hashlib
+from ..tracker.verification.independent_hashing import manifest_digest
+from ..tracker.verification.independent_encoding import parse
+def object_prefix_source(store, table, prefix, row_of, *, vintage_mode="HELD_UNMAPPED_VINTAGE_MODE"):
+    """One owning-object family under `prefix`. head = (count, sha256 over the sorted (key, etag) listing) so ANY write/replace moves it; rows = row_of(key, bytes) -> (column dict) for each object, plus the canonical ref `object:<key>` and ref_hash = sha256(bytes) unless `row_of` supplies ref_hash. Rows are read twice-bracketed by `E05Index.rebuild` (bounded retry on a moving head)."""
+    if not (isinstance(prefix, str) and prefix and callable(row_of)): raise Refusal("source", code="E05_SOURCE_INPUT_INVALID")
+    def _listing():
+        out = []
+        for k in sorted(store.list_prefix(prefix)):
+            g = store.get(k)
+            if g is not None: out.append((k, g[1], g[0]))
+        return out
+    def head():
+        l = _listing(); return (len(l), hashlib.sha256("|".join("%s:%d" % (k, e) for k, e, _ in l).encode()).hexdigest())
+    def rows():
+        for k, e, b in _listing():
+            r = dict(row_of(k, b)); r.setdefault("ref", "object:" + k); r.setdefault("ref_hash", hashlib.sha256(b).hexdigest()); r.setdefault("data_vintage_mode", vintage_mode); yield table, r
+    return head, rows
+def object_resolver(store):
+    """`object:<key>` -> sha256 of the bytes AS FOUND (None if absent). A replaced object therefore surfaces as E05 DRIFT."""
+    def res(ref):
+        if not (isinstance(ref, str) and ref.startswith("object:")): return None
+        g = store.get(ref[len("object:"):]); return None if g is None else hashlib.sha256(g[0]).hexdigest()
+    return res
+def manifest_row_of(currentness_of):
+    """stagea_manifest_index mapping for `artifact/<manifest_hash>` objects: manifest_hash/feature identity come from the CANONICAL bytes (re-derived, not trusted from the key); `status_currentness` is supplied by the caller (the currentness authority is not this module's)."""
+    def f(key, raw):
+        mh = key.rsplit("/", 1)[-1]
+        if manifest_digest(raw) != mh: raise Refusal(key, code="E05_SOURCE_OBJECT_NOT_CONTENT_ADDRESSED")
+        p = parse(raw); c = currentness_of(mh)
+        if not (isinstance(c, str) and c): raise Refusal(mh, code="E05_SOURCE_CURRENTNESS_NOT_SUPPLIED")
+        return dict(manifest_hash=mh, feature_id=p["feature_id"], feature_version=p["feature_version"], status_currentness=c)
+    return f
+def queue_source(table, queue, fields_of, *, vintage_mode="HELD_UNMAPPED_VINTAGE_MODE"):
+    """stagea_scheduler_queue / stagea_replay_queue mirror of the NON-canonical `workers.JobQueue`: the rows are a read model of PENDING jobs; ref = `job:<idempotency_key>`, ref_hash = sha256 over the job's exact governing refs. Column values are `fields_of(job)` (scheduler/replay policy is not defined here). A queue loss is recovered from canonical journals by `workers.recover_pending`, not from this index."""
+    def head():
+        p = queue.pending(); return (len(p), hashlib.sha256("|".join(j.idempotency_key for j in p).encode()).hexdigest())
+    def rows():
+        for j in queue.pending():
+            r = dict(fields_of(j)); r.update(ref="job:" + j.idempotency_key, ref_hash=_job_hash(j), data_vintage_mode=vintage_mode); yield table, r
+    return head, rows
+def _job_hash(j): return hashlib.sha256(json.dumps([j.job_id, j.kind, [list(x) for x in j.governing_refs]], sort_keys=True).encode()).hexdigest()
+def queue_resolver(queue):
+    def res(ref):
+        if not (isinstance(ref, str) and ref.startswith("job:")): return None
+        for j in queue.pending():
+            if "job:" + j.idempotency_key == ref: return _job_hash(j)
+        return None
+    return res
+def combined_resolver(*resolvers):
+    def res(ref):
+        for r in resolvers:
+            v = r(ref)
+            if v is not None: return v
+        return None
+    return res

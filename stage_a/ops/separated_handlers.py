@@ -12,7 +12,9 @@ from ..storage.keys import artifact_key
 from ..identifiers import FeatureKey, Scope
 from ..composer.expression.manifest import Manifest
 from ..tracker.verification.independent_encoding import parse
-from ..tracker.verification.independent_hashing import manifest_digest
+from ..tracker.verification.independent_hashing import manifest_digest, materialization_digest
+from ..tracker.verification.independent_encoding import enc_bytes
+from ..tracker.verification.verification_result import make_result, split_levels, PASS, SCOPE_MATERIALIZATION
 from ..tracker.verification.stateful_verifier import verify_materialization, probe_for
 from ..tracker.materialization.stateful_materializer import StatefulMaterializer
 from ..tracker.quant_certification import certify
@@ -50,7 +52,26 @@ def verify(job):
     declared = json.loads(_get(store, K("declared", mh), "SEP_DECLARED_ABSENT"))
     ver = verify_materialization(store_get=lambda k: (lambda g: None if g is None else g[0])(store.get(k)), record=rec, declared={k: declared[k] for k in ("manifest_hash", "graph_hash", "program_hash")}, expect_scope_key=declared["scope_key"])
     if ver.status != "PASS": raise Refusal(",".join(ver.reasons), code="SEP_VERIFICATION_NOT_PASS")
-    _put_once(store, K("verification", ver.result_hash), canonical_bytes({"result_hash": ver.result_hash, "materialization_hash": matH, "status": "PASS"})); _put_once(store, K("ver-by-mat", matH), ver.result_hash.encode()); _crash_after_effect(job)
+    _put_once(store, K("verification", ver.result_hash), canonical_bytes(_receipt(ver, matH))); _put_once(store, K("ver-by-mat", matH), ver.result_hash.encode()); _crash_after_effect(job)
+RECEIPT_ENCODING = "R41_CANDIDATE_VERIFICATION_RECEIPT_V1"          # CANDIDATE encoding of the verifier's typed result so a consumer can re-derive its hash; not a normative byte format
+def _receipt(ver, matH):
+    return {"encoding": RECEIPT_ENCODING, "result_hash": ver.result_hash, "materialization_hash": matH, "status": ver.status, "scope": ver.scope, "subject": [list(x) for x in ver.subject], "checks": [[a, bool(b)] for a, b in ver.checks], "reasons": list(ver.reasons)}
+def _check_bindings(store, rh, matH, mh, rec, ver):
+    """The acceptor does NOT rerun the verifier/materializer; it independently re-derives (hash arithmetic only) that what it was handed is the exact content-addressed record, artifact and receipt, and that the verifier handler (not the caller) linked this receipt to this materialization."""
+    why = lambda c: Refusal(rh, code=c)
+    if not isinstance(rec, dict) or materialization_digest(rec, enc_bytes) != matH or rec.get("materialization_hash") != matH: raise why("SEP_ACCEPT_RECORD_NOT_CONTENT_ADDRESSED")
+    if rec.get("manifest_hash") != mh or rec.get("object_key") != "artifact/" + mh: raise why("SEP_ACCEPT_REFS_DO_NOT_BIND")
+    art = store.get(artifact_key(mh))
+    if art is None or manifest_digest(art[0]) != mh: raise why("SEP_ACCEPT_ARTIFACT_NOT_CONTENT_ADDRESSED")
+    if not (isinstance(ver, dict) and set(ver) == {"encoding", "result_hash", "materialization_hash", "status", "scope", "subject", "checks", "reasons"} and ver["encoding"] == RECEIPT_ENCODING and ver["result_hash"] == rh and ver["materialization_hash"] == matH): raise why("SEP_ACCEPT_RECEIPT_MALFORMED_OR_MISADDRESSED")
+    try: res = make_result(ver["status"], ver["scope"], {k: v for k, v in ver["subject"]}, [(a, b) for a, b in ver["checks"]], ver["reasons"])
+    except Exception: raise why("SEP_ACCEPT_RECEIPT_MALFORMED_OR_MISADDRESSED")
+    if res.result_hash != rh: raise why("SEP_ACCEPT_RECEIPT_HASH_NOT_REDERIVED")
+    sub = dict(res.subject)
+    if res.status != PASS or res.scope != SCOPE_MATERIALIZATION or split_levels(res) != ("PASS", "PASS") or not all(ok for _, ok in res.checks): raise why("SEP_ACCEPT_RECEIPT_NOT_A_COMPLETE_PASS")
+    if sub.get("materialization_hash") != matH or sub.get("graph_hash") != rec.get("graph_hash") or sub.get("program_hash") != rec.get("program_hash") or sub.get("record_manifest_hash") != mh: raise why("SEP_ACCEPT_RECEIPT_SUBJECT_DIFFERS_FROM_RECORD")
+    link = store.get(K("ver-by-mat", matH))
+    if link is None or link[0].decode() != rh: raise why("SEP_ACCEPT_RECEIPT_NOT_LINKED_BY_VERIFIER_HANDLER")
 def accept(job):
     from tracker_component.claims import ClaimService
     from tracker_component.order import TrustAnchor
@@ -61,7 +82,7 @@ def accept(job):
     from ..observability import EventSink
     store = _store(); rh, matH, mh = _ref(job, "verification"), _ref(job, "materialization"), _ref(job, "acceptin")
     rec = json.loads(_get(store, K("materialization", matH), "SEP_MATERIALIZATION_ABSENT")); ver = json.loads(_get(store, K("verification", rh), "SEP_VERIFICATION_ABSENT"))
-    if rec.get("materialization_hash") != matH or ver != {"result_hash": rh, "materialization_hash": matH, "status": "PASS"} or rec.get("manifest_hash") != mh: raise Refusal(rh, code="SEP_ACCEPT_REFS_DO_NOT_BIND")
+    _check_bindings(store, rh, matH, mh, rec, ver)
     ai = json.loads(_get(store, K("acceptin", mh), "SEP_ACCEPTIN_ABSENT")); a = json.loads(_get(store, "sep/anchor", "SEP_ANCHOR_ABSENT"))
     fk = FeatureKey(Scope(ai["instrument"], ai["timeframe"]), ai["feature_id"], ai["feature_version"])
     if fk.key() != rec["feature_key"]: raise Refusal(fk.key(), code="SEP_ACCEPT_FEATURE_DIFFERS_FROM_MATERIALIZATION")

@@ -11,7 +11,7 @@ PATHS = (os.path.dirname(HP),)
 M = "proc_handlers.handlers:"
 def job(d, name, kind="mat", h="h1"): return W.Job("j-" + name, kind, "idem-" + name, ((os.path.join(d, name), h),))
 def sup(q, **kw):
-    hs = {"mat": ("tracker-materializer-worker", M + "ok"), "ver": ("tracker-verifier-worker", M + "ok"), "die": ("tracker-materializer-worker", M + "die_once"), "fail": ("tracker-acceptance-worker", M + "always_fail"), "hang": ("tracker-verifier-worker", M + "hang_once"), "part": ("tracker-verifier-worker", M + "partial_frame_hang"), "big": ("tracker-verifier-worker", M + "oversized_frame"), "bad": ("tracker-verifier-worker", M + "malformed_complete_line"), "two": ("tracker-verifier-worker", M + "two_frames_one_flush")}
+    hs = {"mat": ("tracker-materializer-worker", M + "ok"), "ver": ("tracker-verifier-worker", M + "ok"), "die": ("tracker-materializer-worker", M + "die_once"), "fail": ("tracker-acceptance-worker", M + "always_fail"), "hang": ("tracker-verifier-worker", M + "hang_once"), "part": ("tracker-verifier-worker", M + "partial_frame_hang"), "big": ("tracker-verifier-worker", M + "oversized_frame"), "bad": ("tracker-verifier-worker", M + "malformed_complete_line"), "two": ("tracker-verifier-worker", M + "two_frames_one_flush"), "eof": ("tracker-verifier-worker", M + "eof_then_stall")}
     return ProcessSupervisor(q, hs, extra_paths=PATHS, **kw)
 def rd(path):
     with open(path) as f: return f.read().split()
@@ -72,6 +72,16 @@ class Frame(unittest.TestCase):
             return el
     def test_a_partial_frame_then_a_stall_is_killed_at_the_whole_frame_deadline_not_blocked_in_readline(self):
         el = self._lost("part", "CHILD_REPLY_TIMEOUT", reply_timeout=0.3); self.assertLess(el, 3.0)          # old code blocked until the 8s sleep ended
+    def test_eof_while_the_child_stays_alive_is_bounded_killed_reaped_and_leaves_the_job_pending(self):
+        import signal
+        def alarm(*a): raise AssertionError("supervisor blocked past the deadline on EOF")
+        old = signal.signal(signal.SIGALRM, alarm); signal.setitimer(signal.ITIMER_REAL, 3.0)
+        try:
+            with tempfile.TemporaryDirectory() as d, sup(W.JobQueue(), reply_timeout=0.3) as s:
+                pid = s.pids()["tracker-verifier-worker"]; self.assertEqual(s._ask("tracker-verifier-worker", job(d, "e", "eof")), ("LOST", "CHILD_REPLY_TIMEOUT"))
+                with self.assertRaises(ProcessLookupError): os.kill(pid, 0)          # killed AND reaped: no orphan
+                s._replace("tracker-verifier-worker"); s._q.submit(job(d, "e2", "eof")); self.assertEqual(s.run_one(), ("idem-e2", "RETRY")); self.assertEqual(len(s._q.pending()), 1)
+        finally: signal.setitimer(signal.ITIMER_REAL, 0); signal.signal(signal.SIGALRM, old)
     def test_oversized_and_malformed_replies_are_killed_replaced_and_leave_the_job_pending(self):
         self.assertLess(self._lost("big", "CHILD_REPLY_OVERSIZED", reply_timeout=5), 4.0); self._lost("bad", "CHILD_REPLY_MALFORMED", reply_timeout=5)
     def test_reasons_are_the_exact_codes_and_a_complete_line_DONE_still_completes(self):
