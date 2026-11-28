@@ -16,6 +16,6 @@ Main at last update: 31b9422 (#159 race fix) + this PR; suite 2114 passed at #15
 | 10 | All 100 A07 qualifier/current-oracle comparisons (/tmp/r47a) | PENDING; all stay UR, no awards | |
 | 11 | Build Plan lines 140-2230 clause-by-clause read | PENDING (2440-2960, 3232-3335 done) | |
 | 12 | ONE CURRENT combined closeout (source/callpath/commit/positive+negative/review limit or irreducible input/source-owner ROLE/consequence/recommendation) | PENDING | TRK-STAGE-A-TRACKER-COMBINED-CLOSEOUT.md §28.11 is the last |
-| 13 | Refreshed fetch + untracked/stash/local-only inventory (no cleanup) | PENDING | last: 135 tracking refs, 0 stashes, 0 untracked, none unreachable |
+| 13 | Refreshed fetch + untracked/stash/local-only inventory (no cleanup) | DONE for this stretch (re-run at closeout) | fetched all heads: 154 origin tracking refs, 0 stashes, 0 untracked; 7 local-only branches (r50-base, r50-batch, r50-closeout, r50-h1, r50-int, r50-shadow, r52-forecast-payload) each CONTAINED in remote refs (84/83/78/83/79/82/49), none ahead of its remote; origin/main e54b664. Nothing deleted or cleaned. |
 
 Next resume point (CURRENT): item 4 closed in candidate/SIM tests except the SOURCEVALUE/L2 and Health parts (items 7-8); then item 6 (ML Registry §14), then 7-13 in order. Preserve all branches/WIP; no cleanup.
