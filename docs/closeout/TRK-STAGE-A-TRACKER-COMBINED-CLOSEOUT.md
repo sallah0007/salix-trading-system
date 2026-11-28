@@ -649,3 +649,27 @@ Reusable candidate code: e05 index/sources (incl. R42 adapters), lifecycle_eligi
 
 ### 21.5 Evidence
 AUTHOR-RUN: full suite 1679 passed locally. `tests/trk_stage_a/mutation_sweep_r42.py` 30 mutants: first run 4 survived (final-resolution unmapped outcome type, unreadable listed object, sequence empty ident, sequence head hash); tests added; the FULL sweep was then re-run end to end: 30/30 killed, no named equivalents. NOT swept: ops/separated_*, the A07 tool, the clause-status generator (own completeness test). Regenerated import reach is not a semantic audit.
+
+## 22. R43 current view (from origin/main b5b26f724a4ea3780479d08e76760a93e3de4935; branch `stage-a/tracker/repair-r43`; sections 12-21 are HISTORY where they differ; nothing here is a gate, acceptance or appointment; the full Tracker is NOT complete)
+
+### 22.1 What R43 changed
+- Historical eligibility: entries must be exactly positions 1..resolved_through_seq (missing tail => `HISTORICAL_SLICE_COMPLETENESS_FAIL:SEQUENCE_GAP_OR_MISSING_TAIL`); closure endpoint must equal the resolved basis; the closure producer is a source-owned slot (candidate rule opt-in only); index basis is (seq, hash) on the owning chain; one coherent HEAD read after the records.
+- ML consumer path (`stage_a/ml/consumer_path.py`): dataset manifest -> generation/union/request -> reverse-H1 link, writer/finalizer correlation, six joins against real registry indexes, on the same separated acceptance path. `qualified` is always False.
+- Maintenance/recovery: Core as one owning truth for all-segment stored-value L2, quarantine (creator != certifier) / restoration / reactivation, health UNKNOWN until re-verified, Core restart. NOT built in R43: snapshot minimum-fields / per-timeframe vintage watermark carrier, control/data/metadata planes and E05 read-model rebuild on the separated path.
+- EventContext immutable fact store on a SUPPLIED encoding interface; the E05 event-context source is HELD (`E05_SOURCE_EVENT_CONTEXT_HELD_NO_ENCODING_INTERFACE`) without that interface. FileObjectStore (flock) remains a TEST adapter, not provider proof.
+- A07: three oracle JSONs associated (`docs/a07/V232_26S_R43_ORACLE_ASSOCIATION.csv`, `A07_R43_ORACLE_LEVEL_READING.md`); oracle files withhold acceptance; hash parity is not semantics. 21-qualifier adjudication list and 12 loss-listed units remain for the ML source owner function/Manager.
+
+### 22.2 Corrected readings
+D10: the source (R3 E01-H1 p1021-1026) requires ONE owning journal/HEAD and eliminates cross-head atomicity; E01-M1 requires unknown-commit/CAS recovery. Separated processes are not "single process"; SQLite/in-memory/flock are not provider proof. TR-10: the absent filename `gateway/dependency_resolution.py` is already mapped, not missing authority.
+
+### 22.3 Reconciliation
+The ONE current table is `TRK-STAGE-A-R43-CLAUSE-RECONCILIATION.md` (every B01-B24, D1-D18/D12', A07-1..4, TR-01..15 in exactly one of the five statuses, with the before/after/handoff section). The R42 clause status is superseded as the current view. E03 rows: regenerated `TRK-STAGE-A-R38-CURRENT-REQUIREMENT-TABLE.md`. Not re-read end to end in R43: Composer V9 27/28 + 7-field admission, Parent/Annex, BuildPlan 11-14/14A/27/29A, Contract H1/H3 (named per row); D8/TR-06 routing derivation from the admitted manifest is not yet coded. D15 category rules are implemented (`stage_a/gateway/v038.py:14-19`).
+
+### 22.4 Five-way class distinction
+Reusable candidate code: historical/lifecycle eligibility, e05 sources, event_context_store, consumer_path pieces. Integrated SIM callpaths: Composition, separated caller (FW and ML). Independently reviewed: only root statements. Provider qualification: none. Formal acceptance: none.
+
+### 22.5 Repository state (native report, no cleanup performed)
+Working tree clean; no stash; remote ~57 heads preserved (R39 b625/Rescue untouched); 143 local-only SHAs across ~31 pre-squash local branches; r42 tree == main tree. D1: `ConstructionAuthorityBinding` qualified resolver stays False; callsite is claims `authorizes()`. D9 dependency-direction test unchanged.
+
+### 22.6 Evidence
+AUTHOR-RUN; see the PR for the full-suite count, mutation sweep and CI checkout SHA.
