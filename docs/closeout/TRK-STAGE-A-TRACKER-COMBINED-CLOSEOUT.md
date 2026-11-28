@@ -93,7 +93,7 @@ EXACT = same path exists. ALIAS = responsibility lives under another path (renam
 | 45 | health/b0_adapter.py | ALIAS `stage_a/health/envelope.py` | REFERENCE_ONLY | D17/D18 |
 | 46 | health/quant_evidence.py | ALIAS `stage_a/health/evidence.py` | REFERENCE_ONLY | D17/D18 |
 | 47 | health/blast_radius.py | `stage_a/health/blast_radius.py` EXACT (+ `tracker/feature_lineage.py` source of deps) | REFERENCE_ONLY | persistence/adapter + instances + D3 ref types; action for UNDETERMINED non-required consumer has no source rule |
-| 48 | health/expectation.py | none (health/envelope.derive_silence covers silence only) | NOT_BUILT | expectation rule undefined in read sources; D17/D18 |
+| 48 | health/expectation.py | `stage_a/health/expectation.py` EXACT | BUILT_R40_GENERIC (enum, validity window and derive_silence were SOURCE-PRESENT; CORRECTED: the old 'rule undefined in read sources' was wrong. Missing input = the per-subject/profile/time ADMITTED expectation instance) | B0 p60/p80; MasterHealthV3 D117-123 |
 | 49 | coordination/interface.py | `stage_a/coordination/interface.py` EXACT | INVOKED | - |
 | 50 | coordination/transition_record.py | `.../transition_record.py` EXACT | INVOKED | D12 resolved by V0.38 text |
 | 51 | coordination/object_store_journal.py | `.../object_store_journal.py` EXACT | INVOKED | real provider absent (D10) |
@@ -579,3 +579,21 @@ The R38 table is 61 E03 PATH/IMPORT-REACH rows with curated test-file names. It 
 - Holds that stand: A02 Class B HOLD; A07/COVERAGE OPEN; A07/P12/N2 UNSATISFIED; QC34 ALERT(HOLD); A08 READY_TO_CODE NO; Stage A HOLD; source status/currentness mapping and principal; qualified acceptance; provider/vintage proof. A merge, CI run or passing test clears none.
 ### 18.5 Evidence
 Local suite 1598 passed before the final sweep; `tests/trk_stage_a/mutation_sweep_r39.py` AUTHOR-RUN (result in the PR body; named equivalents are in the file). CI checkout SHA is taken from the job-log `HEAD is now at` / `fetch ... +<sha>:refs/remotes/pull/N/merge` lines.
+
+## 19. R40 current view (from origin/main f14427ff; branch `stage-a/tracker/repair-r40`; sections 12-18 are HISTORY where they differ; nothing here is a gate, acceptance or appointment; the full Tracker is NOT complete)
+
+A merge, CI run or passing test clears no gate. Standing: A02 Class B HOLD; A07/COVERAGE OPEN; A07/P12/N2 UNSATISFIED; QC34 ALERT(HOLD); A08 READY_TO_CODE NO; Stage A HOLD. No Drive writeback. Author-run results below are AUTHOR-RUN/REPORTED until a Manager reproduces them.
+
+| Item | Built (code) | Evidence | Still open (exact input / role / consequence / recommendation) |
+|---|---|---|---|
+| A. L2 applicability bypass | `tracker/l2_scope.py` resolver slot; `Composition(l2_scope_resolver=)`; a caller-built `L2Applicability(...False)` no longer skips stored L2 | foreign/unknown/wrong-version/stale/revoked/candidate variants + genuine stored required positive in `test_r38_composition.py` | Admitted-scope INSTANCES (Registry 208-210 admission/currentness/revocation): source-owner/Manager input; until then every non-required claim records L2 UNAVAILABLE (fail closed) |
+| B. Lineage binding | lineage bound to `pkg.attempt_id`, family/battery/input checks run BEFORE acceptance, recorded attempt compared after | composition lineage tests (foreign known attempt refused pre-acceptance) | none beyond B20 governed batteries (see below) |
+| E05 11-table interface | `storage/e05_index.py`, `e05_sources.py`: REF+hash on every row, rebuild only from journals via source adapters, stale-head refusal, drift refusal, supersession fork/cycle refusal, DATA_VINTAGE_MODE, `as_known_rows` | `test_r40_e05_index.py` (9) | SQLite rehearsal only; extra per-table payload columns and vintage vocabulary are HELD (Build Plan defines the keys/indexes, not these) — owner/Manager to supply; no migration, legacy history untouched |
+| Separated handlers | `ops/separated_handlers.py` real materialize/verify/accept in `worker_child` processes over `FileObjectStore` (TEST adapter, wrapped in `SimulationStore`), ref-only jobs | `test_r40_separated_handlers.py` (6): crash after effect before reply, duplicate job, stale epoch, wrong hash/refs, recovery | no principal/deployment/provider; QUALIFIED path held; journal records carry no per-record epoch |
+| Registry 377 | `tracker/registry_integrity.py` generic checker (OK/UNKNOWN/NOT_LIVE_SAFE, always non-authoritative) + `Composition(registry_gate=)` + same-actual-object route (unknown-ancestry denial AND unrelated baseline delivery) | `test_r40_registry_integrity.py` (7) | B19 admitted evidence store and B20 governed batteries: source-owner inputs |
+| E03 row 48 Health expectation | `health/expectation.py` carry/validation; unknown/unadmitted/conflicting/out-of-window assertions -> EXPECTATION_UNKNOWN | `test_r40_health_expectation.py` (3) | the per-subject/profile/time ADMITTED assertions themselves (producer/profile/threshold) — held |
+| A07 | `docs/a07/A07_PER_QUALIFIER_AUTHORITY_RECONCILIATION_R40.md` + derived CSV; reuses R02 | script reproducible; 543/1329 NOT reproduced (INSUFFICIENT_EVIDENCE) | ML source owner disposition per qualifier; coverage stays OPEN; adoption/awards held |
+
+Author-run evidence: full suite 1624 passed before the later handler test (now +1); `tests/trk_stage_a/mutation_sweep_r40.py`: 27 mutants killed, 1 named equivalent (e05 `lookup` None-check). **Not swept in R40:** registry_integrity and composition lineage/registry_gate mutants (stated, not claimed). Import reachability is not semantic coverage: the combined clause-level table `TRK-STAGE-A-R38-CURRENT-REQUIREMENT-TABLE.md` (regenerated by `tools/r38_current_table.py`) is the per-requirement view, and any row it lists as held remains held.
+
+Composition still runs in one process on the normal path; separated processes are the rehearsal path only.

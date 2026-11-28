@@ -66,6 +66,12 @@ def from_relationship_reference(ref) -> HealthObservation:
     return HealthObservation("VERSION_RELATIONSHIP", {"state": ref.state, "class": ref.relationship_class, "claim_allowed": ref.claim_allowed, "reason": ref.reason, "record_id": ref.record_id, "schema_version": ref.schema_version, "store_head_seq": ref.store_head_seq},
                              "relationship:%s->%s@%s" % (ref.predecessor, ref.successor, ref.schema_version), subject=(("predecessor", ref.predecessor), ("successor", ref.successor)), scope="SUBJECT")
 
+def from_registry_integrity(report) -> HealthObservation:
+    """R40: FACTS about a `registry_integrity.IntegrityReport` (per-check states + overall). SUBJECT-scoped; no verdict, no status mapping; an unreadable report yields facts=None."""
+    from ..tracker.registry_integrity import IntegrityReport
+    if not isinstance(report, IntegrityReport): return HealthObservation("REGISTRY_INTEGRITY", None, "registry_integrity:unreadable")
+    return HealthObservation("REGISTRY_INTEGRITY", {"overall": report.overall, "findings": [(f.check, f.state, f.code) for f in report.findings]}, "registry_integrity:%s" % report.subject, subject=(("subject", report.subject),), scope="SUBJECT")
+
 def from_fit_generation_check(feature_key, manifest_fit_refs, accepted_generations) -> HealthObservation:
     """FIT_GENERATION: runs the existing `check_fit_refs` over the manifest's fit references and the SUPPLIED accepted generations; facts = the refs and the exact refusal code (or OK). SUBJECT-scoped."""
     from ..composer.expression.fit_generation import check_fit_refs
