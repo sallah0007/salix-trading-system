@@ -135,6 +135,14 @@ class Composition:
         if self._published.get(fk.key()) is not result: raise Refusal(fk.key(), code="COMPOSITION_RESULT_NOT_THIS_PUBLICATION")
         if getattr(binding, "feature_id", None) != getattr(entry, "feature_id", object()) or getattr(binding, "feature_version", None) != fk.feature_version or getattr(entry, "feature_version", None) != fk.feature_version: raise Refusal(fk.key(), code="COMPOSITION_ENTRY_BINDING_SUBJECT_MISMATCH")
         return fk
+    def outcome_desk(self):
+        """R54: the generic H3 REQUEST->RETURN desk (`fw/outcome_desk.OutcomeSeriesDesk`) bound to THIS composition's own Gateway, so an H1 record correlates only with identities this Gateway's durable final store issued (a rebuilt Composition re-hydrates them). Carries identities only; FW payload fields, H3 authorization inputs and the CBID source stay caller-supplied/held; every return is `delivered=False`."""
+        if self.gateway is None: raise Refusal("not published", code="COMPOSITION_NOT_PUBLISHED")
+        d = getattr(self, "_desk", None)
+        if d is None or getattr(d, "_g", None) is not self.gateway:
+            from ..fw.outcome_desk import OutcomeSeriesDesk
+            d = self._desk = OutcomeSeriesDesk(self.gateway)
+        return d
     def deliver(self, request_id, identity, entry, instrument_id, timeframe_id, step_index, event_time, result: CompositionResult, *, binding, now, ref, resolved_at, tables, health=None, consumer_manifest_id=None):
         """Gateway resolution for ONE FW window under the composed Core Health. Returns the Binding after the FW verified receive; a non-delivery raises `NON_DELIVERY`. Optional `health` (health.impact_supplier) adds the consumer-closure carried-upstream check BEFORE resolution; omitted => only the Core ancestry check applies (named in closeout 27)."""
         if self.gateway is None or result.feature_key is None: raise Refusal("not published", code="COMPOSITION_NOT_PUBLISHED")
