@@ -673,3 +673,19 @@ Working tree clean; no stash; remote ~57 heads preserved (R39 b625/Rescue untouc
 
 ### 22.6 Evidence
 AUTHOR-RUN: full suite 1707 passed locally. `tests/trk_stage_a/mutation_sweep_r43.py` 31 mutants: first run 8 survived (closure-invalid refusal, both read-basis incoherence checks, revoked-ancestor gate verdict, generation-not-verified blocker, correlation MISSING, event-context key-vs-identity); tests added; the FULL sweep was re-run end to end: 31/31 killed, plus 1 named equivalent (`bh is None` after an included row: unreachable, build_row never includes a non-Binding outcome). NOT swept: ops/separated_*, the A07 oracle tool, file_object_store. The r42 sweep's lifecycle_eligibility mutants target pre-R43 text and are superseded by the r43 sweep. CI checkout SHA: see the PR.
+
+## 23. R44 current view (from origin/main 676748e4aaf94d60cd7471093cd794afab72839e; branch `stage-a/tracker/repair-r44`; sections 12-22 are HISTORY where they differ; nothing here is a gate, acceptance or appointment; the full Tracker is NOT complete)
+
+### 23.1 What R44 changed
+- Snapshot carrier (`stage_a/tracker/snapshot_carrier.py`): the Registry snapshot manifest is DERIVED from the Core's owning resolved composition (instrument, as-of, fence, per-timeframe vintage, selected parent, recorded provider/raw-version/broker-UTC facts) and bound; the per-timeframe watermark is a source-owned slot (unbound => `PER_TIMEFRAME_WATERMARK_SOURCE_UNBOUND_HELD`); seven fields no Core record carries are explicit held inputs. Candidate hash only; `authoritative=False`.
+- E05 read-model rebuild on the separated path's own durable final-resolution objects (FW + ML bindings, denial NonDelivery rows, lost index rebuilt identically, replaced record = drift) and plane identity across restart (only the four source-named planes exist; foreign/untagged history refused).
+- D14: half-open fence is the only Gateway/Tracker inclusion rule (Manager reading of the Blueprint prefix, NEWS-02/03); NewsHub's inclusive wording is a News-only comparator and an import guard test enforces it.
+- A07 corrections: the 12 loss-listed entries are 12 QUALIFIERS across three units (NL0087, NL0180, NL0184); V232 also lists NL0178 at wider scope; units and qualifiers are distinct. R06 V240 candidate recorded (`docs/a07/A07_R44_R06_V240_RECORD.md`): access resolved, NOT adopted; V03 conflicts with the Owner staffing direction; V10 needs the Drive Activity export.
+- ONE decision pack (`docs/proposals/R44_DECISION_PACK.md`): D8 selector, D3 tables/grammar, D13 envelope, B11 edges + MV mapping, D6 types, B04/B08, shadow row; each with consequence, needed decision and what stays blocked. Nothing adopted; candidate labels retained.
+- Register (`TRK-STAGE-A-R43-CLAUSE-RECONCILIATION.md`) now reconciles BOTH Manager packs (14:25 and 14:47).
+
+### 23.2 Not done
+D8 `DIRECT_TRACKER_FEATURE` stays fail-closed (selector unsupplied). Source rereads of Composer V9 27/28 + 7-field admission, Parent/Annex, BuildPlan 11-14/14A/27/29A, Contract H1/H3 and the full V240 ZIP predicates (V01-V15) were not completed in R44; B17 coupling object not recovered in the bounded Blueprint prefix. Planes are the four source-named planes only (no control/data/metadata planes are source-named). No principal, provider, calendar, threshold, appointment or Drive history was invented.
+
+### 23.3 Evidence
+AUTHOR-RUN. `tests/trk_stage_a/mutation_sweep_r44.py` 13 mutants killed, 3 named equivalents (defence in depth). Full suite 1722 passed locally; CI checkout SHA: see PR.
