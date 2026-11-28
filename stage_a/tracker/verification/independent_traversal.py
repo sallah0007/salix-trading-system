@@ -10,6 +10,8 @@ _OPS = {
     "div": (2, False, "ARITH_BINARY64"), "min": (2, False, "ARITH_BINARY64"), "max": (2, False, "ARITH_BINARY64"),
     "neg": (1, False, "ARITH_BINARY64"), "abs": (1, False, "ARITH_BINARY64"),
     "sqrt": (1, False, "ELEMENTARY_BINARY64"),
+    "lt": (2, False, "COMPARE_BINARY64"), "le": (2, False, "COMPARE_BINARY64"), "gt": (2, False, "COMPARE_BINARY64"),
+    "ge": (2, False, "COMPARE_BINARY64"), "eq_canonical": (2, False, "COMPARE_BINARY64"), "select": (3, False, "SELECT_BOUNDED"),
     "lag": (1, True, "WINDOW_LAG"), "rolling_sum": (1, True, "WINDOW_ROLLING"), "rolling_mean": (1, True, "WINDOW_ROLLING"),
 }
 
@@ -102,11 +104,35 @@ def _fin(x):
         raise RefEvalError("NON_FINITE")
     return _z(x)
 
+_FAIL = object()
+
+def _one(op, row):
+    if op == "add": return _fin(row[0] + row[1])
+    if op == "sub": return _fin(row[0] - row[1])
+    if op == "mul": return _fin(row[0] * row[1])
+    if op == "div":
+        if row[1] == 0.0: raise RefEvalError("DOMAIN_FAILURE")
+        return _fin(row[0] / row[1])
+    if op == "min": return _fin(min(row[0], row[1]) if row[0] != row[1] else row[0])
+    if op == "max": return _fin(max(row[0], row[1]) if row[0] != row[1] else row[0])
+    if op == "neg": return _fin(-row[0])
+    if op == "abs": return _fin(math.fabs(row[0]))
+    if op == "sqrt":
+        if row[0] < 0.0: raise RefEvalError("DOMAIN_FAILURE")
+        return _fin(math.sqrt(row[0]))
+    raise RefEvalError("UNKNOWN_OPCODE")
+
 def reference_evaluate(p, series):
     """Column-wise reference evaluator. Returns list of float|None."""
     n_rows = len(next(iter(series.values())))
     order, by = _kahn(p)
     col = {}
+    lazy = any(nd["op"] == "select" for nd in by.values())   # R45: with select, a failing row is a deferred FAIL marker; only a SELECTED failure surfaces
+    def _guard(f):
+        try: return f()
+        except RefEvalError:
+            if not lazy: raise
+            return _FAIL
     for nid in order:
         nd = by[nid]; op = nd["op"]
         if op == "input":
@@ -126,33 +152,38 @@ def reference_evaluate(p, series):
                 w = src[t - k + 1:t + 1] if t - k + 1 >= 0 else None
                 if w is None or any(x is None for x in w):
                     res.append(None); continue
-                s = reduce(lambda acc, x: _fin(acc + _z(x)), w, 0.0)
-                res.append(s if op == "rolling_sum" else _fin(s / float(k)))
+                if any(x is _FAIL for x in w):
+                    res.append(_FAIL); continue
+                s = _guard(lambda: reduce(lambda acc, x: _fin(acc + _z(x)), w, 0.0))
+                res.append(s if (s is _FAIL or op == "rolling_sum") else _guard(lambda: _fin(s / float(k))))
             col[nid] = res
         else:
             cols = [col[a] for a in nd["args"]]
             res = []
             for row in zip(*cols):
+                if op == "select":
+                    c = row[0]
+                    if c is None: res.append(None)
+                    elif c is _FAIL: res.append(_FAIL)
+                    else:
+                        v = row[1] if c is True else row[2]
+                        res.append(v if v is None or v is _FAIL else _z(v))
+                    continue
+                if any(x is _FAIL for x in row):
+                    res.append(_FAIL); continue
                 if any(x is None for x in row):
                     res.append(None); continue
                 row = tuple(_z(x) for x in row)
-                if op == "add": r = _fin(row[0] + row[1])
-                elif op == "sub": r = _fin(row[0] - row[1])
-                elif op == "mul": r = _fin(row[0] * row[1])
-                elif op == "div":
-                    if row[1] == 0.0: raise RefEvalError("DOMAIN_FAILURE")
-                    r = _fin(row[0] / row[1])
-                elif op == "min": r = _fin(min(row[0], row[1]) if row[0] != row[1] else row[0])
-                elif op == "max": r = _fin(max(row[0], row[1]) if row[0] != row[1] else row[0])
-                elif op == "neg": r = _fin(-row[0])
-                elif op == "abs": r = _fin(math.fabs(row[0]))
-                elif op == "sqrt":
-                    if row[0] < 0.0: raise RefEvalError("DOMAIN_FAILURE")
-                    r = _fin(math.sqrt(row[0]))
-                else: raise RefEvalError("UNKNOWN_OPCODE")
-                res.append(r)
+                if op in ("lt", "le", "gt", "ge", "eq_canonical"):
+                    res.append({"lt": row[0] < row[1], "le": row[0] <= row[1], "gt": row[0] > row[1], "ge": row[0] >= row[1], "eq_canonical": row[0] == row[1]}[op])
+                    continue
+                res.append(_guard(lambda row=row, op=op: _one(op, row)))
             col[nid] = res
-    return col[p["output"]]
+            continue
+    out = col[p["output"]]
+    if any(x is _FAIL for x in out):
+        raise RefEvalError("DOMAIN_FAILURE")
+    return out
 
 def bits(x):
     """Bit-exact comparable form of a value."""

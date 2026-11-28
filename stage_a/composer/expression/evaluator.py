@@ -39,7 +39,16 @@ def op_value(node, t, get):
     op = node["op"]
     if op == "const":
         return decode_const(node["value"])
+    if op == "select":
+        c = get(node["args"][0], t)               # LAZY: untaken branch is never requested, so its domain failures cannot fire
+        if c is None:
+            return None
+        return canon(get(node["args"][1] if c is True else node["args"][2], t))
     a = [canon(get(x, t)) for x in node.get("args", [])]
+    if op in ("lt", "le", "gt", "ge", "eq_canonical"):
+        if any(v is None for v in a):
+            return None
+        return {"lt": a[0] < a[1], "le": a[0] <= a[1], "gt": a[0] > a[1], "ge": a[0] >= a[1], "eq_canonical": a[0] == a[1]}[op]
     if op in ("add", "sub", "mul", "div", "min", "max", "neg", "abs", "sqrt"):
         if any(v is None for v in a):
             return None                                   # missing-input propagation (source-unbound)
@@ -104,6 +113,8 @@ def evaluate(m: Manifest, series) -> List[Optional[float]]:
     length = check_series(m, series)
     by_id = {n["id"]: n for n in m.data["nodes"]}
     vals: Dict[str, List[Optional[float]]] = {}
+    if any(n["op"] == "select" for n in by_id.values()):
+        return evaluate_lazy(m, series, length)
     for nid in topo_order(m):
         node = by_id[nid]
         if node["op"] == "input":
@@ -111,3 +122,19 @@ def evaluate(m: Manifest, series) -> List[Optional[float]]:
             continue
         vals[nid] = [op_value(node, t, lambda k, i: vals[k][i]) for t in range(length)]
     return vals[m.data["output"]]
+
+
+def evaluate_lazy(m: Manifest, series, length) -> List[Optional[float]]:
+    """Per-(node,index) memoised demand evaluation; used only when the program contains `select` so an untaken branch is not evaluated.
+    Equivalent to the eager path on programs without select (differential test)."""
+    by_id = {n["id"]: n for n in m.data["nodes"]}
+    memo: Dict = {}
+    def get(k, i):
+        if i < 0 or i >= length:
+            return None
+        key = (k, i)
+        if key not in memo:
+            node = by_id[k]
+            memo[key] = canon(series[node["name"]][i]) if node["op"] == "input" else op_value(node, i, get)
+        return memo[key]
+    return [get(m.data["output"], t) for t in range(length)]

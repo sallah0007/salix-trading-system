@@ -3,7 +3,7 @@ SOURCE-BOUND: RESOURCE_CEILING_REF must resolve and bind seven governed integer 
 This module chooses NO numeric value. Absence of the ref or of any ceiling refuses. The values are supplied by the caller from the resolved governed
 artifact (resolving the REF to an immutable artifact is the artifact store's job and is OPEN here; supplied values are CLAIMED, not authenticated).
 NOT enforced (exact missing semantic rules): MAX_STATE_ELEMENTS counting for the prototype lag/rolling constructs (the source defines no state-element
-count for them); MAX_BRANCH_COUNT/MAX_VECTOR_LENGTH/MAX_MATRIX_* have no construct in this prototype manifest (select/vector/matrix are not manifest opcodes: no
+count for them); MAX_BRANCH_COUNT is enforced from R45 (count of select nodes); MAX_VECTOR_LENGTH/MAX_MATRIX_* have no construct in this prototype manifest (select/vector/matrix are not manifest opcodes: no
 numeric wire opcode table exists), so they are trivially unexercised, not 'passed'.
 Class-to-structure compatibility (Annex req. 3) is NOT decidable from the source read: no rule maps a class to permitted structure. Declared class is
 checked only against the five-value enum; ambiguity fails closed."""
@@ -32,9 +32,14 @@ def check_program_within(m, ceilings: dict) -> None:
     nodes = m.data["nodes"]
     if len(nodes) > ceilings["MAX_OPCODE_COUNT_PER_PROGRAM"]:
         raise Refusal("%d>%d" % (len(nodes), ceilings["MAX_OPCODE_COUNT_PER_PROGRAM"]), code="CEILING_OPCODE_COUNT_EXCEEDED")
+    branches = 0
     for n in nodes:
+        if n["op"] == "select":
+            branches += 1
         if n["op"] in REDUCTION_OPS and n["n"] > ceilings["MAX_REDUCTION_LENGTH"]:
             raise Refusal("%s n=%d>%d" % (n["id"], n["n"], ceilings["MAX_REDUCTION_LENGTH"]), code="CEILING_REDUCTION_LENGTH_EXCEEDED")
+    if branches > ceilings["MAX_BRANCH_COUNT"]:
+        raise Refusal("%d>%d" % (branches, ceilings["MAX_BRANCH_COUNT"]), code="CEILING_BRANCH_COUNT_EXCEEDED")
 
 def check_capability_declaration(decl, m, ceiling_ref) -> None:
     """Exactly one declaration for the program; class in the five-value enum; OPCODE_SET_USED has no duplicates and equals the extracted set; the

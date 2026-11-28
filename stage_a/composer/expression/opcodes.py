@@ -5,8 +5,8 @@ Mapping to the source operator names (documentary; no rename):
   add->ADD  sub->SUBTRACT  mul->MULTIPLY  div->DIVIDE_GUARDED  neg->NEGATE  abs->ABS  sqrt->SQRT_GUARDED  min->MIN_TOTAL  max->MAX_TOTAL
   rolling_sum ~ FIXED_SUM (ascending sequential accumulation from +0); rolling_mean = FIXED_SUM then DIVIDE_GUARDED by the declared length (composite)
   input, const, lag: structural / state-table constructs NOT named in the SQE_OPSET_V1_1 operator list (source-unbound; retained as prototype constructs)
-NOT admitted (PROFILE_ONLY): log (removed in R11; it was wrongly admitted), exp, pow, any transcendental; comparison/select/vector/matrix/FIXED_DOT are
-admitted by the source but NOT implemented here (no boolean/shape typing exists in this prototype; absent behaviour, not invented).
+NOT admitted (PROFILE_ONLY): log (removed in R11; it was wrongly admitted), exp, pow, any transcendental; vector/matrix/FIXED_DOT are admitted by the source but NOT implemented here (no shape typing exists in this prototype; absent behaviour, not invented).
+R45 adds lt/le/gt/ge/eq_canonical + select with an explicit boolean TYPE (never a number: no 0/1 encoding is invented); numeric wire codes remain unassigned.
 Arithmetic semantics are in evaluator.py. UNDEFINED (None) = missing-input propagation only (source-unbound)."""
 from collections import namedtuple
 
@@ -24,6 +24,12 @@ OPCODES = {
     "neg":          OpSpec(1, False, "ARITH_BINARY64"),
     "abs":          OpSpec(1, False, "ARITH_BINARY64"),
     "sqrt":         OpSpec(1, False, "ELEMENTARY_BINARY64"),
+    "lt":           OpSpec(2, False, "COMPARE_BINARY64"),   # R45: boolean-typed result (see schema.py type check); consumable ONLY as select's first arg
+    "le":           OpSpec(2, False, "COMPARE_BINARY64"),
+    "gt":           OpSpec(2, False, "COMPARE_BINARY64"),
+    "ge":           OpSpec(2, False, "COMPARE_BINARY64"),
+    "eq_canonical": OpSpec(2, False, "COMPARE_BINARY64"),   # equality after +0 canonicalisation of both operands
+    "select":       OpSpec(3, False, "SELECT_BOUNDED"),     # args (cond:boolean, if_true, if_false); LAZY: only the taken branch is evaluated at an index
     "lag":          OpSpec(1, True, "WINDOW_LAG"),
     "rolling_sum":  OpSpec(1, True, "WINDOW_ROLLING"),
     "rolling_mean": OpSpec(1, True, "WINDOW_ROLLING"),
