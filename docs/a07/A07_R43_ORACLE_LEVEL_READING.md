@@ -24,3 +24,6 @@ The tool refuses to run if any of the three acceptance fields is not false.
 2. The 21 disagreements are the concrete adjudication list for the ML source owner (smallest exact input: confirm whether V235's listed current-source range states the qualifier, per qualifier).
 3. NL0034/0262 (missing-tail / stale-index) and NL0186 (atomic consumer read) are engineering duties implemented in R43 (`historical_eligibility`, `lifecycle_eligibility`, `atomic_publication`) and are kept distinct from the unbound shadow-row contract (MLCore p323/p324 only).
 4. R06 candidate (Drive 1V5bv2QrbD0U22ExYUbz4FuwHkvXTsCSe): the readable projection is EMPTY because the file is JSON; the raw payload is present (Manager recovered it by raw download; see docs/a07/A07_R44_R06_V240_RECORD.md). Access is resolved, adoption is not.
+
+
+**R50 NOTE (history label).** The `V231_UNDECLARED_SEMANTIC_LOSS_LISTED` rows above record a V231 loss FLAG from the V232 manifest, not a finding about the CURRENT text. The actual V232/V235 oracle texts were read and hash-verified in `A07_R47_MEMBER_RECONCILIATION.md` section D; see its section A history note. No award; all 100 UR.
