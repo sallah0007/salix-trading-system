@@ -82,6 +82,7 @@ class OpsetSurface(unittest.TestCase):
     def test_every_admitted_opcode_has_a_source_mapping_or_is_a_labelled_structural_construct(self):
         mapped = {"add", "sub", "mul", "div", "neg", "abs", "sqrt", "min", "max", "rolling_sum", "rolling_mean"}
         structural = {"input", "const", "lag"}
+        mapped |= {"lt", "le", "gt", "ge", "eq_canonical", "select"}   # R45: source-admitted comparison/select (names are this repo's lowercase identifiers)
         self.assertEqual(set(opcodes.OPCODES), mapped | structural)          # adding an opcode forces this mapping to be revisited
     def test_independent_table_equals_composer_table(self):
         self.assertEqual({k: (v.arity, v.windowed, v.capability) for k, v in opcodes.OPCODES.items()}, dict(it._OPS))

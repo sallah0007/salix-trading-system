@@ -16,6 +16,30 @@ def _req(cond, code, detail=""):
     if not cond:
         raise Refusal(detail, code=code)
 
+_BOOL_OPS = frozenset({"lt", "le", "gt", "ge", "eq_canonical"})
+
+def _check_types(by_id, output):
+    """R45 typing: comparisons yield BOOL; select needs (BOOL, F64, F64) and yields F64; every other op needs F64 args; the output must be F64.
+    A boolean can never leak into arithmetic or be the program output (no numeric encoding of booleans is defined by any source read)."""
+    memo = {}
+    stack = [(output, False)]
+    while stack:
+        nid, done = stack.pop()
+        n = by_id[nid]
+        if not done:
+            if nid in memo:
+                continue
+            stack.append((nid, True))
+            stack.extend((a, False) for a in n.get("args", []) if a not in memo)
+            continue
+        want = ["F64"] * len(n.get("args", []))
+        if n["op"] == "select":
+            want[0] = "BOOL"
+        for a, w in zip(n.get("args", []), want):
+            _req(memo[a] == w, "TYPE_MISMATCH", "%s arg %s is %s, needs %s" % (nid, a, memo[a], w))
+        memo[nid] = "BOOL" if n["op"] in _BOOL_OPS else "F64"
+    _req(memo[output] == "F64", "OUTPUT_NOT_F64", output)
+
 def validate_manifest(m) -> dict:
     """Returns a normalised deep copy (sorted where order is semantically irrelevant). Raises Refusal."""
     _req(isinstance(m, dict), "MANIFEST_NOT_OBJECT")
@@ -99,6 +123,7 @@ def validate_manifest(m) -> dict:
     for k in ("declared_opcodes", "declared_capabilities"):
         _req(isinstance(m[k], list) and all(isinstance(x, str) for x in m[k]), "DECLARATION_SHAPE", k)
         _req(len(set(m[k])) == len(m[k]), "DUPLICATE_DECLARATION", k)
+    _check_types(by_id, m["output"])
     return {
         "schema": m["schema"], "feature_id": m["feature_id"], "feature_version": m["feature_version"],
         "instrument": m["instrument"], "timeframe": m["timeframe"],
