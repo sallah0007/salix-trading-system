@@ -1,3 +1,5 @@
+> **HISTORY NOTE (R54):** This pack is retained, not deleted. Its B11 (lifecycle edges) is WITHDRAWN (it conflated the intake workflow with the twelve source lifecycle states); its D13 omitted the observation object; its D3 RPN proposal conflicts with the implemented lazy `select`; its shadow row is stale. The current proposals are in `R54_DECISION_PACK.md`. Nothing here is adopted.
+
 # R44 DECISION PACK (ONE pack: D8, D3, D13, B11, D6, B04/B08, shadow row). PROPOSALS ONLY.
 STATUS: reviewable Coder proposals under the §2A authoring delegation. NONE is adopted, effective, normative or a gate; existing candidate code labels are RETAINED until a reviewed adoption. "Spec function" = the responsible function, not an appointed person. Sources cited by S-id/range only (S2 BuildPlan, S4 Registry, S5 Parent/Annex, S6 Contract V0.38, S7 Composer V9).
 Each item: (a) what exists, (b) PROPOSAL, (c) compatibility consequence in this repository, (d) the exact decision needed, (e) what stays blocked meanwhile.
