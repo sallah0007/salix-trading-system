@@ -31,7 +31,7 @@ class MLConsumerPath:
     def __init__(self, *, gateway, final_store, authority, generations, writer, tables):
         if any(x is None for x in (gateway, final_store, authority, generations, writer, tables)): raise Refusal("ports", code="ML_CONSUMER_PATH_PORT_MISSING")
         self._g, self._f, self._a, self._gr, self._w, self._t = gateway, final_store, authority, generations, writer, tables
-    def consume(self, caller, dataset_manifest, entry, outcome, request_id, *, row_id, generation_ref, generation_manifest_id, event, request_start_ts, joins, fence, vintage_mode="ORIGINAL_AS_OBSERVED", eligibility_reason, exclusion_reason_for_missing, catalog_snapshot=None, family_map=None, hypothesis_family_id=None, health=None):
+    def consume(self, caller, dataset_manifest, entry, outcome, request_id, *, row_id, generation_ref, generation_manifest_id, event, request_start_ts, joins, fence, vintage_mode="ORIGINAL_AS_OBSERVED", eligibility_reason, exclusion_reason_for_missing, catalog_snapshot=None, family_map=None, hypothesis_family_id=None, health=None, feature_view=None):
         bh = self._a.request_binding(caller, dataset_manifest, outcome, gateway=self._g, final_store=self._f, request_id=request_id)           # refuses foreign / forged / unissued / re-linked
         row = MLR.build_row(row_id, generation_ref, [entry], [outcome], self._g, vintage_mode, eligibility_reason, exclusion_reason_for_missing, tables=self._t, expected_request_ids={(entry.feature_id, entry.feature_version): getattr(outcome, "request_id", None)})
         if not row.included: return MLConsumption(row, bh, None, None, None, None, ("ROW_EXCLUDED_REQUIRED_DEPENDENCY_NOT_DELIVERED",), HELD)
@@ -52,6 +52,9 @@ class MLConsumerPath:
             jr = SJ.check_six_joins(joins, self._gr, fence=fence, consumed_features=consumed, catalog_snapshot=catalog_snapshot, request_snapshot=snap, dataset_manifests=self._a._d.manifest_index(), binding_to_manifest=self._a._d.binding_index(), consumer_binding_id=bh["binding_id"], family_map=family_map, hypothesis_family_id=hypothesis_family_id)
             blockers += ["JOINS_" + c + "_" + s for c, s, _ in jr.correlation if s in (SJ.MISMATCH, SJ.MISSING)] + ["JOIN_" + j + "_" + s for j, s, _ in jr.statuses if s in (SJ.MISMATCH, SJ.MISSING)]
         held = HELD
+        if feature_view is not None:                                                                      # R53: the Tracker REGISTRY section 14 thirteen duties over the registered view that this consumption reads
+            blockers += self._view_blockers(feature_view, entry, row)
+        else: held = held + ("TRACKER_ML_FEATURE_VIEW_NOT_SUPPLIED",)
         required = getattr(entry, "requirement_class", None) == REQUIRED
         if health is None:
             if required: blockers.append("HEALTH_IMPACT_NOT_EVALUATED_FOR_REQUIRED_USE")          # a required use is never allowed by omission (R49)
@@ -63,3 +66,18 @@ class MLConsumerPath:
             elif use.startswith("REFUSE_"): blockers.append("HEALTH_" + use)
             elif use.startswith("NO_SOURCE_RULE"): held = HELD + ("HEALTH_NO_SOURCE_RULE_UNDETERMINED_NON_REQUIRED_USE",)       # named, not decided
         return MLConsumption(row, bh, gate, corr, snap, jr, tuple(blockers), held)
+
+    def _view_blockers(self, fv, entry, row):
+        """`fv` = {"store": FeatureViewStore, "manifest_id": str, "resolvers": {evaluate keyword resolvers}, "symbol_of": callable(feature_id bytes) -> declared symbol | None}. Every non-PASS duty blocks (FAIL and HELD alike: an unbound duty is never a pass); a consumed feature
+        must be one the registered view declares (exact symbol + version through the SUPPLIED subject-bound `symbol_of`; unmapped => blocked, never guessed). Satisfying the duties authorizes nothing (p351)."""
+        from . import tracker_ml_contract as TM
+        if not isinstance(fv, dict) or any(k not in fv for k in ("store", "manifest_id", "resolvers", "symbol_of")): return ["TRACKER_ML_VIEW_INPUT_INVALID"]
+        m = fv["store"].get(fv["manifest_id"])
+        if m is None: return ["TRACKER_ML_VIEW_NOT_REGISTERED"]
+        out = ["TRACKER_ML_DUTY_%s_%s" % (p, st) for p, (_n, st, _d) in TM.evaluate(m, store=fv["store"], **fv["resolvers"])["duties"].items() if st != TM.PASS]
+        declared = {(f[0], f[1]) for f in m.features}
+        for b in row.bindings:
+            sym = fv["symbol_of"](b.entry.feature_id) if callable(fv["symbol_of"]) else None
+            if sym is None: out.append("CONSUMED_FEATURE_SYMBOL_UNMAPPED_HELD")
+            elif (sym, b.entry.feature_version) not in declared: out.append("CONSUMED_FEATURE_NOT_DECLARED_IN_VIEW")
+        return out
