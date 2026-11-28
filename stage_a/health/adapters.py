@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Optional
 from ..errors import Refusal
 B0_HELD_SLOTS = ("HEALTH_PROFILE_ID/VERSION", "HEALTH_POLICY_ID/VERSION", "CRITICAL_SET_ID/VERSION", "REASON_CODE registry", "PRODUCER_ID/VERSION", "PRODUCER_SIGNATURE_OR_INTEGRITY_BINDING", "thresholds", "EXPECTATION_STATE")
-KINDS = ("MATERIALIZATION_ROW", "SCHEDULER_RESOURCE_STATE", "GATEWAY_BINDING_NON_DELIVERY", "FW_RETURNS", "ML_GENERATION_AND_CLAIMS", "QUANT_MANIFEST_PROFILE", "FIT_GENERATION", "REPLAY_BACKLOG", "ML_FW_AUGMENTED", "COORDINATION_HANDOFF", "READ_PATH_REVOCATION_CURRENTNESS")
+KINDS = ("MATERIALIZATION_ROW", "SCHEDULER_RESOURCE_STATE", "GATEWAY_BINDING_NON_DELIVERY", "FW_RETURNS", "ML_GENERATION_AND_CLAIMS", "QUANT_MANIFEST_PROFILE", "FIT_GENERATION", "REPLAY_BACKLOG", "ML_FW_AUGMENTED", "COORDINATION_HANDOFF", "READ_PATH_REVOCATION_CURRENTNESS", "VERSION_RELATIONSHIP")
 STATES = ("HEALTHY", "NOT_HEALTHY", "UNKNOWN")
 
 @dataclass(frozen=True)
@@ -58,6 +58,13 @@ def from_accepted_manifest(readback) -> HealthObservation:
     d = readback.manifest.data; fk = readback.feature_key
     return HealthObservation("QUANT_MANIFEST_PROFILE", {"manifest_hash": readback.manifest_hash, "accepted_seq": readback.accepted_seq, "inputs": len(d.get("inputs", ())), "nodes": len(d.get("nodes", ())), "fit_refs": len(d.get("fit_refs", ())), "declared_opcodes": len(d.get("declared_opcodes", ())), "declared_capabilities": len(d.get("declared_capabilities", ()))},
                              "accepted_manifest:" + fk, subject=(("expect_scope_key", fk), ("record_manifest_hash", readback.manifest_hash)), scope="SUBJECT")
+
+def from_relationship_reference(ref) -> HealthObservation:
+    """R38: facts about a `relationship_store.RelationshipReference` (state/class/claim_allowed/reason + the exact record id). SUBJECT-scoped to the (predecessor, successor) pair. No verdict and NO delivery fact: the reference carries none."""
+    from ..tracker.relationship_store import RelationshipReference
+    if not isinstance(ref, RelationshipReference): return HealthObservation("VERSION_RELATIONSHIP", None, "relationship_reference:unreadable")
+    return HealthObservation("VERSION_RELATIONSHIP", {"state": ref.state, "class": ref.relationship_class, "claim_allowed": ref.claim_allowed, "reason": ref.reason, "record_id": ref.record_id, "schema_version": ref.schema_version, "store_head_seq": ref.store_head_seq},
+                             "relationship:%s->%s@%s" % (ref.predecessor, ref.successor, ref.schema_version), subject=(("predecessor", ref.predecessor), ("successor", ref.successor)), scope="SUBJECT")
 
 def from_fit_generation_check(feature_key, manifest_fit_refs, accepted_generations) -> HealthObservation:
     """FIT_GENERATION: runs the existing `check_fit_refs` over the manifest's fit references and the SUPPLIED accepted generations; facts = the refs and the exact refusal code (or OK). SUBJECT-scoped."""
