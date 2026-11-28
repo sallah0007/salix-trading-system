@@ -155,6 +155,10 @@ class TrackerCore:
         import copy
         st = self._replay(); o = st["obs"].get(key)
         return None if o is None or key in st["amb"] else copy.deepcopy(o["facts"])
+    def observations_for(self, instrument: str) -> list:
+        """R54: read-only enumeration of this Core's OWN admitted, currently usable (non-ambiguous) observation receipts for one instrument: [(key, facts, available_asof, vintage)] sorted by key, detached copies. Zero rows is returned as an empty list: it is NOT a completed search for anything."""
+        import copy
+        st = self._replay(); return [(k, copy.deepcopy(o["facts"]), o["available_asof"], o["vintage"]) for k, o in sorted(st["obs"].items()) if k not in st["amb"] and o["facts"].get("instrument") == instrument]
     def candidates(self, key: str) -> dict:
         """The complete immutable candidate evidence for a key (cid -> record)."""
         return dict(self._replay()["cands"].get(key, {}))
