@@ -20,3 +20,15 @@ class CertFreshness(unittest.TestCase):
         self.assertEqual(blk(cert(BOUND="x"), CUR), "CERTIFICATION_BINDING_MISSING")
     def test_unresolved_violation_blocks_even_a_current_pass(self):
         self.assertEqual(blk(cert(), CUR, unresolved_violation=True), "UNRESOLVED_ISOLATION_VIOLATION"); self.assertEqual(blk(cert(), CUR, unresolved_violation="yes"), "UNRESOLVED_ISOLATION_VIOLATION")
+
+    def test_manager_public_api_negatives_bool_int_and_blank_identities_are_not_identities(self):
+        c = cert(); c["BOUND"]["CODE"] = False; cur = dict(CUR); cur["CODE"] = 0
+        self.assertEqual(blk(c, cur), "CERTIFICATION_BINDING_INCOMPLETE")                    # False vs 0 must not count as an unchanged identity
+        c = cert(); c["BOUND"]["CODE"] = ""; cur = dict(CUR); cur["CODE"] = ""
+        self.assertEqual(blk(c, cur), "CERTIFICATION_BINDING_INCOMPLETE")                    # blank == blank is not an identity
+        c = cert(); c["BOUND"]["CODE"] = "   "; self.assertEqual(blk(c, CUR), "CERTIFICATION_BINDING_INCOMPLETE")
+        for bad in (0, 1, 1.5, b"x", ("a",), None):
+            cur = dict(CUR); cur["CODE"] = bad; self.assertEqual(blk(cert(), cur), "CURRENT_IDENTITY_UNKNOWN", repr(bad))
+            c = cert(); c["BOUND"]["RUNTIME"] = bad; self.assertEqual(blk(c, CUR), "CERTIFICATION_BINDING_INCOMPLETE", repr(bad))
+    def test_valid_opaque_string_identities_remain_the_positive_control(self):
+        self.assertIsNone(blk(cert(), dict(CUR))); self.assertIsNone(blk(cert(BOUND={n: "x:" + n + "/1" for n in BOUND_IDENTITIES}), {n: "x:" + n + "/1" for n in BOUND_IDENTITIES}))

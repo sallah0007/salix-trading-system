@@ -8,6 +8,10 @@ from ..errors import Refusal
 BOUND_IDENTITIES = ("CODE", "RUNTIME", "SCHEMA", "ARTIFACT_CONTRACT", "INSTRUMENT_PACKAGE", "TEST_SUITE")
 STATES = ("PASS", "FAIL", "NOT_TESTED")
 
+def _ident(v):
+    """An identity is an OPAQUE NON-EMPTY STRING (R52). bool/int/float/bytes/blank values are unsupported inputs, not identities: Python coercion (False == 0, '' == '') must never make two unlike or empty values 'the same identity'. No byte scheme is implied."""
+    return type(v) is str and v.strip() != ""
+
 def certification_blocks_promotion(cert, current, unresolved_violation=False):
     """Returns None when the certification may count toward promotion, else the blocking code. `cert` = {CERTIFICATION_ID, STATE, BOUND: {six identities}}; `current` = the six identities now in force.
     Fails closed on every unknown or malformed input."""
@@ -21,8 +25,8 @@ def certification_blocks_promotion(cert, current, unresolved_violation=False):
     bound = cert.get("BOUND")
     if not isinstance(bound, dict): return "CERTIFICATION_BINDING_MISSING"
     for n in BOUND_IDENTITIES:
-        if bound.get(n) is None: return "CERTIFICATION_BINDING_INCOMPLETE"
-        if current.get(n) is None: return "CURRENT_IDENTITY_UNKNOWN"
+        if not _ident(bound.get(n)): return "CERTIFICATION_BINDING_INCOMPLETE"
+        if not _ident(current.get(n)): return "CURRENT_IDENTITY_UNKNOWN"
     if any(bound[n] != current[n] for n in BOUND_IDENTITIES): return "CERTIFICATION_STALE"
     if unresolved_violation is not False: return "UNRESOLVED_ISOLATION_VIOLATION"
     return None

@@ -135,6 +135,7 @@ class TrackerCore:
     def admit_observation(self, facts: dict, payload: bytes, available_asof: int, vintage: str) -> str:
         key = self.obs_key(facts)
         if self._timeframes is not None: self._timeframes.require(facts["timeframe"])
+        elif not self._simulation: raise Refusal(facts["timeframe"], code="TIMEFRAME_REGISTRY_NOT_SUPPLIED")      # R52 (Registry p98: an unregistered timeframe fails closed): a QUALIFIED-class Core with NO registry port writes nothing; explicit SIMULATION candidate controls remain allowed (labelled); reads/replay are unaffected; no registry content or default is invented
         if not _int(available_asof) or available_asof < 0 or not isinstance(vintage, str) or not vintage or not isinstance(payload, bytes):
             raise Refusal("observation fields", code="OBSERVATION_FIELDS_INVALID")
         dg = domain_hash("TRK/PAYLOAD", payload); cid = self._cid(dg, available_asof, vintage)

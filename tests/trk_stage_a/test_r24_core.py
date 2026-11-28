@@ -18,7 +18,9 @@ def code(fn, *a, **k):
     except Refusal as e: return e.code
 def mk(sim=True, ns="core1", store=None):
     st = store or InMemoryObjectStore(); st = SimulationStore(st) if sim else st
-    j = ObjectStoreJournal(st, ns, "w"); j.acquire_epoch(); return TrackerCore(j, simulation=sim)
+    j = ObjectStoreJournal(st, ns, "w"); j.acquire_epoch()
+    from stage_a.core.time_family import TimeframeRegistry
+    return TrackerCore(j, simulation=sim, timeframes=None if sim else TimeframeRegistry([("H4", None)]))      # R52: a QUALIFIED-class Core must be handed a registry port; this fixture entry is a TEST instance, not a shipped default
 def facts(**o):
     f = {k: k + "-v" for k in OBS_FACTS_CANDIDATE}; f.update(instrument="XAUUSD", timeframe="H4"); f.update(o); return f
 def rh(c, *a): return c.recording_health(*a).state
@@ -416,3 +418,25 @@ class R24CandidateSemantics(unittest.TestCase):
         self.assertEqual(c.eligible_asof("B", "1", None, 11)["state"], "SIMULATION_EVIDENCE_NOT_ELIGIBLE")
 
 if __name__ == "__main__": unittest.main()
+
+
+class R52TimeframeRegistryGuard(unittest.TestCase):
+    """R52 (Registry p98 + Manager B02-F1): an unregistered timeframe fails closed; a QUALIFIED-class Core with NO registry port writes nothing. SIM candidate controls without a registry stay allowed (labelled). No default registry is invented."""
+    def qual(self, tfs):
+        st = InMemoryObjectStore(); j = ObjectStoreJournal(st, "ROOT-TF", "w"); j.acquire_epoch(); return TrackerCore(j, simulation=False, timeframes=tfs)
+    def test_qualified_core_without_registry_refuses_the_foreign_timeframe_and_writes_nothing(self):
+        c = self.qual(None); h = c._j.head()
+        self.assertEqual(code(c.admit_observation, facts(timeframe="UNREGISTERED-FOREIGN-TF"), b"candidate", 5, "V1"), "TIMEFRAME_REGISTRY_NOT_SUPPLIED")
+        self.assertEqual(code(c.admit_observation, facts(), b"candidate", 5, "V1"), "TIMEFRAME_REGISTRY_NOT_SUPPLIED")        # even a plausible one: no registry = no qualified write
+        self.assertEqual(c._j.head(), h)
+    def test_empty_registry_refuses_every_timeframe_and_supplied_registry_admits_only_listed(self):
+        from stage_a.core.time_family import TimeframeRegistry
+        c = self.qual(TimeframeRegistry()); h = c._j.head(); self.assertEqual(code(c.admit_observation, facts(), b"p", 5, "V1"), "UNKNOWN_TIMEFRAME"); self.assertEqual(c._j.head(), h)
+        c = self.qual(TimeframeRegistry([("H4", None)])); self.assertEqual(code(c.admit_observation, facts(timeframe="UNREGISTERED-FOREIGN-TF"), b"p", 5, "V1"), "UNKNOWN_TIMEFRAME")
+        self.assertEqual(c.admit_observation(facts(), b"p", 5, "V1"), NEW)                                             # positive control: valid timeframe, mechanical only
+    def test_simulation_candidate_control_without_a_registry_is_still_allowed(self):
+        self.assertEqual(adm(mk(True)), NEW)
+    def test_reads_and_replay_of_a_qualified_journal_without_a_registry_are_unaffected(self):
+        from stage_a.core.time_family import TimeframeRegistry
+        st = InMemoryObjectStore(); j = ObjectStoreJournal(st, "ROOT-TF2", "w"); j.acquire_epoch(); c1 = TrackerCore(j, simulation=False, timeframes=TimeframeRegistry([("H4", None)])); adm(c1)
+        c2 = TrackerCore(j, simulation=False); self.assertIsNotNone(c2._replay())
