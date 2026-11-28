@@ -100,3 +100,25 @@ class Caller(unittest.TestCase):
         a = AtomicRecordStore(InMemoryObjectStore(), required_fields=frozenset({"event_id", "payload"})); s = AtomicRecordSink(a); self.assertIsNone(s.readback("e1")); s.commit("e1", {"x": 1}); s.commit("e1", {"x": 1}); self.assertEqual(s.readback("e1"), {"x": 1})
         with self.assertRaises(Exception): s.commit("e1", {"x": 2})                                                                                                                           # different payload under one idempotency key is an integrity failure
         r = Rig(); r.p._sink = AtomicRecordSink(a); r.p.declare_schedule(); self.assertEqual(r.p.trigger("k", "t1"), "PUBLISHED"); self.assertEqual(r.p._sink.readback("E-k-t1"), {"p": "t1"})
+    # ---- R52: historical publication is resolved BEFORE the current fence ----------------------------------------------------------------------------------------------------------------
+    def _fresh(self, r):
+        """A restarted process: NEW ledger + publisher, SAME deterministic event id, SAME sink and fence state."""
+        l = ShadowLedger(); calls = []
+        p = ShadowPublisher(l, schedule=SCHED, fence=lambda k, t: t in r.fenced, event_id=lambda k, t: "E-%s-%s" % (k, t), model=lambda s: calls.append(s[1]) or ("PUBLISH", {"p": s[1]}), sink=r.sink); p.declare_schedule(); return l, p, calls
+    def test_known_commit_then_a_late_fence_keeps_PUBLISHED_for_the_same_and_a_fresh_publisher(self):
+        r = Rig(); r.p.declare_schedule(); self.assertEqual(r.p.trigger("k", "t1"), "PUBLISHED"); r.fenced.add("t1")
+        self.assertEqual(r.p.trigger("k", "t1"), "PUBLISHED"); l, p, calls = self._fresh(r)
+        self.assertEqual(p.trigger("k", "t1"), "PUBLISHED"); self.assertEqual((l.coverage("k"), l.fenced("k"), calls, r.sink.commits), ((1, 4), [], [], ["E-k-t1"]))                  # restart: read the stored event, no model, no second commit, not fenced
+    def test_unknown_commit_then_a_late_fence_is_neither_published_nor_fenced_until_resolved_and_then_PUBLISHED(self):
+        r = Rig(); r.sink.fail_after = {"E-k-t1"}; r.p.declare_schedule(); self._flaky(r, {2, 3}); r.fenced.add("t1")   # the commit happened while NOT fenced (fence arrives later)
+        r.fenced.clear(); self.assertEqual(code(r.p.trigger, "k", "t1"), "SHADOW_PUBLICATION_OUTCOME_UNKNOWN"); r.fenced.add("t1")
+        self.assertEqual(code(r.p.trigger, "k", "t1"), "SHADOW_PUBLICATION_OUTCOME_UNKNOWN"); self.assertEqual((r.l.fenced("k"), r.l.coverage("k")), ([], (0, 4)))                      # fenced NOW, receipt unresolved: not asserted FENCED
+        self.assertEqual(r.p.trigger("k", "t1"), "PUBLISHED"); self.assertEqual((r.l.coverage("k"), r.l.fenced("k"), r.sink.commits, r.calls), ((1, 4), [], ["E-k-t1"], ["t1"]))
+    def test_fresh_restart_with_an_unreadable_sink_and_a_fence_stays_unknown_and_with_the_real_atomic_store_the_fact_survives(self):
+        r = Rig(); r.p.declare_schedule(); r.p.trigger("k", "t1"); r.fenced.add("t1"); r.sink.unreadable = True; l, p, calls = self._fresh(r)
+        self.assertEqual(code(p.trigger, "k", "t1"), "SHADOW_PUBLICATION_OUTCOME_UNKNOWN"); self.assertEqual((l.fenced("k"), calls), ([], []))
+        a = AtomicRecordStore(InMemoryObjectStore(), required_fields=frozenset({"event_id", "payload"})); s = AtomicRecordSink(a); r2 = Rig(); r2.p._sink = s; r2.p.declare_schedule(); self.assertEqual(r2.p.trigger("k", "t1"), "PUBLISHED"); r2.fenced.add("t1")
+        r2.sink = s; l2, p2, c2 = self._fresh(r2); self.assertEqual(p2.trigger("k", "t1"), "PUBLISHED"); self.assertEqual((l2.coverage("k"), c2, s.readback("E-k-t1")), ((1, 4), [], {"p": "t1"}))
+    def test_a_genuine_fence_before_any_commit_still_fences_with_no_model_and_no_sink_effect_and_unrelated_slots_publish(self):
+        r = Rig(fenced={"t1"}); r.p.declare_schedule(); self.assertEqual(r.p.trigger("k", "t1"), "LIFECYCLE_FENCED"); self.assertEqual((r.calls, r.sink.commits, r.l.fenced("k")), ([], [], ["t1"])); self.assertEqual(r.p.trigger("k", "t2"), "PUBLISHED")
+        l, p, calls = self._fresh(r); self.assertEqual(p.trigger("k", "t1"), "LIFECYCLE_FENCED"); self.assertEqual(calls, [])

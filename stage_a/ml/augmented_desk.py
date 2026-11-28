@@ -51,7 +51,7 @@ class AugmentedDesk:
         if ret is None: raise Refusal(str(return_id), code="FW_RETURN_UNKNOWN")
         if getattr(m, "derived_from", None) != ret.fw_manifest_id: raise Refusal(str(getattr(m, "derived_from", None)), code="AUGMENTED_RETURN_FOR_DIFFERENT_FW_MANIFEST")
         if not isinstance(aug, R.AugmentedInput) or aug.fw_lineage_ref != ret.lineage_ref: raise Refusal(return_id, code="AUGMENTED_LINEAGE_NOT_THE_RETURNED_ONE")
-        if aug.gateway_rebind.request_id == ret.fw_request_id: raise Refusal(ret.fw_request_id, code="AUGMENTED_REBIND_IS_THE_FW_BINDING")
+        if aug.gateway_rebind is self._g.outcome(ret.fw_request_id, "FW"): raise Refusal(ret.fw_request_id, code="AUGMENTED_REBIND_IS_THE_FW_BINDING")      # R52: the ACTUAL issued FW Binding object reused as the ML rebind; request ids are consumer-local, so equal strings prove nothing
         lane = R.require_verified(R.check_fw_augmented(m, aug, target, self._graph, gateway=self._g))
         out = AugmentedBinding(m.manifest_id, return_id, aug.gateway_rebind.request_id, lane)
         old = self._done.get(m.manifest_id)
