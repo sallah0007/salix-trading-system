@@ -62,6 +62,10 @@ class ResearchLineage:
             if atts[attempt_id]["status"] != "COMPLETED": raise Refusal(attempt_id, code="LINEAGE_SELECTED_ATTEMPT_NOT_COMPLETED")
             return (SEL, {"family": family, "battery": battery, "attempt_id": attempt_id, "declared_n": declared_n})
         return self._commit(decide)
+    def attempt(self, attempt_id):
+        """The recorded ATTEMPT body for an id (a copy) or None; raises on a conflicting duplicate like every read."""
+        a = self._state()[1].get(attempt_id) if isinstance(attempt_id, str) else None
+        return None if a is None else json.loads(json.dumps(a))
     def resolves(self, attempt_id) -> bool:
         """For the recorded `attempt_id` an accepted record carries: True only if the ledger holds that attempt (a recorded reference, now resolved)."""
         return attempt_id in self._state()[1]

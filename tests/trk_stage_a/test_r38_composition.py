@@ -19,11 +19,13 @@ from .test_r37_stored_values import SER, H
 def code(f, *a, **k):
     try: f(*a, **k)
     except Refusal as e: return e.code
-def comp(upstream=None):
+from stage_a.tracker import l2_scope as L2S
+RES = lambda s, c, k, v: L2S.ResolvedL2Scope(s, c, k, v, False, True, True, False)         # TEST-supplied resolver instance; NOT a governed scope
+def comp(upstream=None, resolver=RES):
     rig = Rig(); oid = OA.order_id_for("cand-1"); pkg = package(order_id=oid); a = admit(pkg, accepted_fit_generations=rig.fits, conformance=SIM_CONF); issue(rig.claims, subject_key=a.subject_key); abs_(rig.claims, oid, br()); fk = a.feature_key
     sj = ObjectStoreJournal(rig.store, "SIMPUB-" + fk.scope.instrument, "w"); sj.acquire_epoch(); path = SP.SimulationPublicationPath(rig.store, rig.journals.journal(fk.namespace()), sj, SPEC); c = core()
     gf = lambda proj: _g(proj, c)
-    return rig, pkg, fk, c, CO.Composition(pipeline=rig.pipe, journals=rig.journals, store=rig.store, core=c, path=path, gateway_factory=gf, upstream=upstream or {}), path
+    return rig, pkg, fk, c, CO.Composition(pipeline=rig.pipe, journals=rig.journals, store=rig.store, core=c, path=path, gateway_factory=gf, upstream=upstream or {}, l2_scope_resolver=resolver), path
 def _g(proj, c):
     g = G.SimulatedGateway(T, proj, watermark=100, health_source=c, allow_shape_only_health=False, allow_simulation_status=True); g.final_store = D.DurableFinalResolutionStore(InMemoryObjectStore()); return g
 W = lambda n: FI("FW", "M-A", "XAUUSD", n)
@@ -86,6 +88,24 @@ from stage_a.tracker.registry_entry import build_registry_entry
 POL = LP(("A", "B"), frozenset({(None, "A"), ("A", "B")}), frozenset({"B"}), "TEST-POLICY-NOT-A-SOURCE-GRAPH")
 def LFW(policy, ev=lambda s, f, t, e: e == "good"):
     j = ObjectStoreJournal(InMemoryObjectStore(), "lc", "w"); j.acquire_epoch(); return LF(j, policy, ev)
+class Scope(unittest.TestCase):
+    def _run(self, resolver, applic=AP):
+        rig, pkg, fk, c, co, path = comp(resolver=resolver); key = fk.key(); r = co.accept_and_publish(pkg, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=applic)
+        c.declare_ancestry_complete(key, "src"); b1 = G.HealthBinding(F, fk.feature_version, I, I); c.associate_subject(key, b1, "assoc"); e = _entry(fid=F, ver=fk.feature_version)
+        try: co.deliver("fw1", W("W1"), e, I, I, 3, 20, r, binding=b1, now=12, ref=R("hl"), resolved_at=11, tables=T); d = "DELIVERED"
+        except Refusal as x: d = x.code
+        return r, d
+    def test_a_bare_not_required_flag_with_foreign_or_unresolved_or_candidate_stale_revoked_scope_never_delivers_but_an_exact_admitted_scope_is_separate(self):
+        mk = lambda **o: (lambda s, c, k, v: L2S.ResolvedL2Scope(**dict(dict(scope_ref=s, contract_ref=c, feature_key=k, feature_version=v, required=False, admitted=True, current=True, revoked=False), **o)))
+        FOREIGN = CO.L2Applicability("FOREIGN-SCOPE", "arbitrary-unresolved-contract", False)
+        for res, why in ((None, "L2_SCOPE_RESOLVER_UNBOUND_HELD"), (lambda *a: None, "L2_SCOPE_UNKNOWN"), (lambda *a: (_ for _ in ()).throw(Refusal("x", code="NOPE")), "L2_SCOPE_UNKNOWN"), (mk(contract_ref="OTHER"), "L2_SCOPE_FOREIGN"), (mk(scope_ref="OTHER"), "L2_SCOPE_FOREIGN"), (mk(feature_key="X/Y/z/1"), "L2_SCOPE_FOREIGN"), (mk(feature_version="999"), "L2_SCOPE_FOREIGN"),
+                         (mk(admitted=False), "L2_SCOPE_CANDIDATE_NOT_ADMITTED"), (mk(current=False), "L2_SCOPE_STALE"), (mk(revoked=True), "L2_SCOPE_REVOKED"), (mk(required="no"), "L2_SCOPE_UNKNOWN")):
+            r, d = self._run(res, FOREIGN); self.assertEqual((r.stored_values["reason"], r.stored_values["l2"], d, r.status), (why, "UNAVAILABLE", "NON_DELIVERY", "PUBLISHED_SIMULATION_L2_NOT_PASS"), why)
+        r, d = self._run(mk(), FOREIGN); self.assertEqual((r.l2_scope["resolved"], d), (True, "DELIVERED"))                       # a resolvable, admitted, current, exactly-matching scope (a TEST instance) is judged separately from any qualification
+        r, d = self._run(mk(required=True), FOREIGN); self.assertEqual((r.stored_values["reason"], d), ("STORED_VALUES_REQUIRED_BUT_NOT_SUPPLIED", "NON_DELIVERY"))
+    def test_a_resolved_REQUIRED_scope_with_genuine_stored_values_delivers(self):
+        rig, pkg, fk, c, co, path = comp(resolver=lambda s, cc, k, v: L2S.ResolvedL2Scope(s, cc, k, v, True, True, True, False)); b = {"close": {"ref": "SRC/close", "hash": H(SER)}}
+        r = co.accept_and_publish(pkg, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=CO.L2Applicability("S", "C", True), stored_inputs=dict(bindings=b, fetch=lambda ref: SER, series_hash=H)); self.assertEqual((r.status, r.stored_values["l2"]), ("PUBLISHED_SIMULATION", "PASS"))
 class Hooks(unittest.TestCase):
     def _pub(self, **kw):
         rig, pkg, fk, c, co, path = comp(); return fk, co.accept_and_publish(pkg, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, **kw)
@@ -96,11 +116,20 @@ class Hooks(unittest.TestCase):
         fk, r = self._pub(lifecycle=LFW(POL), lifecycle_transition=("t1", None, "B", "good")); self.assertEqual([x for x in r.steps if x[0] == "lifecycle"][0][1:], ("REFUSED", "LIFECYCLE_TRANSITION_NOT_ALLOWED_BY_POLICY"))
         fk, r = self._pub(lifecycle=LFW(POL), lifecycle_transition=("t1", None, "A", "bad")); self.assertEqual([x for x in r.steps if x[0] == "lifecycle"][0][1:], ("REFUSED", "LIFECYCLE_EVIDENCE_NOT_ACCEPTED"))
         fk, r = self._pub(lifecycle=LFW(POL)); self.assertEqual([x for x in r.steps if x[0] == "lifecycle"][0][1:], ("HELD", "COMPOSITION_LIFECYCLE_INPUT_INCOMPLETE"))
-    def test_an_attempt_id_the_research_ledger_does_not_hold_stops_before_any_publication_and_a_held_one_publishes(self):
-        j = ObjectStoreJournal(InMemoryObjectStore(), "lin", "w"); j.acquire_epoch(); l = ResearchLineage(j); l.register_battery("F", "B1"); l.record_attempt("a1", "F", "B1", "in", "h", "p", "COMPLETED", "o")
-        rig, pkg, fk, c, co, path = comp(); r = co.accept_and_publish(pkg, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, research_lineage=l, attempt_id="ghost"); self.assertEqual((r.status, path._sj.head().seq, co.gateway), ("ATTEMPT_UNRESOLVED", 0, None))
-        r = co.accept_and_publish(pkg, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, research_lineage=l); self.assertEqual(r.status, "HELD_ATTEMPT_LINEAGE_INPUT_INCOMPLETE")
-        rig, pkg, fk, c, co, path = comp(); r = co.accept_and_publish(pkg, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, research_lineage=l, attempt_id="a1"); self.assertEqual(r.status, "PUBLISHED_SIMULATION")
+    def _ledger(self, *ids, family="F", battery="B1", h="h"):
+        j = ObjectStoreJournal(InMemoryObjectStore(), "lin", "w"); j.acquire_epoch(); l = ResearchLineage(j); l.register_battery(family, battery)
+        for i in ids: l.record_attempt(i, family, battery, "in", h, "p" + i, "COMPLETED", "o" + i)
+        return l
+    def test_the_attempt_checked_is_the_packages_own_not_a_caller_chosen_known_id(self):
+        EX = ("F", "B1", "h"); rig, pkg, fk, c, co, path = comp(); self.assertEqual(pkg.attempt_id, "ATT-1")
+        foreign = self._ledger("FOREIGN-ATTEMPT"); self.assertFalse(foreign.resolves("ATT-1"))
+        r = co.accept_and_publish(pkg, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, research_lineage=foreign, lineage_expect=EX); self.assertEqual((r.status, path._sj.head().seq, co.gateway, r.outcome), ("ATTEMPT_UNRESOLVED", 0, None, None))     # refused BEFORE acceptance
+        self.assertEqual(rig.journals.journal(fk.namespace()).head().seq, 0)
+        for led, want in ((self._ledger("ATT-1", family="G"), "ATTEMPT_LINEAGE_MISMATCH"), (self._ledger("ATT-1", battery="B2"), "ATTEMPT_LINEAGE_MISMATCH"), (self._ledger("ATT-1", h="other"), "ATTEMPT_LINEAGE_MISMATCH")):
+            self.assertEqual(co.accept_and_publish(pkg, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, research_lineage=led, lineage_expect=EX).status, want)
+        self.assertEqual(co.accept_and_publish(pkg, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, research_lineage=self._ledger("ATT-1")).status, "HELD_ATTEMPT_LINEAGE_EXPECTATION_UNBOUND")
+        self.assertEqual(co.accept_and_publish(pkg, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, lineage_expect=EX).status, "HELD_ATTEMPT_LINEAGE_INPUT_INCOMPLETE")
+        r = co.accept_and_publish(pkg, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, research_lineage=self._ledger("FOREIGN-ATTEMPT", "ATT-1"), lineage_expect=EX); self.assertEqual(r.status, "PUBLISHED_SIMULATION")                  # genuine actual-attempt positive (extra foreign attempts in the ledger are harmless)
     def test_registry_entry_derives_disposition_history_from_the_single_lifecycle_journal_and_validates_origin_and_survivors(self):
         lf = LFW(POL); lf.apply("S1", "t1", None, "A", "good"); lf.apply("S1", "t2", "A", "B", "good"); e = build_registry_entry("S1", "BUILDER", "REQ-1", lf, survivor_pointers={"S1": "S2"}, test_evidence_refs=("EV1",))
         self.assertEqual((e.canonical_survivor_id, e.survivor_chain, [h[0] for h in e.disposition_history], [h[2] for h in e.disposition_history]), ("S2", ("S1", "S2"), ["t1", "t2"], ["A", "B"])); self.assertEqual(build_registry_entry("S9", "NATIVE", "R", lf).disposition_history, ())

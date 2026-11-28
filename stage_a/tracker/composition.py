@@ -14,6 +14,8 @@ from ..gateway import contracts as G
 from ..fw import receiver as FWR
 from . import reverification as RV
 from . import stored_values as SV
+from . import l2_scope as L2S
+from .accepted_manifest import read_accepted_manifest
 from ..storage.byte_primitives import canonical_bytes, domain_hash
 @dataclass(frozen=True)
 class L2Applicability:
@@ -26,21 +28,29 @@ class CompositionResult:
     status: str; steps: list = field(default_factory=list); outcome: object = None; feature_key: object = None; reverification: object = None; stored_values: Optional[dict] = None; published_rows: int = 0; projection: object = None; l2_scope: Optional[dict] = None
     def log(self, step, state, detail=""): self.steps.append((step, state, detail)); return self
 class Composition:
-    def __init__(self, *, pipeline, journals, store, core, path, gateway_factory, upstream=None):
+    def __init__(self, *, pipeline, journals, store, core, path, gateway_factory, upstream=None, l2_scope_resolver=None):
         """path: SimulationPublicationPath over the SAME feature journal namespace; gateway_factory(projection) -> SimulatedGateway (the caller chooses watermark/final_store/health_source; this module does not)."""
         for n, o in (("pipeline", pipeline), ("journals", journals), ("store", store), ("core", core), ("path", path)):
             if o is None: raise Refusal(n, code="COMPOSITION_PART_MISSING")
         if not callable(gateway_factory): raise Refusal("gateway_factory", code="COMPOSITION_PART_MISSING")
-        self._p, self._js, self._st, self._core, self._path, self._gf = pipeline, journals, store, core, path, gateway_factory; self._up = dict(upstream or {}); self.gateway = None
-    def accept_and_publish(self, pkg, supplied, status_token, *, sequence, now, max_age, stored_inputs=None, l2_applicability=None, research_lineage=None, attempt_id=None, lifecycle=None, lifecycle_transition=None):
+        self._p, self._js, self._st, self._core, self._path, self._gf = pipeline, journals, store, core, path, gateway_factory; self._up = dict(upstream or {}); self.gateway = None; self._l2r = l2_scope_resolver
+    def accept_and_publish(self, pkg, supplied, status_token, *, sequence, now, max_age, stored_inputs=None, l2_applicability=None, research_lineage=None, lineage_expect=None, lifecycle=None, lifecycle_transition=None):
         if l2_applicability is not None and not isinstance(l2_applicability, L2Applicability): raise Refusal("l2_applicability", code="COMPOSITION_L2_APPLICABILITY_INVALID")
         r = CompositionResult("STARTED")
-        if (research_lineage is None) != (attempt_id is None): r.status = "HELD_ATTEMPT_LINEAGE_INPUT_INCOMPLETE"; return r.log("attempt_lineage", "HELD", "research_lineage and attempt_id are supplied together")
-        if research_lineage is not None and not research_lineage.resolves(attempt_id): r.status = "ATTEMPT_UNRESOLVED"; return r.log("attempt_lineage", "REFUSED", "the supplied attempt id is not held by the research ledger")      # R39: ResearchLineage.resolves is now on the caller path (when supplied); nothing is published for an unresolved attempt
+        if research_lineage is not None:                                     # R40: the attempt checked is the one the PACKAGE actually records (never a caller-chosen known id); family/battery/input lineage must match a caller-supplied expectation (no universal family vocabulary is defined here)
+            if not (isinstance(lineage_expect, tuple) and len(lineage_expect) == 3 and all(isinstance(x, str) and x for x in lineage_expect)): r.status = "HELD_ATTEMPT_LINEAGE_EXPECTATION_UNBOUND"; return r.log("attempt_lineage", "HELD", "lineage_expect=(family, battery, input_hash) must be supplied with research_lineage")
+            att = research_lineage.attempt(getattr(pkg, "attempt_id", None))
+            if att is None: r.status = "ATTEMPT_UNRESOLVED"; return r.log("attempt_lineage", "REFUSED", "the package's own attempt id is not held by the research ledger")
+            if (att["family"], att["battery"], att["input_hash"]) != lineage_expect: r.status = "ATTEMPT_LINEAGE_MISMATCH"; return r.log("attempt_lineage", "REFUSED", "family/battery/input lineage differs from the expectation")
+        elif lineage_expect is not None: r.status = "HELD_ATTEMPT_LINEAGE_INPUT_INCOMPLETE"; return r.log("attempt_lineage", "HELD", "lineage_expect without research_lineage")
         out = self._p.run(pkg); r.outcome = out
         if getattr(out, "accepted", None) is None or out.accepted.kind != "CANONICAL_ACCEPTED": r.status = "NOT_ACCEPTED"; return r.log("accept", "REFUSED", str(getattr(out, "stage", "")))
         fk = out.admission.feature_key; r.feature_key = fk; key = fk.key(); r.log("accept", "OK", out.accepted.kind)
         j = self._js.journal(fk.namespace())
+        if research_lineage is not None:
+            try: rec_att = dict(read_accepted_manifest(j, self._st, fk).recorded_lineage).get("attempt_id")
+            except Refusal as e: rec_att = None
+            if rec_att != pkg.attempt_id: r.status = "ATTEMPT_RECORD_MISMATCH"; return r.log("attempt_lineage", "REFUSED", "the accepted record's recorded attempt id differs from the package's")      # not published
         for up in self._up.get(key, ()): self._core.declare_dependency(key, up)
         r.log("dependencies", "OK", ",".join(self._up.get(key, ())))
         res, state = RV.reverify_accepted(self._core, journal=j, store=self._st, feature_key=fk, now=now, max_age=max_age); r.reverification = res; r.log("reverify_l1_l2_recomputation", res.status, state)
@@ -56,8 +66,10 @@ class Composition:
                 if e.code == "STORED_VALUES_CLASS_MISMATCH": raise
                 absent("STORED_VALUES_NOT_PERSISTABLE:" + e.code); stored_inputs = None                           # source unusable/unavailable at write time => UNAVAILABLE in the Core, never the prototype PASS
             if stored_inputs is not None: sv = SV.record_stored_value_maintenance(self._core, journal=j, store=self._st, feature_key=fk, now=now, max_age=max_age, **stored_inputs); r.stored_values = sv; r.log("stored_values_l2", sv["overall"], sv["reason"]); l2_ok[0] = sv["l2"] == "PASS"
-        elif l2_applicability is not None and not l2_applicability.required:
-            r.l2_scope = {"scope_ref": l2_applicability.scope_ref, "contract_ref": l2_applicability.contract_ref, "required": False}; r.log("stored_values_l2", "NOT_REQUIRED_PER_SUPPLIED_SCOPE", l2_applicability.scope_ref)
+        elif l2_applicability is not None and not l2_applicability.required:   # R40: a flag is not a governed definition: the supplied scope must RESOLVE (exact feature/version/contract, admitted, current, unrevoked) or the L2 is UNAVAILABLE
+            sstate, swhy = L2S.judge_l2_scope(self._l2r, l2_applicability.scope_ref, l2_applicability.contract_ref, key, fk.feature_version)
+            if sstate == "NOT_REQUIRED_ADMITTED": r.l2_scope = {"scope_ref": l2_applicability.scope_ref, "contract_ref": l2_applicability.contract_ref, "required": False, "resolved": True}; r.log("stored_values_l2", "NOT_REQUIRED_PER_RESOLVED_ADMITTED_SCOPE", l2_applicability.scope_ref)
+            else: absent(swhy if sstate == "UNAVAILABLE" else "STORED_VALUES_REQUIRED_BUT_NOT_SUPPLIED")
         else: absent("STORED_VALUES_REQUIRED_BUT_NOT_SUPPLIED" if l2_applicability is not None else "L2_APPLICABILITY_UNBOUND_HELD")
         self._path.commit(fk, supplied, status_token, sequence=sequence); r.projection = self._path.status_projection(); self.gateway = self._gf(r.projection); r.published_rows = self._path.feed(self.gateway); r.log("committed_status_and_rows", "OK", "rows=%d" % r.published_rows)
         if lifecycle_transition is not None or lifecycle is not None:        # R39: the ACTUAL LifecycleFramework.apply call, only when BOTH a framework and an explicit transition are supplied; an unbound policy is HELD, never a guessed state
