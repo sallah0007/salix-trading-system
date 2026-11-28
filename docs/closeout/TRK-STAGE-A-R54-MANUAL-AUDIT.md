@@ -9,7 +9,7 @@ SRC=Y means the governing source passage was re-read from the live document in t
 | B03 | IA | N | TrackerSnapshotManifest + snapshot_carrier candidate hash (authoritative=False) | 15/35 | seven held manifest field instances + byte layout | - |
 | B04 | SD | N | admit() prototype contract; battery fixtures exist as tests; no source battery content | 44/20 | approve battery content (Spec function) | - |
 | B05 | MR | N | advance_epoch/reresolve present; planned irreversible downgrade path unapproved by design (S4 s10 re-read: 'Planned irreversible reconstructability downgrade remains Owner-authority') | 68/78 | Owner reservation record | Does the Owner's reservation of planned irreversible downgrade need a recorded approval object, or is the absence of any downgrade path the intended state? |
-| B06 | SD | N | accepted_manifest candidate bytes | 20/28 | D3/D13 normative bytes | - |
+| B06 | SD | N | accepted_manifest candidate bytes | 21/29 | D3/D13 normative bytes | - |
 | B07 | IA | N | expression operators exercised by parity tests R45-R47; invoked through intake/verification | 56/67 | program grammar + opcode codes + ceilings | - |
 | B08 | SD | N | harness shell only; detector absent | 17/8 | similarity detector decision (R54_DECISION_PACK) | - |
 | B09 | SD | N | version_diff/relationship_store/version_relationship are NOT called by intake or the report producer (CANONICAL_SURVIVOR and FEATURE_VERSION_RELATIONSHIP_REF always null; s28 comparison) | 11/26 | Gateway response-package reference (p322), Health sub-surface, survivor/relationship producer | - |
@@ -37,7 +37,7 @@ SRC=Y means the governing source passage was re-read from the live document in t
 | D7 | MR | N | no code | 0/0 | certified-ABSENT certifier role/scope/interval | Manager: which function certifies ABSENT lookups and over what interval? |
 | D8 | SD | N | route_from_adapter maps QUANT/NO_QUANT; DIRECT_TRACKER_FEATURE has no producer; FAILED_BUILD_NOT_ROUTABLE refusal verified in code | 0/0 | DIRECT_TRACKER_FEATURE selector | - |
 | D9 | MR | N | dependency-direction test | 3/0 | Manager mapping stage_a -> tracker_component | Manager: record the mapping or confirm the delta stays code-side. |
-| D10 | OP | N | status emitter and lifecycle apply are parameter-supplied callers; shadow publisher has NO caller (R54 withdrawal) | 29/54 | provider/time primitive; governed shadow caller | - |
+| D10 | OP | N | status emitter and lifecycle apply are parameter-supplied callers; shadow publisher has NO caller (R54 withdrawal) | 30/55 | provider/time primitive; governed shadow caller | - |
 | D11 | SF | N | PACKAGE_CLASS labels | 2/5 | lane-name instances | - |
 | D12 | SF | N | code follows source text | 0/0 | - | - |
 | D12' | SD | N | unknown reasons REJECTED | 0/0 | new-request trigger | - |
@@ -61,7 +61,7 @@ SRC=Y means the governing source passage was re-read from the live document in t
 | TR-08 | SD | N | health/* generic | 5/7 | D17/D18 | - |
 | TR-09 | MR | N | stateful_verifier/quant_certification same author | 17/8 | independence | Codex: does independent re-derivation of the verifier by Codex satisfy Parent V1.2 s3, or is a different mechanism required? |
 | TR-10 | SF | N | currentness/context/time_family/lifecycle_eligibility; gateway/dependency_resolution mapped to contracts | 10/17 | - | - |
-| TR-11 | OP | N | coordination/* and e05 simulated; provider unqualified | 13/19 | provider | - |
+| TR-11 | OP | N | coordination/* and e05 simulated; provider unqualified | 14/20 | provider | - |
 | TR-12 | IA | N (callsite analysis) | context/event_context_store tests only; encoding ports caller-supplied | 10/24 | D13 layouts + consumer requirement class relation | - |
 | TR-13 | IA | Y S6 H1 REQUIRED/CONDITIONAL lists re-read (live) | H1_REQUIRED in v038 equals the source 17 + the health pair + watermark for decision windows; R54: partially present conditional groups (Event/Context set, applicability-map pair, revocation-watermark pair, COVERAGE_BASIS with COVERAGE_STATE) are refused (test_r54_h1_conditional, fails on the unfixed code); typed H1 + OutcomeSeriesDesk via Composition.outcome_desk (R54), fw association via Composition.fw_association | 19/57 | H1/H3 instances; CBID issuer | - |
 | TR-14 | IA | N (callsite analysis) | ML shadow/augmented tests only | 46/94 | ML-owned instances | - |
