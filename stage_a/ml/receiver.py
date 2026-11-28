@@ -9,6 +9,12 @@ from ..gateway.contracts import Binding, NonDeliveryResolution, AbsenceApplied, 
 from ..schema.encoding import Ref
 from ..fw.lanes import ConsumerManifest, classify, BASELINE
 
+def _tagged_reason(v):
+    """Structural TAGGED_ENUM_OR_REF check only (the shape `schema.encoding.tagged_enum_or_ref` encodes); the enum vocabulary is NOT invented here. None, a non-tuple, an unknown tag or a malformed payload is NOT a reason."""
+    if isinstance(v, tuple) and len(v) == 3 and v[0] == "ENUM": return all(isinstance(x, str) and x for x in v[1:])
+    if isinstance(v, tuple) and len(v) == 2 and v[0] == "REF": return isinstance(v[1], Ref)
+    return False
+
 @dataclass(frozen=True)
 class MLRow:
     row_id: str
@@ -58,7 +64,10 @@ def build_row(row_id, generation_binding_ref, entries, outcomes, gateway, reques
         elif isinstance(o, NonDeliveryResolution):
             check_dependency_outcome(o, e, gateway, "ML")                                  # a forged/foreign non-delivery cannot exclude a row
             if e.requirement_class == REQUIRED:
-                return MLRow(row_id, generation_binding_ref, eligibility_reason, exclusion_reason_for_missing(o), tuple(bindings), tuple(absences))
+                if not callable(exclusion_reason_for_missing): raise Refusal("exclusion reason source", code="EXCLUSION_REASON_REQUIRED_FOR_REQUIRED_NON_DELIVERY")
+                why = exclusion_reason_for_missing(o)
+                if not _tagged_reason(why): raise Refusal(repr(why)[:60], code="EXCLUSION_REASON_REQUIRED_FOR_REQUIRED_NON_DELIVERY")   # R37: None/malformed reason can never make `included` True with an absent REQUIRED dependency
+                return MLRow(row_id, generation_binding_ref, eligibility_reason, why, tuple(bindings), tuple(absences))
             raise Refusal("optional dependency non-delivery must resolve to AbsenceApplied", code="OPTIONAL_NON_DELIVERY")
         else:
             raise Refusal(type(o).__name__, code="UNKNOWN_OUTCOME_TYPE")           # raw values/fills are not representable

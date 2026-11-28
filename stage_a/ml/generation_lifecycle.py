@@ -6,6 +6,7 @@ SCOPE: this is an ML-OWNED candidate store in memory (its own ledger, NOT a Trac
 here: the manifest/hash byte composition (hashes are SUPPLIED strings, never recomputed or claimed verified), the lifecycle transition graph (only the four source-named states are accepted; the ONLY transitions refused are exits from REVOKED/SUPERSEDED, held as unresolved restoration - no table of permitted transitions is claimed),
 the governed taxonomy beyond the three source-named outcomes, the component list beyond the source's 'at minimum' set, and who the lifecycle authority is (`authority` is a supplied label)."""
 import threading
+from types import MappingProxyType
 from dataclasses import dataclass, field
 from typing import Optional
 from ..errors import Refusal
@@ -15,6 +16,16 @@ STATES = ("CANDIDATE", "COMPLETE_CERTIFIED", "SUPERSEDED", "REVOKED")
 PUBLISHED, REJECTED_DISCARDED, REJECTED_QUARANTINED = "PUBLISHED", "DISCARDED", "QUARANTINED"
 MISSED, NOT_PROVABLY_RECONSTRUCTABLE = "MISSED", "NOT_PROVABLY_RECONSTRUCTABLE"
 HELD_MISSED_OR_QUARANTINED, RECONSTRUCTED_CANDIDATE = "HELD_MISSED_OR_QUARANTINED", "RECONSTRUCTED_CANDIDATE_EVIDENCE_UNADMITTED"
+def _freeze(x, _depth=0):
+    """Deep-detach a SUPPORTED result payload: None/bool/int/float/str/bytes pass; list/tuple -> tuple; dict (str keys) -> read-only mapping; set/frozenset -> frozenset. Any other type is HELD (`ML_RESULT_PAYLOAD_TYPE_HELD`): no canonical bytes are invented for it and a mutable foreign object is never retained by reference."""
+    if _depth > 32: raise Refusal("depth", code="ML_RESULT_PAYLOAD_TYPE_HELD")
+    if x is None or type(x) in (bool, int, float, str, bytes): return x
+    if type(x) in (list, tuple): return tuple(_freeze(i, _depth + 1) for i in x)
+    if type(x) is dict:
+        if not all(type(k) is str for k in x): raise Refusal("key", code="ML_RESULT_PAYLOAD_TYPE_HELD")
+        return MappingProxyType({k: _freeze(v, _depth + 1) for k, v in x.items()})
+    if type(x) in (set, frozenset): return frozenset(_freeze(i, _depth + 1) for i in x)
+    raise Refusal(type(x).__name__, code="ML_RESULT_PAYLOAD_TYPE_HELD")
 def _s(x): return isinstance(x, str) and bool(x)
 def _i(x): return type(x) is int and x >= 0
 
@@ -109,6 +120,7 @@ class GenerationRegistry:
         with self._lock:
             if not isinstance(snap, SnapshotForRequest): raise Refusal("snapshot", code="ML_PUBLISH_NEEDS_REQUEST_SNAPSHOT")
             if self._issued.get(snap.request_id) != snap: raise Refusal(snap.request_id, code="ML_SNAPSHOT_NOT_ISSUED_BY_THIS_REGISTRY")     # exact issued snapshot: any altered hash/epoch/manifest/event/identity/request id fails
+            result = _freeze(result)                                                                                              # detached BEFORE the commit; nothing the caller holds can alter the stored record
             if self._commit_hook: self._commit_hook()
             key = snap.event
             if key in self._published: return PublishOutcome(PUBLISHED, "ALREADY_PUBLISHED_IDEMPOTENT")

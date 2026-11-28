@@ -70,11 +70,12 @@ class Binding:
 
 class SimulatedGateway:
     """Resolves dependencies at a consumer fence and stores each outcome ONCE (G4 idempotent, G5/G6 immutable)."""
-    def __init__(self, tables: CodeTables, status, watermark: int = 0, allow_uncommitted_status: bool = False, health_source=None, allow_shape_only_health: bool = False):
+    def __init__(self, tables: CodeTables, status, watermark: int = 0, allow_uncommitted_status: bool = False, health_source=None, allow_shape_only_health: bool = False, allow_simulation_status: bool = False):
         """status must be a committed-journal projection (tracker.status_projection.StatusProjection, `authoritative` True). A bare in-memory ChainStatusAuthority
         is NOT consumer-authoritative: it is accepted only when allow_uncommitted_status=True (tests/simulation), never by default."""
         self.t, self.status, self.watermark = tables, status, watermark
         self.allow_uncommitted_status = allow_uncommitted_status
+        self.allow_simulation_status = allow_simulation_status      # R37: a SIMULATION-class committed projection is consumed only by a Gateway that opted in explicitly
         self.health_source = health_source                    # object with confirm_snapshot(snapshot)->bool (the Core that issued the snapshot); no source => Core snapshots are NOT confirmable and are denied
         self.allow_shape_only_health = allow_shape_only_health  # LEGACY shape-only harness switch: a plain HealthSnapshot proves nothing about any subject. Default False: denied.
         self.cross_instrument = None                            # R36: optional gateway.cross_instrument.CrossInstrumentPolicy; with `target_instrument` given and no policy/grant the dependency is DENIED (default cross-instrument deny)
@@ -136,6 +137,8 @@ class SimulatedGateway:
         if data_vintage_mode is not None and row.data_vintage_mode != data_vintage_mode:
             return nd("DATA_VINTAGE_MODE_MISMATCH")
         mv = (row.feature_id, row.feature_version, row.instrument_id, row.timeframe_id, row.materialization_version)
+        if getattr(self.status, "simulation", False) and not self.allow_simulation_status:
+            return nd("STATUS_SOURCE_SIMULATION_NOT_ALLOWED")            # fail closed: a simulated committed status is not consumer authority for a Gateway that did not opt in
         if not getattr(self.status, "authoritative", False) and not self.allow_uncommitted_status:
             return nd("STATUS_SOURCE_NOT_COMMITTED_PROJECTION")      # fail closed: a direct append is not consumer authority
         try:
