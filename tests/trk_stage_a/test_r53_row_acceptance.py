@@ -118,3 +118,11 @@ def test_fenced_out_acceptor_cannot_accept():
     FeatureJournalSet(s, "failover-writer").journal(RA.row_namespace(out[0][0]))              # a newer epoch is acquired elsewhere
     with pytest.raises(StaleFence): acc(a, out[1][1].row_hash)
     assert len(FeatureJournalSet(s, "reader").journal(RA.row_namespace(out[0][0])).read_from(1)) == 1
+
+def test_acceptor_pins_tables_against_caller_mutation():
+    import copy
+    s, js, rows, out, _ = rig(); t = copy.deepcopy(T); a = RA.RowAcceptor(js, rows, t, Time(), CP()); r0 = acc(a, out[0][1].row_hash)
+    t.enums["CURRENTNESS_STATE"]["CURRENT"] = 9; t.ref_types["VERIFICATION_EVIDENCE_REF"] = 99
+    r1 = acc(a, out[1][1].row_hash); assert json.loads(r1.body_json)["transition_hash"] != json.loads(r0.body_json)["transition_hash"] and r1.seq == 2
+    c = O.CanonicalTransition(bytes.fromhex(out[1][1].row_hash), EVID, js.journal(RA.row_namespace(out[1][0])).epoch, bytes.fromhex(json.loads(r1.body_json)["canonical_commit_point_id"]), json.loads(r1.body_json)["canonical_accepted_at"], json.loads(r1.body_json)["available_asof"], None, "CURRENT", "PUBLISHABLE")
+    assert json.loads(r1.body_json)["transition_hash"] == O.transition_hash(T, c).hex()      # still hashed under the ORIGINAL tables

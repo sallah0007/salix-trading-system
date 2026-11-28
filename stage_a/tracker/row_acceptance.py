@@ -4,7 +4,7 @@ conditional HEAD CAS succeeds (Build Plan E01-M1; here HEAD installs the journal
 SUPPLIED, never defaulted: attempt-time port (coordination/attempt_time; a fresh time per CAS attempt; AVAILABLE_ASOF == CANONICAL_ACCEPTED_AT), commit-point id port (derivation rule is
 not defined by any source read: unbound = HELD), the verification-evidence ref, currentness state and status event symbols (checked against the supplied code tables).
 NOT claimed: qualified clock, normative commit-point id, byte admission (D13), gate/hold clearance. Legacy feature-VERSION journals and probe path are untouched."""
-import json
+import copy, json
 from ..errors import Refusal, UnknownCommit, IntegrityFailure, StaleFence
 from ..coordination import attempt_time as AT
 from tracker_component.journal_port import HeadMismatch
@@ -29,7 +29,7 @@ class RowAcceptor:
         AT.port_ok(time_port)
         if commit_point_port is None: raise Refusal("commit-point id port", code="COMMIT_POINT_RULE_NOT_SUPPLIED_HELD")
         if not callable(getattr(commit_point_port, "derive", None)): raise Refusal("commit-point id port", code="COMMIT_POINT_PORT_INVALID")
-        self._j, self._rows, self._t, self._time, self._cp = journals, rows, tables, time_port, commit_point_port
+        self._j, self._rows, self._t, self._time, self._cp = journals, rows, copy.deepcopy(tables), time_port, commit_point_port
 
     @staticmethod
     def _accepted_rows(records):
