@@ -150,9 +150,12 @@ def reference_evaluate(p, series):
             res = []
             for t in range(n_rows):
                 w = src[t - k + 1:t + 1] if t - k + 1 >= 0 else None
-                if w is None or any(x is None for x in w):
+                if w is None:
                     res.append(None); continue
-                if any(x is _FAIL for x in w):
+                first = next((x for x in w if x is None or x is _FAIL), 0)   # ascending: the first undefined/failed element decides (matches demand order)
+                if first is None:
+                    res.append(None); continue
+                if first is _FAIL:
                     res.append(_FAIL); continue
                 s = _guard(lambda: reduce(lambda acc, x: _fin(acc + _z(x)), w, 0.0))
                 res.append(s if (s is _FAIL or op == "rolling_sum") else _guard(lambda: _fin(s / float(k))))
