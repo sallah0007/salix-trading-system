@@ -10,6 +10,7 @@ One bounded sequence, every step before the single write is read-only, a refusal
 Held (not guessed): the lifecycle-kind -> status mapping, the status-origin principal, EFFECTIVE_AT/MACHINE_REASON_CODE/AUTHORITY_STATE and the rest of FROM_BOUNDARY. This changes no gate; a committed status is simulation evidence only."""
 import json
 from ..errors import Refusal
+from tracker_component.journal_port import HeadMismatch
 from tracker_component.audit import transition_evidence
 from tracker_component.claims import Refusal as ComponentRefusal
 from .lifecycle_status_event import journal_to_status_event
@@ -22,26 +23,35 @@ class StatusEmitter:
         if kind_to_token is not None and not (isinstance(kind_to_token, dict) and all(isinstance(k, str) and k and isinstance(v, str) and v for k, v in kind_to_token.items())): raise Refusal("mapping", code="STATUS_MAPPING_INVALID")
         self._path, self._map = path, (None if kind_to_token is None else dict(kind_to_token))
 
-    def _lifecycle(self, feature_key):
-        recs = [r for r in self._path.feature_journal.read_from(1) if json.loads(r.body_json).get("feature_key") == feature_key.key()]
+    def _lifecycle(self, feature_key, head):
+        recs = [r for r in self._path.feature_journal.read_from(1) if r.seq <= head.seq and json.loads(r.body_json).get("feature_key") == feature_key.key()]
         if not recs: raise Refusal(feature_key.key(), code="STATUS_EMIT_NO_COMMITTED_LIFECYCLE_RECORD")
         return recs
 
-    def emit(self, feature_key, supplied: SuppliedRowInputs, *, sequence, boundary_evidence, context_known, audit_fields=None, correction=False):
+    def emit(self, feature_key, supplied: SuppliedRowInputs, *, sequence, boundary_evidence, context_known, audit_fields=None, correction=False, attempts=3):
+        """R51: every read is taken at a PINNED basis and the single write is guarded by it: the OWNING head read before the lifecycle record (the commit refuses if the owning head moved: no later head is stamped on an older origin) and the SIDE head read before
+        the replay/sequence validation (the append is compare-and-append on it). Either guard failing re-reads EVERYTHING and re-validates (a concurrent exact replay then returns replay=True; a stale origin is re-derived or refused). Exhaustion refuses; nothing is deleted."""
         if self._map is None: raise Refusal("kind_to_token", code="STATUS_MAPPING_HELD")
-        recs = self._lifecycle(feature_key); rec = recs[-1]
-        token = self._map.get(rec.kind)
-        if token is None: raise Refusal(rec.kind, code="STATUS_KIND_UNMAPPED")
-        prior = recs[-2] if len(recs) > 1 else None
-        event = journal_to_status_event(rec, prior.kind if prior else None, boundary_evidence, context_known)     # A1 derived + validated; refuses on any gap/conflict
-        try: evidence = transition_evidence(rec, **(audit_fields or {}))     # predecessor_hash is the record's own prev_hash (journal predecessor, not the previous record of this feature key)
-        except ComponentRefusal as e: raise Refusal(str(e), code=e.code)                                  # one refusal family at this boundary
-        mine = [b for b in self._path.records() if b["feature_key"] == feature_key.key()]
-        for b in mine:
-            if b.get("origin", {}).get("record_hash") == rec.record_hash:
-                if b.get("origin", {}).get("token") != token or b[self._path._spec["status_field"]] != token: raise Refusal(rec.record_hash, code="STATUS_EMIT_REPLAY_DIFFERS")
-                return {"status_event": event, "audit": evidence, "status_record": None, "replay": True, "simulation": True}
-        seqf = self._path._spec["sequence_field"]
-        if mine and (type(sequence) is not int or sequence <= max(b[seqf] for b in mine)): raise Refusal(str(sequence), code="STATUS_SEQUENCE_NOT_INCREASING")
-        out = self._path.commit(feature_key, supplied, token, sequence=sequence, correction=correction, origin={"record_seq": rec.seq, "record_hash": rec.record_hash, "kind": rec.kind, "token": token})
-        return {"status_event": event, "audit": evidence, "status_record": out, "replay": False, "simulation": True}
+        for _ in range(attempts):
+            src = self._path.feature_journal.head(); side = self._path._sj.head()                                  # the two basis heads, BEFORE any state is read
+            recs = self._lifecycle(feature_key, src); rec = recs[-1]
+            token = self._map.get(rec.kind)
+            if token is None: raise Refusal(rec.kind, code="STATUS_KIND_UNMAPPED")
+            prior = recs[-2] if len(recs) > 1 else None
+            event = journal_to_status_event(rec, prior.kind if prior else None, boundary_evidence, context_known)     # A1 derived + validated; refuses on any gap/conflict
+            try: evidence = transition_evidence(rec, **(audit_fields or {}))     # predecessor_hash is the record's own prev_hash (journal predecessor, not the previous record of this feature key)
+            except ComponentRefusal as e: raise Refusal(str(e), code=e.code)                                  # one refusal family at this boundary
+            mine = [b for b in self._path.records() if b["feature_key"] == feature_key.key()]
+            for b in mine:
+                if b.get("origin", {}).get("record_hash") == rec.record_hash:
+                    if b.get("origin", {}).get("token") != token or b[self._path._spec["status_field"]] != token: raise Refusal(rec.record_hash, code="STATUS_EMIT_REPLAY_DIFFERS")
+                    return {"status_event": event, "audit": evidence, "status_record": None, "replay": True, "simulation": True}
+            seqf = self._path._spec["sequence_field"]
+            if mine and (type(sequence) is not int or sequence <= max(b[seqf] for b in mine)): raise Refusal(str(sequence), code="STATUS_SEQUENCE_NOT_INCREASING")
+            try: out = self._path.commit(feature_key, supplied, token, sequence=sequence, correction=correction, origin={"record_seq": rec.seq, "record_hash": rec.record_hash, "kind": rec.kind, "token": token}, expected_source_head=src, expected_side_head=side)
+            except HeadMismatch: continue                                                                      # the side HEAD moved after validation: re-read and re-validate (replay/sequence)
+            except Refusal as e:
+                if e.code == "SIM_PUBLICATION_SOURCE_HEAD_ADVANCED": continue                                  # the owning HEAD moved: re-read the lifecycle record
+                raise
+            return {"status_event": event, "audit": evidence, "status_record": out, "replay": False, "simulation": True}
+        raise Refusal(feature_key.key(), code="STATUS_EMIT_RACE_EXHAUSTED")

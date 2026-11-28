@@ -34,10 +34,11 @@ class SimulationPublicationPath:
         if type(status_journal) is not ObjectStoreJournal or authority_class_of(status_journal) != SIMULATION: raise Refusal("status journal", code="SIM_PUBLICATION_REQUIRES_SIMULATION_JOURNAL")
         if status_journal is feature_journal or not isinstance(status_spec, dict) or status_spec.get("record_kind") != STATUS_KIND: raise Refusal("spec", code="SIM_PUBLICATION_SPEC_INVALID")
         self._st, self._fj, self._sj, self._spec = store, feature_journal, status_journal, status_spec; self._decode = make_decoder(status_spec)
-    def commit(self, feature_key, supplied: SuppliedRowInputs, status_token, *, sequence, correction=False, origin=None):
+    def commit(self, feature_key, supplied: SuppliedRowInputs, status_token, *, sequence, correction=False, origin=None, expected_source_head=None, expected_side_head=None):
         """Also the lawful REBUILD after a source-head advance: re-commits against the CURRENT owning head, only while the version is live."""
         if not isinstance(supplied, SuppliedRowInputs) or status_token not in self._spec["status_map"] or type(sequence) is not int or sequence < 1 or type(correction) is not bool: raise Refusal("inputs", code="SIM_PUBLICATION_INPUT_INVALID")
         src = self._fj.head()                                                                    # read BEFORE the state: a race can only make the recorded head older than the state seen, which the guard fails closed on
+        if expected_source_head is not None and src != expected_source_head: raise Refusal("owning head advanced", code="SIM_PUBLICATION_SOURCE_HEAD_ADVANCED")      # R51: an emitter that derived this status from the record at a pinned owning HEAD must not have a LATER head stamped onto it
         rb = AM.read_accepted_manifest(self._fj, self._st, feature_key)                         # the ACTUAL accepted receipt, manifest bytes re-hashed
         vs = replay(feature_key.namespace(), self._fj.read_from(1)).get(feature_key.feature_version)
         if vs is None or vs.status not in LIVE_STATES: raise Refusal(getattr(vs, "status", None), code="SIM_PUBLICATION_SOURCE_NOT_LIVE")
@@ -53,7 +54,7 @@ class SimulationPublicationPath:
         if origin is not None:
             if not (isinstance(origin, dict) and all(isinstance(k, str) and isinstance(v, (str, int)) and not isinstance(v, bool) for k, v in origin.items())): raise Refusal("origin", code="SIM_PUBLICATION_INPUT_INVALID")
             body["origin"] = dict(origin)                                                          # R50: the emitter's pointer to the committed lifecycle record this status was derived from (provenance, not authority)
-        return self._sj.append(self._sj.head(), STATUS_KIND, body)
+        return self._sj.append(self._sj.head() if expected_side_head is None else expected_side_head, STATUS_KIND, body)       # R51: with a pinned side HEAD the append is compare-and-append against the basis the emitter validated (HeadMismatch otherwise)
     @property
     def feature_journal(self):
         """Read-only handle to the OWNING journal this path re-reads (the emitter reads the committed lifecycle record from it)."""
