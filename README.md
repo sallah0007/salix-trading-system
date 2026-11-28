@@ -8,6 +8,7 @@ Candidate implementation of the full Trading Tracker component and its Composer,
 
 | Need | Location |
 | --- | --- |
+| Current work and resume point | [Persistent Tracker checklist](docs/closeout/TRK-STAGE-A-CHECKLIST.md) |
 | Current integrated code | [main branch](https://github.com/sallah0007/salix-trading-system/tree/main) |
 | Requirement status, evidence and remaining gaps | [Combined Tracker closeout](docs/closeout/TRK-STAGE-A-TRACKER-COMBINED-CLOSEOUT.md) — use its section marked CURRENT; later code changes must also be checked |
 | Requirement-by-requirement working register | [Clause reconciliation](docs/closeout/TRK-STAGE-A-R43-CLAUSE-RECONCILIATION.md) — the R43 filename is retained; read each row's evidence date and limits |
@@ -26,12 +27,17 @@ Candidate implementation of the full Trading Tracker component and its Composer,
 | [coder_returns/](coder_returns/) | Historical coder returns; newer combined closeout records qualify earlier claims |
 | [tools/](tools/) | Evidence and requirement-register utilities |
 
-## Saved-code checkpoint — 28 November 2026, Sydney
+## Current pause checkpoint — 29 November 2026, Sydney
 
-The preservation check covered integrated code through [PR #83](https://github.com/sallah0007/salix-trading-system/pull/83), code commit `b8017d408c671e96a28fbb1eb25477cfef70d6ee`. PR #82 contains lifecycle race repairs; PR #83 adds the candidate status emitter/caller and audit support. This is a saved-code checkpoint, not a completion or acceptance decision.
+**Scope: full Tracker component and its interfaces. Work is paused for Claude's weekly allowance reset; Tracker is not closed.** The Owner said to continue after Monday's 7 o'clock reset. No AM/PM or automatic restart is inferred.
 
-The [170-commit preservation list](docs/PRESERVATION_R46_LOCAL_ONLY_SHAS.tsv) matches the 170 parents of remote preservation anchor `5ece0b4fc7b0979dc98fc8ada67161500e390269` on `preserve/r46-local-only-anchor`. The anchor preserves earlier work; it is not an alternative current implementation.
+- Latest integrated code: [PR #167](https://github.com/sallah0007/salix-trading-system/pull/167), main code commit `c0988a4da74d92f44ad63f42681b12b61b462051`.
+- PR #165: immutable ML view and exact consumed-row bridge; #166: per-row source-value L2 maintenance; #167: accepted-row completeness, snapshot/vintage and row-route lifecycle/recovery. These are candidate/SIM code events, with remaining review and governed-instance limits.
+- Resume from the [persistent full-component checklist](docs/closeout/TRK-STAGE-A-CHECKLIST.md): ML view-path remainder; Composer/FW/ML/Health dependency review; per-clause source/code review; all 100 A07 qualifier comparisons; remaining Build Plan reads; combined closeout and final preservation check.
+- GitHub API inventory: 158 remote heads across two complete pages (100 + 58). The latest five workspace branch tips are present on GitHub.
+- Observed Claude workspace command output after PR #167: no tracked modifications, no untracked files, no stashes; a full local-branch ancestry check against `ls-remote` SHAs reported no branch unreachable from the remote heads. This is the observed checkpoint, not a guarantee about future edits.
+- Earlier branches, preservation anchors, history and Rescue records remain retained. No cleanup or deletion was performed.
 
-Use GitHub commit history and current branches for changes after this checkpoint. Only Claude's current workspace check can establish whether newer uncommitted or unpushed work exists.
+The [preservation index](docs/PRESERVATION_INDEX.md) records the exact latest branch SHAs and evidence limits. Documentation navigation updates after the code checkpoint do not change runtime code, grant acceptance or clear any gate.
 
 The governed Drive records remain the source of design authority and formal gate decisions. A merge, passing test or this README clears no gate.
