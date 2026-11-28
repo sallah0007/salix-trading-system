@@ -62,6 +62,11 @@ class ObjectStoreJournal:
         doc, _ = self._read_head_doc()
         return GENESIS_HEAD if doc is None else Head(doc["seq"], doc["hash"])
 
+    @property
+    def epoch(self):
+        """The fencing epoch THIS writer holds (None before acquire_epoch). Read-only; the HEAD doc remains the authority."""
+        return self._epoch
+
     def epoch_is_current(self) -> bool:
         doc, _ = self._read_head_doc()
         return doc is not None and self._epoch is not None and doc["epoch"] == self._epoch
