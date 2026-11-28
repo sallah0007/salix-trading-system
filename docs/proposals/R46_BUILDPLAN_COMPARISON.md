@@ -1,4 +1,4 @@
-# R46 BuildPlan comparison (sections 11-14A, 15-20 skim, 27, 29A E-01..E-10) against the repository. FINDINGS ONLY; nothing adopted; no gate moves.
+# PROPOSAL: R46 BuildPlan comparison (sections 11-14A, 15-20 skim, 27, 29A E-01..E-10) against the repository. FINDINGS ONLY (PROPOSAL labels only); nothing adopted; no gate moves.
 INPUT: BuildPlan head (R7 selected-replica qualifier prefix + retained plan) as fetched in R45; read in R46: head prefix, sections 11, 12, 13, 13A, 14.2, 14, 14A, 15-20 (first screen), 27, 29A (all E-01..E-10 text). DERIVATION_CLASS = INDEPENDENTLY_DERIVED (text read; repository checked by listing/grep and the cited tests). REPRODUCIBLE_BY_MANAGER = YES.
 NOT READ: the R7 qualifier body itself (Drive 17s4MY6_..., 33,636 B, sha256 464724...a283: only the BuildPlan's pointer to it was read, so "R7 controls inside the named intersections" is NOT yet compared against code); sections 21-26, 28B-29B tail; Composer Binding V1 text.
 
