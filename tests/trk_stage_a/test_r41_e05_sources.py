@@ -38,5 +38,8 @@ class Src(unittest.TestCase):
     def test_a_queue_row_disappears_when_the_job_completes_and_a_missing_currentness_authority_refuses(self):
         self.q.complete("idem-1"); self.ix.rebuild(self.sources); self.assertIsNone(self.ix.lookup("stagea_scheduler_queue", {"job_id": "j1"}, self.res))
         bad = {"m": S.object_prefix_source(self.s, "stagea_manifest_index", "artifact/", S.manifest_row_of(lambda mh: None))}
-        with self.assertRaises(Refusal): self.ix.rebuild(bad)
+        with self.assertRaises(Refusal) as c: self.ix.rebuild(bad)
+        self.assertEqual(c.exception.code, "E05_SOURCE_CURRENTNESS_NOT_SUPPLIED")
+    def test_the_source_head_moves_when_bytes_are_replaced_under_the_same_key(self):
+        head, _ = self.sources["manifest"]; h0 = head(); g = self.s.get(artifact_key(self.mh)); self.s.put_if_match(artifact_key(self.mh), g[0], g[1]); self.assertNotEqual(head(), h0)
 if __name__ == "__main__": unittest.main()

@@ -51,4 +51,8 @@ class Caller(unittest.TestCase):
         self.sup._replace("tracker-verifier-worker")
         r = coa.accept_and_publish(pa, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, accept_fn=self.acc)
         self.assertEqual(r.status, "NOT_ACCEPTED"); self.assertTrue(r.outcome.stage.startswith("SEP_CALLER_JOB_NOT_DONE")); self.assertIsNone(coa.gateway)
+    def test_a_non_admissible_package_is_not_staged_claimed_or_run(self):
+        pa, fka, coa = self._feature("mom3", 1); calls = []
+        acc = SeparatedAcceptor(self.sup, self.q, self.rig.store, self.rig.journals, self.rig.claims, ANCHOR, lambda p: type("A", (), {"admissible": False})())
+        out = acc(pa); self.assertEqual(out.stage, "SEP_CALLER_NOT_ADMISSIBLE"); self.assertIsNone(out.accepted); self.assertEqual(self.q.pending(), ()); self.assertEqual(self.rig.store.list_prefix("sep/"), [])
 if __name__ == "__main__": unittest.main()

@@ -112,6 +112,23 @@ class Sep(unittest.TestCase):
         lk = "SIMULATION/sep/ver-by-mat/" + matH; cur = raw.get(lk); raw.put_if_match(lk, b"e" * 64, cur[1]); self.assertEqual(self._code(rh, matH), "SEP_ACCEPT_RECEIPT_NOT_LINKED_BY_VERIFIER_HANDLER")
         raw.put_if_match(lk, rh.encode(), cur[1] + 1); self.assertEqual(self._code("0" * 64, matH), "SEP_VERIFICATION_ABSENT")
         self._acc(rh, matH); self.assertEqual(len(self._accepted()), 1)
+    def _forge(self, matH, rec_changes=None, status="PASS", subject_changes=None):
+        """Test-only forgery of a SELF-CONSISTENT record+receipt pair (hashes recomputed) to prove the acceptor's cross-bindings, not just its hash arithmetic."""
+        from stage_a.tracker.verification.verification_result import make_result
+        from stage_a.tracker.verification.independent_hashing import materialization_digest
+        from stage_a.tracker.verification.independent_encoding import enc_bytes
+        rec = json.loads(self.rig.store.get("sep/materialization/" + matH)[0]); rec.update(rec_changes or {}); rec["materialization_hash"] = materialization_digest(rec, enc_bytes); m2 = rec["materialization_hash"]
+        old = json.loads(self.rig.store.get("sep/verification/" + self._ptr("ver-by-mat", matH))[0]); sub = dict(old["subject"]); sub["materialization_hash"] = m2; sub.update(subject_changes or {})
+        res = make_result(status, old["scope"], sub, [(a, b) for a, b in old["checks"]], old["reasons"]); body = SH._receipt(res, m2); raw = self.rig.store._i
+        for k, v in (("sep/materialization/" + m2, canonical_bytes(rec)), ("sep/verification/" + res.result_hash, canonical_bytes(body)), ("sep/ver-by-mat/" + m2, res.result_hash.encode())): raw.put_if_absent("SIMULATION/" + k, v)
+        return m2, res.result_hash
+    def test_r41_self_consistent_forgeries_still_fail_the_cross_bindings(self):
+        matH, rh = self._mv()
+        m2, r2 = self._forge(matH, status="FAIL"); self.assertEqual(self._code(r2, m2), "SEP_ACCEPT_RECEIPT_NOT_A_COMPLETE_PASS")
+        m2, r2 = self._forge(matH, rec_changes={"object_key": "artifact/" + "0" * 64}); self.assertEqual(self._code(r2, m2), "SEP_ACCEPT_REFS_DO_NOT_BIND")
+        m2, r2 = self._forge(matH, subject_changes={"graph_hash": "7" * 64}); self.assertEqual(self._code(r2, m2), "SEP_ACCEPT_RECEIPT_SUBJECT_DIFFERS_FROM_RECORD")
+        m2, r2 = self._forge(matH, subject_changes={"materialization_hash": "6" * 64}); self.assertEqual(self._code(r2, m2), "SEP_ACCEPT_RECEIPT_SUBJECT_DIFFERS_FROM_RECORD")
+        m2, r2 = self._forge(matH, subject_changes={"record_manifest_hash": "8" * 64}); self.assertEqual(self._code(r2, m2), "SEP_ACCEPT_RECEIPT_SUBJECT_DIFFERS_FROM_RECORD")
     def test_in_process_handler_guards_uncertified_manifest_and_feature_swap_are_refused(self):
         from unittest import mock
         with mock.patch.object(SH, "certify", lambda m, probe: type("C", (), {"status": "REJECTED"})()):
