@@ -29,4 +29,12 @@ class Rebuild(_M):
         self.assertNotEqual(h1, h2); self.assertEqual(h2[0], h1[0] + 2); self.assertIsNotNone(ix3.lookup("stagea_non_delivery_index", {"non_delivery_resolution_id": "FW:A2"}, S.object_resolver(raw)))      # the required denial is a durable NonDelivery row, not an absence
         k = raw.list_prefix("final-resolution/id/")[0]; b, e = raw.get(k); raw.put_if_match(k, b.replace(b"XAUUSD", b"EURUSD"), e)
         with self.assertRaises(IntegrityFailure): ix3.verify_all(S.object_resolver(raw))                                  # a replaced record is drift
+    def test_plane_identity_on_the_same_journal_is_enforced_across_restart(self):
+        from stage_a.core.tracker_core import TrackerCore
+        from stage_a.errors import Refusal
+        (fka, coa, ra, ba, sa), _ = self._two(); j = self.c._j
+        with self.assertRaises(Refusal) as c: TrackerCore(j, simulation=True, plane="control")
+        self.assertEqual(c.exception.code, "UNKNOWN_PLANE")                                                                  # only the source-named planes exist; none is invented
+        with self.assertRaises(IntegrityFailure): TrackerCore(j, simulation=True, plane="research").retry_allowed(fka.key())                                        # an UNTAGGED history opened under another plane identity is refused, never adopted
+        self.assertTrue(TrackerCore(j, simulation=True).retry_allowed(fka.key()))                                           # the original (unlabelled) identity restarts and replays the same state
 if __name__ == "__main__": unittest.main()
