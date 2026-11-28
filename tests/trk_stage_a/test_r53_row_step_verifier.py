@@ -156,7 +156,7 @@ def vi(row, pred, sc, **kw): return verify(row, pred, schema=sc, schema_registry
 def test_declared_invariant_pass_fail_unresolved_wrong_identity():
     rows = chain(); sc = with_inv()
     ok = vi(rows[0], None, sc, invariant_resolver=resolver_ok)
-    assert ok.status == PASS and dict(ok.subject)["invariants"] == "EVALUATED_PASS" and dict(ok.subject)["invariant_program_hashes"] == PH.hex()      # genuine rule-pass
+    assert ok.status == PASS and dict(ok.subject)["invariants"] == "EVALUATED_PASS" and dict(ok.subject)["invariant_program_hashes"] == PH.hex() + ":RESOLVER_REPORTED_UNPINNED"      # genuine rule-pass (unpinned ref: the resolver reports the identity; no artifact verification is claimed)
     neg = lambda ref: (PH, lambda st, prior, inputs: st["acc"] < 0.0)
     f = vi(rows[0], None, sc, invariant_resolver=neg); assert f.status == FAIL and dict(f.subject)["invariants"] == "RULE_FAILED"                       # known rule-fail
     assert vi(rows[0], None, sc).status == INSUFFICIENT_EVIDENCE and dict(vi(rows[0], None, sc).subject)["invariants"] == "UNRESOLVED_HELD"            # no resolver bound
@@ -177,3 +177,20 @@ def test_schema_identity_must_be_registry_bound_not_a_caller_string():
     mm = verify(rows[0], None, schema_registry=lambda v: other); assert mm.status == FAIL and dict(mm.subject)["schema_identity"] == "REGISTRY_MISMATCH"   # same version string, different registered schema
     assert verify(rows[0], None, schema_registry=lambda v: (_ for _ in ()).throw(RuntimeError("x"))).status == FAIL
     seen = []; verify(rows[0], None, schema_registry=lambda v: seen.append(v) or copy.deepcopy(SCHEMA)); assert seen == [rows[0].state_schema_version]       # asked for THIS row's version
+
+
+def test_invariant_resolver_identity_must_be_present_well_formed_pinned_matching_and_echo_the_requested_ref():
+    rows = chain(); sc = with_inv(); prog = lambda st, prior, inputs: True; run = lambda resolver, sc=sc: vi(rows[0], None, sc, invariant_resolver=resolver)
+    a = run(lambda r: (None, prog)); assert a.status == INSUFFICIENT_EVIDENCE and dict(a.subject)["invariants"] == "UNRESOLVED_HELD" and "invariant_program_hashes" not in dict(a.subject)      # absent identity: held, never PASS
+    for bad in (b"x", b"\x07" * 31, b"\x07" * 33, "07" * 32, 7, bytearray(b"\x07" * 32)):
+        m = run(lambda r, bad=bad: (bad, prog)); assert m.status == FAIL and dict(m.subject)["invariants"] == "INVARIANT_IDENTITY_MALFORMED", bad       # a label that is not a 32-byte hash refuses
+    assert dict(run(lambda r: (PH, None)).subject)["invariants"] == "INVARIANT_IDENTITY_MALFORMED"                                                    # no callable program
+    for junk in (PH, (PH,), (PH, prog, Ref("INVARIANT_REF", b"acc-nonneg", b"v1"), 1), "x"): assert dict(run(lambda r, junk=junk: junk).subject)["invariants"] == "INVARIANT_RESOLVER_RESPONSE_MALFORMED"
+    pinned = with_inv(Ref("INVARIANT_REF", b"acc-nonneg", b"v1", PH))
+    g = run(lambda r: (PH, prog), pinned); assert g.status == PASS and dict(g.subject)["invariant_program_hashes"] == PH.hex() + ":PINNED"                # genuine pinned control
+    assert run(lambda r: (b"\x08" * 32, prog), pinned).status == FAIL and dict(run(lambda r: (b"\x08" * 32, prog), pinned).subject)["invariants"] == "PROGRAM_HASH_MISMATCH"
+    echo = lambda ref: Ref("INVARIANT_REF", ref.target_id, ref.target_version)
+    assert run(lambda r: (PH, prog, echo(r))).status == PASS                                                                                           # echo of exactly what was requested
+    for wrong in (Ref("INVARIANT_REF", b"other", b"v1"), Ref("INVARIANT_REF", b"acc-nonneg", b"v2"), Ref("OTHER", b"acc-nonneg", b"v1"), None):
+        w = run(lambda r, wrong=wrong: (PH, prog, wrong)); assert w.status == FAIL and dict(w.subject)["invariants"] == "INVARIANT_RESOLVED_REF_MISMATCH"
+    assert run(lambda r: (PH, lambda st, p, i: False)).status == FAIL                                                                                   # genuine false-rule control
