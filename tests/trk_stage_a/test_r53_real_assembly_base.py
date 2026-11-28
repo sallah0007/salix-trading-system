@@ -20,19 +20,23 @@ from .test_r37_sim_publication_path import SPEC, supplied
 from .test_r37_stored_values import SER, H
 from .test_r50_status_emitter import MAP, boundary, AUD
 from .test_r38_composition import _g
+from .test_r24_core import adm, facts
+from stage_a.core.tracker_core import TrackerCore
+from stage_a.storage.authority_class import SIMULATION
 EM = lambda: dict(boundary_evidence=boundary(), context_known=True, audit_fields=AUD)
 FA, FB = bytes(range(16, 32)), bytes(range(48, 64))
 def code(f, *a, **k):
     try: f(*a, **k)
     except Refusal as e: return e.code
 class Assembly(unittest.TestCase):
-    def build(self, declare_base=True):
-        rig = Rig(); c = core(); out = {}
+    def build(self, declare_base=True, base_raw=False):
+        rig = Rig(); c = core(); out = {}; raw = None
+        if base_raw: adm(c, bar_identity="raw"); raw = c.obs_key(facts(bar_identity="raw"))                          # a persisted RAW observation the BASE derives from (recorded closure)
         for tag, cand, fid, rid, att, win, F in (("A", "cand-1", "mom3", "REQ-1", "ATT-1", 3, FA), ("B", "cand-2", "base7", "REQ-2", "ATT-2", 5, FB)):
             oid = OA.order_id_for(cand); pkg = package(momentum_manifest(feature_id=fid, window=win), order_id=oid, request_id=rid, attempt_id=att, package_id="PKG-" + rid); a = admit(pkg, accepted_fit_generations=rig.fits, conformance=SIM_CONF)
             issue(rig.claims, rec(CANDIDATE_IDENTITY=cand), subject_key=a.subject_key); abs_(rig.claims, oid, br(CANDIDATE_IDENTITY=cand)); fk = a.feature_key
             sj = ObjectStoreJournal(rig.store, "SIMPUB-%s-%s" % (fk.scope.instrument, tag), "w"); sj.acquire_epoch(); path = SP.SimulationPublicationPath(rig.store, rig.journals.journal(fk.namespace()), sj, SPEC)
-            co = CO.Composition(pipeline=rig.pipe, journals=rig.journals, store=rig.store, core=c, path=path, gateway_factory=lambda proj, c=c: _g(proj, c), upstream={fk.key(): ("UP",)} if tag == "A" else {})
+            co = CO.Composition(pipeline=rig.pipe, journals=rig.journals, store=rig.store, core=c, path=path, gateway_factory=lambda proj, c=c: _g(proj, c), upstream={fk.key(): ("UP",)} if tag == "A" else ({fk.key(): (raw,)} if raw else {}))
             si = dict(bindings={"close": {"ref": "SRC/close", "hash": H(SER)}}, fetch=lambda ref: SER, series_hash=H)
             ver(c, "UP", version="1", at=9, age=50) if tag == "A" else None
             r = co.accept_and_publish(pkg, supplied(feature_id=F), None, sequence=1, now=10, max_age=50, stored_inputs=si, status_emitter=StatusEmitter(path, kind_to_token=MAP), emit=EM())
@@ -52,4 +56,20 @@ class Assembly(unittest.TestCase):
     def test_control_the_BASE_is_denied_when_its_own_ancestry_was_never_declared_so_the_positive_is_not_vacuous(self):
         c, o = self.build(declare_base=False); fkB, coB, rB, bB, eB = o["B"]
         self.assertEqual(code(coB.deliver, "fw-x", FI("FW", "M-B", "XAUUSD", "WX"), eB, I, I, 3, 20, rB, binding=bB, now=12, ref=R("hl"), resolved_at=11, tables=T), "NON_DELIVERY")
+class QuarantineRestorationRestart(unittest.TestCase):
+    """R53: quarantine -> denial at FW AND ML -> restoration (clear_reason, reactivate over a RECONSTRUCTABLE recorded closure) -> earlier health does NOT survive -> maintenance trigger re-records L2 -> delivery returns; a restart (new TrackerCore over the SAME journal) reproduces the blocked state. Same objects as the assembly above."""
+    def test_cycle(self):
+        c, o = Assembly("test_control_the_BASE_is_denied_when_its_own_ancestry_was_never_declared_so_the_positive_is_not_vacuous").build(base_raw=True); fkB, coB, rB, bB, eB = o["B"]; k = fkB.key(); raw = list(c._replay()["ups"][k])[0]; c.declare_ancestry_complete(raw, "src-raw")        # the raw root declares its own (supplied) ancestry
+        kw = dict(binding=bB, now=12, ref=R("hl"), resolved_at=11, tables=T)
+        fw = lambda rid, w, now=12: coB.deliver(rid, FI("FW", "M-" + rid, "XAUUSD", w), eB, I, I, 3, 20, rB, **dict(kw, now=now))
+        ml = lambda rid, w, now=12: coB.deliver_ml(rid, FI("ML", "D-" + rid, "XAUUSD", w), eB, I, I, 3, 20, rB, row_id="r-" + rid, generation_ref=R("gen"), vintage_mode="ORIGINAL_AS_OBSERVED", omissions=NONE_, exclusion_reason=lambda x: ("ENUM", "REASON", "QUARANTINED"), **dict(kw, now=now))
+        self.assertIsInstance(fw("f0", "W0"), G.Binding); self.assertTrue(ml("m0", "W0").included)                                                          # healthy baseline
+        c.quarantine(k, "R"); self.assertEqual(code(fw, "f1", "W1"), "NON_DELIVERY"); self.assertFalse(ml("m1", "W1").included)                              # QUARANTINED: FW and ML new windows denied
+        self.assertEqual(code(fw, "f0", "W0"), None)                                                                                                       # an already-final window outcome is immutable (not retroactively rewritten)
+        c2 = TrackerCore(c._j, simulation=True); self.assertTrue(c2._blocked(c2._replay(), k))                                                                # RESTART over the same journal: still blocked
+        c.clear_reason(k, "R", "cert", "maker"); self.assertEqual(code(fw, "f2", "W2"), "NON_DELIVERY")                                                      # reason cleared but not reactivated: still denied
+        c.reactivate(k); self.assertEqual(c.recording_health(k, fkB.feature_version, 12).state, "UNKNOWN"); self.assertEqual(code(fw, "f3", "W3"), "NON_DELIVERY")   # earlier evidence does not survive reactivation
+        coB.register_stored_maintenance(rB); o2 = coB.run_maintenance([(k, "QUARANTINE_CLEARED")], now=13, max_age=50, max_items=4); self.assertEqual([x[2] for x in o2], ["VERIFIED"])
+        kw["resolved_at"] = 13; self.assertIsInstance(fw("f4", "W4", 14), G.Binding); self.assertTrue(ml("m4", "W4", 14).included)                          # restored through the trigger-driven re-verification: FW and ML deliver again
+        c3 = TrackerCore(c._j, simulation=True); self.assertFalse(c3._blocked(c3._replay(), k))                                                                # restart after restoration: not blocked
 if __name__ == "__main__": unittest.main()
