@@ -85,9 +85,14 @@ class Augmented(unittest.TestCase):
         forged = dataclasses.replace(aug.gateway_rebind, request_id="NOT-ISSUED"); a3 = R.AugmentedInput(ref, ref, ref, ref, forged, ref, ref, ref); self.assertEqual(code(desk.rebind, g["ml"], a3, Q, return_id="ret1"), "BINDING_NOT_FROM_GATEWAY")
         self.assertIsNone(desk.result_for("ml"))
         hidden = {"fw": M("fw", "FW", (Q,)), "ml": M("ml", "ML", (b"a",), derived_from="fw")}; d4 = AugmentedDesk(gw, hidden, desk._od); d4.record_fw_return(ret); self.assertEqual(code(d4.rebind, hidden["ml"], aug, Q, return_id="ret1"), "HIDDEN_QUANT_ANCESTOR")
-    def test_the_fw_returns_own_binding_is_not_an_ml_rebind(self):
-        gw, g, desk, ret, aug, ml = self.rig(fw_req="same-req", ml_req="same-req"); ref = B.R("lin"); desk.record_fw_return(ret)                                           # consumer-local request ids: FW and ML windows may share one id
-        self.assertEqual(code(desk.rebind, g["ml"], aug, Q, return_id="ret1"), "AUGMENTED_REBIND_IS_THE_FW_BINDING"); self.assertIsNone(desk.result_for("ml"))
+    def test_distinct_fw_and_ml_window_bindings_may_share_one_consumer_local_request_string_and_a_reused_FW_binding_is_refused(self):
+        gw, g, desk, ret, aug, ml = self.rig(fw_req="fw-r1", ml_req="fw-r1"); desk.record_fw_return(ret)                                                             # consumer-local request ids may be equal strings
+        self.assertIsNot(gw.outcome("fw-r1", "FW"), gw.outcome("fw-r1", "ML")); self.assertIs(gw.outcome("fw-r1", "ML"), aug.gateway_rebind)
+        r = desk.rebind(g["ml"], aug, Q, return_id="ret1"); self.assertEqual((r.verified, r.association, r.rebind_request_id), (True, "HELD", "fw-r1"))          # positive: distinct issued objects, same string
+        fwb = gw.outcome("fw-r1", "FW"); ref = B.R("lin"); reused = R.AugmentedInput(ref, ref, ref, ref, fwb, ref, ref, ref); d2 = AugmentedDesk(gw, g, desk._od); d2.record_fw_return(ret)
+        self.assertEqual(code(d2.rebind, g["ml"], reused, Q, return_id="ret1"), "AUGMENTED_REBIND_IS_THE_FW_BINDING"); self.assertIsNone(d2.result_for("ml"))                 # negative: the actual FW Binding object
+        gw3, g3, d3, ret3, aug3, ml3 = self.rig(); d3.record_fw_return(ret3); self.assertEqual(d3.rebind(g3["ml"], aug3, Q, return_id="ret1").association, "HELD")      # unchanged different-request control
+        self.assertEqual(desk.associate("ml", TypedH1(mlh1(req="fw-r1")), ml).association, "BOUND")                                                                   # CBID MB1, manifest id MM1 and the FW M1 stay distinct
     def test_a_different_rebind_for_the_same_ml_manifest_is_refused(self):
         gw, g, desk, ret, aug, ml = self.rig(); desk.record_fw_return(ret); desk.rebind(g["ml"], aug, Q, return_id="ret1")
         ref = B.R("lin"); b2 = gw.resolve("second", B._entry(), I, I, 3, 10, B._health()); self.assertIsNot(b2, aug.gateway_rebind); a2 = R.AugmentedInput(ref, ref, ref, ref, b2, ref, ref, ref)

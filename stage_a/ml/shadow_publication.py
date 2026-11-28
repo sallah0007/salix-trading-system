@@ -57,13 +57,13 @@ class ShadowPublisher:
         if cur == "ABSENT": raise Refusal("%s/%s" % slot, code="SHADOW_TRIGGER_NOT_EXPECTED_HELD_UNBOUND")
         if cur is not None: return cur[1]                                                                 # terminal exists: a retry calls neither model nor sink
         eid = self._eid(logical_key, trigger_id)
-        if self._fenced(logical_key, trigger_id): self._l.record(logical_key, trigger_id, eid, "LIFECYCLE_FENCED"); return "LIFECYCLE_FENCED"
-        st, got = self._readback(eid)                                                                      # once-only: an already-committed event (earlier unknown outcome, restart) is recorded, never re-committed
-        if st == "UNREADABLE": raise Refusal(eid, code="SHADOW_PUBLICATION_OUTCOME_UNKNOWN")
+        st, got = self._readback(eid)                                                                      # R52: HISTORICAL publication is resolved BEFORE the current fence is consulted: a committed event (earlier unknown outcome, restart, fresh ledger) is recorded PUBLISHED and never re-decided from today's fence (the fence is current lifecycle state, annotated separately, not a rewrite of what was durably published, p323/324/327)
+        if st == "UNREADABLE": raise Refusal(eid, code="SHADOW_PUBLICATION_OUTCOME_UNKNOWN")           # an unresolved receipt is neither "published" nor "never published": it cannot be FENCED either
         if got is not None:
             pend = self._pending.get(slot)
             if pend is not None and pend[1] != _h(got): raise Refusal(eid, code="SHADOW_SINK_DIFFERENT_PAYLOAD")
             self._l.check_record(logical_key, trigger_id, eid, "PUBLISHED"); self._l.record(logical_key, trigger_id, eid, "PUBLISHED"); self._pending.pop(slot, None); return "PUBLISHED"
+        if self._fenced(logical_key, trigger_id): self._l.record(logical_key, trigger_id, eid, "LIFECYCLE_FENCED"); return "LIFECYCLE_FENCED"          # genuine fence BEFORE any first commit: no model, no sink write
         verdict = self._model(slot)
         if not (isinstance(verdict, tuple) and len(verdict) == 2 and verdict[0] in ("PUBLISH", "ABSTAIN")): raise Refusal("model", code="SHADOW_MODEL_VERDICT_MALFORMED")
         if verdict[0] == "ABSTAIN":

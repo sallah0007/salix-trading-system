@@ -10,7 +10,7 @@ M = [(H, "check_h1(d, decision_window)", "pass"),
      (A, 'if "LINEAGE" not in ret.classes: raise', "if False: raise"), (A, 'if fw is None or fw.kind != "FW": raise', "if False: raise"),
      (A, "if old != ret: raise", "if False: raise"), (A, "if self._lin.get(ret.lineage_ref, ret.return_id) != ret.return_id: raise", "if False: raise"),
      (A, 'if getattr(m, "derived_from", None) != ret.fw_manifest_id: raise', "if False: raise"), (A, "or aug.fw_lineage_ref != ret.lineage_ref: raise", "or False: raise"),
-     (A, "if aug.gateway_rebind.request_id == ret.fw_request_id: raise", "if False: raise"), (A, "if dataclasses.replace(old, association=\"HELD\", consumer_binding_id=None, manifest_or_dataset_binding_id=None) != out: raise", "if False: raise"),
+     (A, "if aug.gateway_rebind is self._g.outcome(ret.fw_request_id, \"FW\"): raise", "if False: raise"), (A, "if dataclasses.replace(old, association=\"HELD\", consumer_binding_id=None, manifest_or_dataset_binding_id=None) != out: raise", "if False: raise"),
      (A, "check_ml_input_origin(fw_derived_predictive, aug)", "pass"), (A, "gateway=self._g))", "gateway=None))"),
      # R51
      (A, 'if self._od is None: raise', "if False: raise"), (A, "if not isinstance(self._od.return_for(ret.fw_request_id), OutcomeReturn): raise", "if False: raise"),
@@ -19,6 +19,7 @@ M = [(H, "check_h1(d, decision_window)", "pass"),
      (A, 'getattr(identity, "consumer_id", None) != "ML" or fs.identity_of', 'False or fs.identity_of'), (A, "rec = h1.correlation(identity)", "rec = None"),
      (A, "!= (rec.consumer_binding_id, rec.manifest_or_dataset_binding_id): raise", "!= (cur.consumer_binding_id, cur.manifest_or_dataset_binding_id): raise"),
      (A, "            return old  ", "            return out  ")]
+EQUIV = ('False or fs.identity_of',)
 bad = 0
 for i, (f, a, b) in enumerate(M):
     p = ROOT / f; o = p.read_text()
@@ -26,5 +27,6 @@ for i, (f, a, b) in enumerate(M):
     p.write_text(o.replace(a, b, 1))
     try: r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-x", T], cwd=ROOT, capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
     finally: p.write_text(o)
-    print("mutant %2d %s" % (i, "KILLED" if r.returncode else "SURVIVED")); bad += (r.returncode == 0)
+    eq = b in EQUIV
+    print("mutant %2d %s" % (i, "KILLED" if r.returncode else ("EQUIVALENT (reasoned: final-store identity_of(ML, req) == identity already implies identity.consumer_id == ML)" if eq else "SURVIVED"))); bad += (r.returncode == 0 and not eq)
 sys.exit(1 if bad else 0)
