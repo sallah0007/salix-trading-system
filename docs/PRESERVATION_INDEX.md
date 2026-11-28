@@ -1,6 +1,34 @@
 # SALIX Trading Tracker — Saved Code and Preservation Index
 
-## Verified GitHub checkpoint — 28 November 2026, Sydney
+## Current preservation checkpoint — 29 November 2026, Sydney
+
+Latest integrated code: main `c0988a4da74d92f44ad63f42681b12b61b462051`, through [PR #167](https://github.com/sallah0007/salix-trading-system/pull/167). Full Tracker completion/review and Owner sign-off remain pending. Claude follow-ups are paused for the weekly allowance reset; the existing scope and unfinished checklist are retained.
+
+### Verified remote copies
+
+GitHub API returned 158 remote heads on two complete pages (100 + 58). The following full remote SHAs match the latest five branch tips checked in Claude's workspace:
+
+| Remote branch | Exact saved SHA |
+| --- | --- |
+| `r53-inventory-checklist` | `3246d032d518643efea179109df1b6d3c29eeaf3` |
+| `r53-row-l2-maintenance` | `f46dcb5fd6cca37095fd562795e34e276edd9e2b` |
+| `r53-row-route-l2` | `152cfb7ae61034280bd8de2a490218071b8fb894` |
+| `r53-row-route-lifecycle` | `86505166a632881bb5f3576ee2cc90186fb1188e` |
+| `r53-view-freeze-and-row-bridge` | `4ee4124cc76b8bfd3aa8d746e96ffef0929d333e` |
+
+### Workspace evidence and limits
+
+The Manager read the actual post-PR167 command outputs in Trading Bot 7: `git status --short` produced no entries, stash count 0, untracked count 0. The final native ancestry loop compared every local branch tip against all SHAs returned by `git ls-remote --heads origin`; it printed no unreachable branch. Five earlier apparent misses were stale remote-tracking refs: the direct local/remote SHA comparisons were SAME. The remote head count and five full remote SHAs above were separately fetched by the Manager through GitHub.
+
+This establishes recoverability of the observed repository working tree and local branch histories at that checkpoint. It does not certify arbitrary ignored/scratch files, future edits, test semantics, provider qualification or completion. Private governing-source exports remain governed-source material; this index does not authorize copying them into the repository. No branches, stashes or history were deleted.
+
+### Resume and review
+
+Use [the persistent checklist](closeout/TRK-STAGE-A-CHECKLIST.md) first. Remaining work includes the ML view-path remainder, dependency BEFORE/AFTER checks, per-clause review, all 100 A07 comparisons, remaining Build Plan reads, and one current combined closeout. PR167 engineering claims remain author-run/CI evidence pending the Manager's independent review; preservation is not acceptance. The combined closeout's old §28.11 narrative is not proof of review of every later change.
+
+The older checkpoint below and the R08–R24 record are retained as dated history.
+
+## Historical verified GitHub checkpoint — 28 November 2026, Sydney
 
 This is a preservation check, not implementation certification or acceptance. Code reviewed for this checkpoint is `b8017d408c671e96a28fbb1eb25477cfef70d6ee`, through merged PR #83. Documentation-only heading/navigation updates follow that code checkpoint.
 
