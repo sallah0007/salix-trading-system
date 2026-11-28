@@ -135,3 +135,30 @@ class QueryBoundReceipt(unittest.TestCase):
         fr = [{"generation": 2, "ref_hash": "d" * 64}]; p = package(momentum_manifest(fit_refs=fr))
         a = admit(p, accepted_fit_generations={2: "d" * 64}, conformance=SIM_CONF, ancestry_resolver=lambda *x: binding())      # currency is current for THIS query; the cached receipt echoes hash b*64
         self.assertFalse([f for f in a.failed if f[0] == "FIT_ANCESTRY"]); self.assertEqual(a.ancestry, ("FAIL", "ANCESTRY_BINDING_QUERY_MISMATCH"))
+
+
+class ResolverCannotMutateTheVerifiedQuery(unittest.TestCase):
+    """R52 (Manager PR113 finding): the public resolver port gets DETACHED inputs; callback effects reach neither the parsed manifest, its verified hashes, the package, nor fit currency."""
+    def setUp(self):
+        self.p = package(momentum_manifest(fit_refs=[dict(r) for r in FR]))
+        self.before = (dataclasses.replace(self.p) , )
+    def _mutating(self, echo=True):
+        def r(fk, mid, gid, fr):
+            fr[0]["ref_hash"] = "c" * 64                                   # mutate the shared nested dict the port was handed
+            return binding(query_receipt=query_receipt_for(fk, mid, gid, fr, "C1") if echo else None)
+        return r
+    def test_mutating_resolver_echoing_its_own_mutation_is_refused_and_nothing_changes(self):
+        from stage_a.composer.expression.hashing import manifest_hash
+        a = admit(self.p, accepted_fit_generations=FITS, conformance=SIM_CONF, ancestry_resolver=self._mutating())
+        self.assertEqual(a.ancestry, ("FAIL", "ANCESTRY_BINDING_QUERY_MISMATCH"))
+        self.assertEqual(a.manifest.data["fit_refs"][0]["ref_hash"], "b" * 64)          # parsed manifest unchanged
+        self.assertEqual(manifest_hash(a.manifest), a.hashes[0])                         # verified hash still matches
+        self.assertEqual(self.p.manifest.data["fit_refs"][0]["ref_hash"], "b" * 64) if hasattr(self.p.manifest, "data") else None
+        self.assertEqual(FITS, {1: "a" * 64, 2: "b" * 64})                               # accepted fit currency untouched
+        self.assertTrue(a.failed)
+    def test_pipeline_does_not_accept_on_the_mutating_resolver(self):
+        rig, o = run(self._mutating()); self.assertFalse(o.accepted_ok); self.assertEqual(anc(o), "FAIL")
+    def test_honest_resolver_control_still_passes_with_unchanged_hashes(self):
+        from stage_a.composer.expression.hashing import manifest_hash
+        a = admit(self.p, accepted_fit_generations=FITS, conformance=SIM_CONF, ancestry_resolver=genuine_resolver)
+        self.assertEqual(a.ancestry, ("PASS_CANDIDATE", "")); self.assertEqual(manifest_hash(a.manifest), a.hashes[0])
