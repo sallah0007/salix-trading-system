@@ -25,7 +25,7 @@ class L2Applicability:
         if not (isinstance(self.scope_ref, str) and self.scope_ref and isinstance(self.contract_ref, str) and self.contract_ref and type(self.required) is bool): raise Refusal("l2_applicability", code="COMPOSITION_L2_APPLICABILITY_INVALID")
 @dataclass
 class CompositionResult:
-    status: str; steps: list = field(default_factory=list); outcome: object = None; feature_key: object = None; reverification: object = None; stored_values: Optional[dict] = None; published_rows: int = 0; projection: object = None; l2_scope: Optional[dict] = None
+    status: str; steps: list = field(default_factory=list); outcome: object = None; feature_key: object = None; reverification: object = None; stored_values: Optional[dict] = None; published_rows: int = 0; projection: object = None; l2_scope: Optional[dict] = None; status_event: Optional[dict] = None; audit: Optional[dict] = None
     def log(self, step, state, detail=""): self.steps.append((step, state, detail)); return self
 class Composition:
     def __init__(self, *, pipeline, journals, store, core, path, gateway_factory, upstream=None, l2_scope_resolver=None):
@@ -42,7 +42,7 @@ class Composition:
         if rep.creation_request_id != getattr(pkg, "request_id", None): return "CREATION_REQUEST_DIFFERS_FROM_PACKAGE"
         if type(rep.checked_at) is not int or type(now) is not int or type(max_age) is not int or rep.checked_at > now or now - rep.checked_at > max_age: return "NOT_CURRENT_OR_UNTIMED"
         return None
-    def accept_and_publish(self, pkg, supplied, status_token, *, sequence, now, max_age, stored_inputs=None, l2_applicability=None, research_lineage=None, lineage_expect=None, lifecycle=None, lifecycle_transition=None, registry_gate=None, accept_fn=None):
+    def accept_and_publish(self, pkg, supplied, status_token, *, sequence, now, max_age, stored_inputs=None, l2_applicability=None, research_lineage=None, lineage_expect=None, lifecycle=None, lifecycle_transition=None, registry_gate=None, accept_fn=None, status_emitter=None, emit=None):
         if l2_applicability is not None and not isinstance(l2_applicability, L2Applicability): raise Refusal("l2_applicability", code="COMPOSITION_L2_APPLICABILITY_INVALID")
         r = CompositionResult("STARTED")
         if research_lineage is not None:                                     # R40: the attempt checked is the one the PACKAGE actually records (never a caller-chosen known id); family/battery/input lineage must match a caller-supplied expectation (no universal family vocabulary is defined here)
@@ -85,7 +85,13 @@ class Composition:
             if why is not None: r.status = "HELD_REGISTRY_REPORT_SCOPE_" + why; return r.log("registry_integrity", "SCOPE_REFUSED", why)
             r.log("registry_integrity", rep.overall, ",".join("%s:%s" % (f.check, f.state) for f in rep.findings))
             if rep.overall != "CHECKS_PASS_FACTS_ONLY": r.status = "HELD_REGISTRY_INTEGRITY_" + rep.overall; return r
-        self._path.commit(fk, supplied, status_token, sequence=sequence); r.projection = self._path.status_projection(); self.gateway = self._gf(r.projection); r.published_rows = self._path.feed(self.gateway); r.log("committed_status_and_rows", "OK", "rows=%d" % r.published_rows)
+        if status_emitter is not None:                                       # R50: the OWNING status emitter replaces the bare path.commit: committed lifecycle record -> A1 status event + s25 audit evidence -> ONE SIM_STATUS_FACT append. The mapping/boundary evidence/audit fields are SUPPLIED; unbound => HELD and nothing is published
+            if getattr(status_emitter, "_path", None) is not self._path or status_token is not None or not isinstance(emit, dict): r.status = "HELD_STATUS_EMIT_INPUT"; return r.log("status_emit", "HELD", "emitter must wrap THIS path, status_token must be None (the mapping is the emitter's), emit={boundary_evidence, context_known[, audit_fields]} must be supplied")
+            try: em = status_emitter.emit(fk, supplied, sequence=sequence, **emit)
+            except Refusal as e: r.status = "HELD_STATUS_EMIT_" + e.code; return r.log("status_emit", "HELD" if e.code.endswith("_HELD") or e.code.startswith("STATUS_EVENT_FIELD") else "REFUSED", e.code)
+            r.status_event, r.audit = em["status_event"], em["audit"]; r.log("status_emit", "REPLAY" if em["replay"] else "EMITTED", "audit_complete=%s" % em["audit"]["complete"])
+        else: self._path.commit(fk, supplied, status_token, sequence=sequence)
+        r.projection = self._path.status_projection(); self.gateway = self._gf(r.projection); r.published_rows = self._path.feed(self.gateway); r.log("committed_status_and_rows", "OK", "rows=%d" % r.published_rows)
         if lifecycle_transition is not None or lifecycle is not None:        # R39: the ACTUAL LifecycleFramework.apply call, only when BOTH a framework and an explicit transition are supplied; an unbound policy is HELD, never a guessed state
             if lifecycle is None or lifecycle_transition is None: r.log("lifecycle", "HELD", "COMPOSITION_LIFECYCLE_INPUT_INCOMPLETE")
             else:
