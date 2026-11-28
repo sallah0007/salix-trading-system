@@ -114,6 +114,19 @@ class Composition:
     def run_maintenance(self, events=(), *, now, max_age, max_items, subjects=None):
         """One bounded all-segment L2 pass over the registered subjects through the existing `run_stored_value_pass` (Core due-ness UNION supplied (subject, trigger) events; no daemon/cadence here). Results are recorded in the SAME Core the Gateway reads health from, so a failing/unavailable segment makes later delivery NON_DELIVERY."""
         return SV.run_stored_value_pass(self._core, dict(self._sv), sorted(self._sv) if subjects is None else list(subjects), events, now=now, max_age=max_age, max_items=max_items)
+    def publish_accepted_row(self, result, row_publication, row_hash, token, **supplied):
+        """R53 per-ROW publication through THIS Composition: `result` must be the very object this Composition published/recovered for the subject, `row_publication` must be bound to THIS path, and the row must already be ACCEPTED (RowPublication refuses otherwise). One SIM_STATUS_FACT is
+        derived from the accepted row (never from the caller); the projection must remain authoritative, then the Gateway is rebuilt from the committed side journal (its final store is durable) and the SAME result object is refreshed so delivery keeps its identity guard. SIMULATION; no per-row A1 event; clears nothing."""
+        fk = getattr(result, "feature_key", None)
+        if fk is None or self._published.get(fk.key()) is not result: raise Refusal(getattr(fk, "key", lambda: None)(), code="COMPOSITION_RESULT_NOT_THIS_PUBLICATION")
+        if getattr(row_publication, "_path", None) is not self._path: raise Refusal("row_publication", code="COMPOSITION_ROW_PUBLICATION_FOREIGN_PATH")
+        rec = row_publication.publish(fk, row_hash, token, **supplied)
+        proj = self._path.status_projection()
+        if not proj.authoritative: raise Refusal(fk.key(), code="COMPOSITION_ROW_PROJECTION_NOT_AUTHORITATIVE")
+        gw = self._gf(proj); fs = getattr(gw, "final_store", None)
+        if fs is not None and hasattr(fs, "recover"): fs.recover()
+        self.gateway = gw; result.projection = proj; result.published_rows = self._path.feed(gw); result.log("row_published", "OK", "row=%s rows=%d" % (row_hash[:12], result.published_rows)); return rec
+
     def recover_publication(self, feature_key, *, stored_inputs=None):
         """R54 cold recovery of THIS Composition's owning connection after a restart: nothing is taken from memory. The feature must (a) still have its committed CANONICAL_ACCEPTED manifest in the owning feature journal (`read_accepted_manifest`), and (b) hold at least one committed status record in the (rebuilt) publication path whose source guard still matches the owning HEAD; a NEW Gateway is built from the path's committed projection, its durable final store is recovered (stored consumer-local outcomes and identities are authoritative, never re-evaluated), and the committed rows are fed. The result is labelled RECOVERED_PUBLISHED_SIMULATION; it does NOT restore the L2/stored-value basis unless `stored_inputs` is supplied AND the all-segment verification finds stored segments (a basis is never recreated from a caller label). Health/ancestry live in the Core journal (a new Core over the same journal)."""
         key = feature_key.key(); j = self._js.journal(feature_key.namespace())

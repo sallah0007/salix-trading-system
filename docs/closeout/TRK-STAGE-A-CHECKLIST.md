@@ -19,7 +19,7 @@ Main at last update: a79158e (#151 invariant stage, #152 row publication, #153 r
 | 13 | Refreshed fetch + untracked/stash/local-only inventory (no cleanup) | PENDING | last: 135 tracking refs, 0 stashes, 0 untracked, none unreachable |
 
 <<<<<<< HEAD
-Cold restart of the row route: tested (this PR). Next resume point: item 4 remainder (Composition per-row publish method, separated-worker rows), then item 6 (ML Registry §14), then 6-13 in order. Preserve all branches/WIP; no cleanup.
+Cold restart of the row route: tested (merged). Composition.publish_accepted_row first-class (this PR; the `authoritative` re-check is a shadowed/equivalent guard: commit stamps the current head). Next resume point: item 4 remainder (separated-worker rows), then item 6 (ML Registry §14), then 6-13 in order. Preserve all branches/WIP; no cleanup.
 =======
 Next resume point: item 4 remainder (Composition per-row publish method, cold restart of row route, separated-worker rows), then 6-13 in order. Preserve all branches/WIP; no cleanup.
 >>>>>>> origin/main
