@@ -39,3 +39,14 @@ AFTER recheck: no code changed this round on this chain; classification unchange
 3. OBSERVED limit: the rebuilt Gateway's in-memory outcome is not re-hydrated from the durable store (only identities are); a desk request before the window retry is refused. This is fail-closed and consistent with the idempotent-retry design; reading stored outcomes at request time is a possible refinement, not a defect claim.
 
 4. Section 27/28 comparison (this pass): see `TRK-STAGE-A-R54-S27-S28-COMPARISON.md` (33 groups, 23 report entries, three generic gaps fixed).
+
+## 6. AFTER recheck (R52 pass; rechecked against current main, only the links that changed)
+| Chain | Change since BEFORE | AFTER state |
+|---|---|---|
+| Composer s27/s28 + admission | ancestry now closure-bound (explicit resolver; UNKNOWN when unbound; fit-ref currency separate) | WIRED as candidate; ADMITTED resolver instances ZERO; report ancestry PASS only for no fit_refs or a derived candidate closure |
+| H1/H2 | UNKNOWN exemption withdrawn; check_h2 added | H1 basis required unless NOT_EVALUATED; H2 always; slash items held |
+| H3 / FW ten fields | none to H3; `binding_declaration_review()` added | statuses equal the A04 decode; three fields not closable by any binding |
+| ML writer/finalizer / reverse H1 / six joins / augmented | none | unchanged: generic facade, grants unbound, never qualified |
+| E05 | fit-generation projection carries instrument/timeframe (E09-H1) | sqlite reference adapter equals the source key block; Postgres proof absent |
+| News Hub daily record | omissions item and applicability pair enforced | EVENT_RECORD title/slash items held |
+Each AFTER row is a recheck of the function bodies named in sections 1-4 plus the tests merged this pass; no row is an acceptance.

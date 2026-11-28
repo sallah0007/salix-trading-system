@@ -8,7 +8,7 @@ def ev(i="E1", seq=1, rev_at=10, h="h1", **o):
     r.update(o); return r
 def daily(**o):
     r = dict(DAILY_EVENT_STATE_ID="D", GOVERNED_SCOPE="s", GOVERNED_DAY="d", ISSUED_AT=5, CONTEXT_REQUIREMENT_CLASS="REQUIRED", SOURCE_AVAILABILITY_STATE="AVAILABLE",
-             COVERAGE_STATE="COMPLETE", EVENT_PRESENCE_STATE="EVENTS_PRESENT", COVERAGE_BASIS="basis", SOURCE_SET="ss", RECORD_HASH="rh"); r.update(o); return r
+             COVERAGE_STATE="COMPLETE", EVENT_PRESENCE_STATE="EVENTS_PRESENT", COVERAGE_BASIS="basis", SOURCE_SET="ss", OMISSIONS=[], RECORD_HASH="rh"); r.update(o); return r
 def code(fn, *a, **k):
     try: fn(*a, **k)
     except Refusal as e: return e.code
@@ -73,3 +73,15 @@ class Resolver(unittest.TestCase):
         self.assertEqual(N.resolve_context("REQUIRED", daily(), evs, 20, cutoff_kind="SNAPSHOT_FENCE"), N.resolve_context("REQUIRED", daily(), evs[::-1], 20, cutoff_kind="SNAPSHOT_FENCE"))
     def test_invalid_event_record_refused(self): self.assertEqual(code(N.resolve_context, "REQUIRED", daily(), [ev(KNOWABILITY_MODE="Z")], 20, cutoff_kind="SNAPSHOT_FENCE"), "BAD_KNOWABILITY_MODE")
 if __name__ == "__main__": unittest.main()
+
+class R52DailyRequiredItems(unittest.TestCase):
+    """News Hub V2 s9.2A re-read (R52): the OMISSIONS / DELAYS / REASON_CODES item is required (slash convention: at least one present; an empty list is a stated empty set), and the applicability-map pair is both-or-neither."""
+    def test_omissions_delays_reason_codes_item_is_required_by_any_one(self):
+        from stage_a.context.news_hub_v2 import check_daily_record
+        d = daily(); del d["OMISSIONS"]; self.assertEqual(code(check_daily_record, d), "DAILY_RECORD_FIELD_MISSING")
+        for k in ("OMISSIONS", "DELAYS", "REASON_CODES"):
+            d = daily(); del d["OMISSIONS"]; d[k] = []; self.assertIsNone(check_daily_record(d), k)
+    def test_applicability_map_pair_is_both_or_neither(self):
+        from stage_a.context.news_hub_v2 import check_daily_record
+        self.assertIsNone(check_daily_record(daily())); self.assertIsNone(check_daily_record(daily(APPLICABILITY_MAP_ID="m", APPLICABILITY_MAP_VERSION="1")))
+        for k in ("APPLICABILITY_MAP_ID", "APPLICABILITY_MAP_VERSION"): self.assertEqual(code(check_daily_record, daily(**{k: "x"})), "DAILY_RECORD_CONDITIONAL_GROUP_INCOMPLETE", k)
