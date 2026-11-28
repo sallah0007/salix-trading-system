@@ -53,7 +53,7 @@ class FinalResolutionSource(unittest.TestCase):
 class SequenceSources(unittest.TestCase):
     def test_fit_generation_mapping_projects_and_a_changed_generation_hash_is_drift(self):
         fits = {1: "a" * 64, 2: "b" * 64}
-        mk_src = lambda: S.sequence_source("stagea_fit_generation_index", lambda: sorted(fits.items()), lambda kv: str(kv[0]), lambda kv: kv[1], lambda kv: dict(fit_generation_ref="fit:%d" % kv[0], feature_id="F", feature_version="1", available_asof=0), ref_prefix="fit:")
+        mk_src = lambda: S.sequence_source("stagea_fit_generation_index", lambda: sorted(fits.items()), lambda kv: str(kv[0]), lambda kv: kv[1], lambda kv: dict(fit_generation_ref="fit:%d" % kv[0], feature_id="F", feature_version="1", instrument_id="XAUUSD", timeframe="H4", available_asof=0), ref_prefix="fit:")
         res = S.sequence_resolver(lambda: sorted(fits.items()), lambda kv: str(kv[0]), lambda kv: kv[1], ref_prefix="fit:"); ix = E05Index(); ix.rebuild({"fit": mk_src()})
         self.assertIsNotNone(ix.lookup("stagea_fit_generation_index", {"fit_generation_ref": "fit:1"}, res)); fits[1] = "c" * 64
         with self.assertRaises(IntegrityFailure): ix.lookup("stagea_fit_generation_index", {"fit_generation_ref": "fit:1"}, res)
@@ -66,7 +66,7 @@ class SequenceSources(unittest.TestCase):
         res = S.sequence_resolver(sink.evidence, ident, hsh, ref_prefix="health:"); self.assertIsNotNone(ix.lookup("stagea_health_index", {"health_evidence_id": "1/m"}, res))
         sink.emit(FeatureHealthEvidence("1", b"i" * 16, b"t" * 16, materialization_version="m")); self.assertEqual(code(src[0]), "E05_SOURCE_DUPLICATE_IDENT")
     def test_an_empty_ident_refuses_and_a_changed_owner_hash_moves_the_head_under_the_same_ident(self):
-        h = ["a" * 64]; mk = lambda i: S.sequence_source("stagea_fit_generation_index", lambda: [1], lambda o: i, lambda o: h[0], lambda o: dict(fit_generation_ref="f", feature_id="F", feature_version="1", available_asof=0), ref_prefix="fit:")
+        h = ["a" * 64]; mk = lambda i: S.sequence_source("stagea_fit_generation_index", lambda: [1], lambda o: i, lambda o: h[0], lambda o: dict(fit_generation_ref="f", feature_id="F", feature_version="1", instrument_id="XAUUSD", timeframe="H4", available_asof=0), ref_prefix="fit:")
         self.assertEqual(code(lambda: mk("")[0]()), "E05_SOURCE_IDENT_INVALID"); src = mk("1"); h0 = src[0](); h[0] = "b" * 64; self.assertNotEqual(src[0](), h0)
     def test_event_context_has_no_owning_store_and_is_held_not_fabricated(self):
         self.assertEqual(code(S.event_context_source), "E05_SOURCE_EVENT_CONTEXT_HELD_NO_ENCODING_INTERFACE")
