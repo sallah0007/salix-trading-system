@@ -689,3 +689,18 @@ D8 `DIRECT_TRACKER_FEATURE` stays fail-closed (selector unsupplied). Source rere
 
 ### 23.3 Evidence
 AUTHOR-RUN. `tests/trk_stage_a/mutation_sweep_r44.py` 13 mutants killed, 3 named equivalents (defence in depth). Full suite 1722 passed locally; CI checkout SHA: see PR.
+
+## 24. R45 current view (from origin/main 4fcc11ed3a826e79550ab4f84dba559224983508; branch `stage-a/tracker/repair-r45`; sections 12-23 are HISTORY where they differ; nothing here is a gate, acceptance or appointment; the full Tracker is NOT complete)
+### 24.1 Done (code + tests)
+- Expression operators: lt/le/gt/ge/eq_canonical (boolean TYPE, no numeric encoding invented) and lazy bounded `select`; schema type check; MAX_BRANCH_COUNT enforced; independent reference evaluator updated with a separate lazy-failure formulation. `tests/trk_stage_a/test_r45_select_compare.py`; `mutation_sweep_r45.py` 11 mutants killed, 0 survivors (one survivor found and killed by a new test; one test expectation of mine was wrong and was corrected).
+- ML shadow-live ledger `stage_a/ml/shadow_ledger.py` with tests; `mutation_sweep_r45_shadow.py` 6 killed, 1 named equivalent (duplicate re-write of an identical row).
+- Decision pack challenge `docs/proposals/R45_DECISION_PACK_CHALLENGE.md` withdraws the R44 D3 list-order rule, the R44 D13 envelope where Annex bytes exist, and the single-chain B11; states what was and was not opened.
+### 24.2 NOT done (named, not hidden)
+- Contract V0.38 H1/H3, BuildPlan 11-14/14A/27/29A + R7 overlays, V240 ZIP V01-V15 (connector >10 MB limit), V235/oracle qualifier adjudication (21 + 12 loss-listed), exact V03 readback proposal: NOT opened or NOT completed. All 100 UR remain; the four A07 obligations remain open.
+- NOT built: FIXED_DOT/vector/matrix (no shape typing in any source read); FW ten-field/H3/CBID and ML negative controls re-run with before/after checks on the separated path; required-unknown ancestry denial plus unrelated baseline delivery; snapshot carrier watermark/min-field closure; all-segment stored-value L2; quarantine/restoration end to end. These stay as held rows in the R43 register; the register was NOT regenerated for R45 (so it does not yet claim the new code).
+- Not enumerated in R45: native untracked/stash/local-only SHA recoverability (143 at R43). No branch deleted.
+### 24.3 Holds unchanged
+A02 Class B HOLD; A07/COVERAGE OPEN; A07/P12/N2 UNSATISFIED; QC34 ALERT(HOLD); A08 READY_TO_CODE NO; Stage A HOLD. A merge or passing test clears none.
+### 24.4 Evidence
+AUTHOR-RUN. Full suite run locally before PR; CI checkout SHA: see PR.
+
