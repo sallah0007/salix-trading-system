@@ -15,6 +15,12 @@ class Projection:
         self.subject_claim = {}
         self.request_claim = {}
         self.order_prov = {}
+        self.grants_revoked = {}      # grant_id -> seq
+        self.grant_roles = {}         # grant_id -> role (first revocation fixes the role)
+        self.attempts = {}            # build_id -> row
+        self.lineage_parent = {}      # new creation id -> parent creation id
+        self.reviews = {}             # (package_id, prior_report_hash) -> decision row
+        self.dispositions = {}        # package_id -> list of rows (append-only, last = current)
 
     def apply(self, rec):
         if rec.seq != self.seq + 1 or rec.prev_hash != self.hash:
@@ -50,6 +56,33 @@ class Projection:
             c["state"] = "CONSUMED" if rec.kind == O.CLAIM_CONSUMED else "RELEASED"
             if rec.kind == O.CLAIM_RELEASED:
                 self.subject_claim.pop(c["subject_key"], None)
+        elif rec.kind == O.CLAIM_ABANDONED:
+            c = self.claims.get(b["claim_id"])
+            if c is None or c["state"] != "BOUND":
+                raise ProjectionDrift("abandon of non-bound claim")
+            c["state"] = "ABANDONED"
+            self.subject_claim.pop(c["subject_key"], None)
+        elif rec.kind == O.GRANT_REVOKED:
+            if self.grant_roles.setdefault(b["grant_id"], b["role"]) != b["role"]:
+                raise ProjectionDrift("grant role conflict")
+            self.grants_revoked.setdefault(b["grant_id"], rec.seq)
+        elif rec.kind == O.ATTEMPT_ADMITTED:
+            if b["build_id"] in self.attempts:
+                raise ProjectionDrift("duplicate build id")
+            self.attempts[b["build_id"]] = dict(b, state="ADMITTED", seq=rec.seq)
+        elif rec.kind == O.ATTEMPT_REJECTED:
+            a = self.attempts.get(b["build_id"])
+            if a is None or a["state"] != "ADMITTED":
+                raise ProjectionDrift("reject of non-admitted attempt")
+            a["state"] = "REJECTED"
+        elif rec.kind == O.LINEAGE_REPLACED:
+            if b["new_creation_id"] in self.lineage_parent:
+                raise ProjectionDrift("creation id already linked")
+            self.lineage_parent[b["new_creation_id"]] = b["parent_creation_id"]
+        elif rec.kind == O.REVIEW_DECIDED:
+            self.reviews[(b["package_id"], b["prior_report_hash"])] = dict(b, seq=rec.seq)
+        elif rec.kind == O.REPORT_DISPOSITION:
+            self.dispositions.setdefault(b["package_id"], []).append(dict(b, seq=rec.seq))
         self.seq, self.hash = rec.seq, rec.record_hash
 
     def sync(self, journal):
@@ -59,7 +92,9 @@ class Projection:
     def state(self):
         return {"seq": self.seq, "hash": self.hash, "orders": self.orders, "revoked": self.revoked,
                 "claims": self.claims, "subject_claim": self.subject_claim,
-                "request_claim": self.request_claim, "order_prov": self.order_prov}
+                "request_claim": self.request_claim, "order_prov": self.order_prov,
+                "grants_revoked": self.grants_revoked, "grant_roles": self.grant_roles, "attempts": self.attempts, "lineage_parent": self.lineage_parent,
+                "reviews": self.reviews, "dispositions": self.dispositions}
 
     def verify_against(self, journal):
         fresh = Projection()
