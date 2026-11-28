@@ -1,5 +1,5 @@
 """FW ten-field descriptor crosswalk (documentary), from the finite mapping/dependency disposition (Drive 12h77ZuFRezmZr4_8Zrs1BDyYUtpnoMlI,
-61,967 B, text read this pass; its SHA-256 ea9e7949... is NOT recomputed here). It is documentary requirements/mapping, NOT a second FW/ML
+61,967 B; R52: raw bytes downloaded, SHA-256 ea9e7949397dd1e9ad001334425fdfeb96706d7eadca67bd043496d6ec91dfc0 RECOMPUTED = match; FW_crosswalk rows 10/10 compared field-by-field to SOURCE_STATUS = match). It is documentary requirements/mapping, NOT a second FW/ML
 interface authority. Every actual payload binding is UNDECLARED in that source, so this module's only behaviour is fail-closed refusal:
 no descriptor value may be produced from a payload until an exact real binding exists. Nothing here selects a binding.
 
