@@ -150,6 +150,11 @@ class TrackerCore:
             return NEW, ("OBS_ADMITTED", cand)
         return self._commit(decide)
 
+    def observation_facts(self, key: str):
+        """R39: detached copy of the RECORDED facts of one admitted, currently usable observation (None if absent/ambiguous). Recorded facts only: not provider qualification."""
+        import copy
+        st = self._replay(); o = st["obs"].get(key)
+        return None if o is None or key in st["amb"] else copy.deepcopy(o["facts"])
     def candidates(self, key: str) -> dict:
         """The complete immutable candidate evidence for a key (cid -> record)."""
         return dict(self._replay()["cands"].get(key, {}))

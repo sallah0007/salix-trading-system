@@ -35,4 +35,18 @@ class Scope(unittest.TestCase):
         from .test_r38_stored_values_class import qcore
         SV.persist_stored_values(**self.kw); q = qcore(); h0 = q._j.head()
         self.assertEqual(code(SV.record_stored_value_maintenance_all, q, journal=self.kw["journal"], store=self.kw["store"], feature_key=self.kw["feature_key"], fetch=lambda r: SER, series_hash=H, now=10, max_age=50), "STORED_VALUES_CLASS_MISMATCH"); self.assertEqual(q._j.head(), h0)
+class Redirect(Scope):
+    def test_a_corrupt_B_whose_bindings_were_redirected_to_A_is_a_FAIL_not_a_pass_and_restoring_B_passes_again(self):
+        from stage_a.storage.authority_class import _PREFIX
+        a = dict(journal=self.kw["journal"], store=self.kw["store"], feature_key=self.kw["feature_key"], series_hash=H); res = {"SRC/close": SER, "SRC/close-seg2": SER2}; fetch = lambda ref: res.get(ref)
+        SV.persist_stored_values(**self.kw); SV.persist_stored_values(**self.kw2); mh = self.t.body["materialization_hash"]; kb = _PREFIX + SV.stored_values_key(mh, SV.segment_id(self.b2)); d = self.t.rig.raw_store._d; good = d[kb]
+        self.assertEqual(SV.verify_all_stored_segments(fetch=fetch, **a)["l2"], "PASS")
+        bad = json.loads(good[0]); bad["bindings"] = dict(self.kw["bindings"]); bad["values"][-1] = "arbitrary-corrupt-value"; from stage_a.storage.byte_primitives import canonical_bytes; d[kb] = (canonical_bytes(bad), 1)
+        self.assertEqual(SV.verify_stored_values(**self.kw2)["overall"], "FAIL")                                                                      # direct path already failed
+        v = SV.verify_all_stored_segments(fetch=fetch, **a); self.assertEqual((v["overall"], v["l2"]), ("FAIL", "FAIL")); self.assertIn("FAIL", v["segments"].values())
+        c = core(); key = self.kw["feature_key"].key(); r = SV.record_stored_value_maintenance_all(c, fetch=fetch, now=10, max_age=50, **{k: v_ for k, v_ in a.items()}); self.assertEqual(r["l2"], "FAIL"); self.assertNotEqual(c.recording_health(key, "1", 11).local_state, "HEALTHY")      # Core records the failure
+        b = SV.StoredBinding(self.kw["journal"], self.kw["store"], self.kw["feature_key"], fetch, H); c2 = core(); o = SV.run_stored_value_pass(c2, {key: b}, [key], now=10, max_age=50, max_items=2); self.assertEqual(o[0][2], "RECORDED_NOT_PASS")
+        d[kb] = good; self.assertEqual(SV.verify_all_stored_segments(fetch=fetch, **a)["l2"], "PASS")                                              # restored: genuine two-segment positive again
+        other = dict(bad, bindings=self.b2, segment_id="x" * 64); d[kb] = (canonical_bytes(other), 1); self.assertEqual(SV.verify_all_stored_segments(fetch=fetch, **a)["overall"], "FAIL"); d[kb] = good
+del Scope
 if __name__ == "__main__": unittest.main()
