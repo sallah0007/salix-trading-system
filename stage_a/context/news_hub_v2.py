@@ -139,6 +139,11 @@ def check_daily_record(rec: dict) -> None:
         raise Refusal("PRIOR_COVERAGE_ISSUED_AT", code="DAILY_TIMESTAMP_MALFORMED")
     if not (rec.get("SOURCE_SET") is not None or rec.get("SOURCE_POLICY_VERSION") is not None):
         raise Refusal("SOURCE_SET/SOURCE_POLICY_VERSION", code="DAILY_RECORD_FIELD_MISSING")
+    # R52 (News Hub V2 s9.2A, re-read from the live source): "OMISSIONS / DELAYS / REASON_CODES" is a REQUIRED item. The source writes it in slash notation and names no single field, so the repo's existing slash convention (as for SOURCE_SET / SOURCE_POLICY_VERSION) is used: at least ONE of the three must be PRESENT; an empty list is a stated empty set, absence is not. APPLICABILITY_MAP_ID / APPLICABILITY_MAP_VERSION is one pair "where applicability mapping is used": a half-present pair cannot satisfy it. Whether applicability mapping is used is the Gateway's fact, so a wholly absent pair stays legal (no default invented).
+    if not (rec.get("OMISSIONS") is not None or rec.get("DELAYS") is not None or rec.get("REASON_CODES") is not None):
+        raise Refusal("OMISSIONS/DELAYS/REASON_CODES", code="DAILY_RECORD_FIELD_MISSING")
+    if (rec.get("APPLICABILITY_MAP_ID") is None) != (rec.get("APPLICABILITY_MAP_VERSION") is None):
+        raise Refusal("APPLICABILITY_MAP_ID/APPLICABILITY_MAP_VERSION", code="DAILY_RECORD_CONDITIONAL_GROUP_INCOMPLETE")
     req = rec["CONTEXT_REQUIREMENT_CLASS"]
     if req not in REQ:
         raise Refusal(str(req), code="BAD_CONTEXT_DIMENSION")
