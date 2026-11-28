@@ -90,3 +90,76 @@ def combined_resolver(*resolvers):
             if v is not None: return v
         return None
     return res
+def ledger_source(journal, namespace, *, accepted_at_of, epoch_of=None, vintage_mode="HELD_UNMAPPED_VINTAGE_MODE"):
+    """R42: `stagea_transition_index` rows for ANY chain-verified journal whose record kinds are NOT the feature transition kinds (e.g. the LifecycleFramework ledger): no replay, no current-status. The per-record epoch is `epoch_of(record)` if the owner supplies one, else the explicit marker EPOCH_NOT_RECORDED (never the current epoch applied to old records)."""
+    if not (isinstance(namespace, str) and namespace and callable(accepted_at_of)): raise Refusal("source", code="E05_SOURCE_INPUT_INVALID")
+    def head():
+        h = journal.head(); return (h.seq, h.hash)
+    def rows():
+        for r in (journal.read_from(1) if journal.head() != GENESIS_HEAD else []):
+            at = accepted_at_of(r)
+            if at is None: raise Refusal(str(r.seq), code="E05_SOURCE_TIME_NOT_SUPPLIED")
+            b = json.loads(r.body_json)
+            yield "stagea_transition_index", dict(transition_hash=r.record_hash, namespace_id=namespace, epoch=("EPOCH_NOT_RECORDED" if epoch_of is None else epoch_of(r)), sequence=r.seq, subject_id=b.get("subject", namespace), accepted_at=at, ref=_ref(namespace, r.seq), ref_hash=r.record_hash, data_vintage_mode=vintage_mode)
+    return head, rows
+
+# ---- R42: owning-source adapters for final resolutions (consumer binding / non-delivery), fit generations, pending rows and Health evidence.
+# Every column value that is NOT a plain field of the owning object comes from a SOURCE-OWNED mapper callback; an unmapped owning object REFUSES (held), it is never given a guessed column.
+def final_resolution_source(store, *, binding_columns=None, non_delivery_columns=None, vintage_mode="HELD_UNMAPPED_VINTAGE_MODE"):
+    """Projects the DURABLE final-resolution identity records (`final-resolution/id/<sha>` written by DurableFinalResolutionStore) with the ACTUAL codec: the key is RE-DERIVED from the decoded identity (a record filed under another key refuses); a stored
+    `Binding` -> stagea_consumer_binding_index via binding_columns(identity, outcome); a stored `NonDeliveryResolution` / `NonDeliveryResolutionV038` -> stagea_non_delivery_index via non_delivery_columns(identity, outcome). An outcome of any other type, or a type whose mapper
+    is not supplied, REFUSES (E05_SOURCE_MAPPER_NOT_SUPPLIED / E05_SOURCE_OUTCOME_TYPE_UNMAPPED): nothing is silently skipped. ref = object:<key>, ref_hash = sha256(stored bytes). Pins and request bindings are not rows."""
+    from ..gateway import durable_final_store as D, contracts as GC, v038 as V
+    P = "final-resolution/id/"
+    def _listing():
+        out = []
+        for k in sorted(store.list_prefix(P)):
+            g = store.get(k)
+            if g is None: raise Refusal(k, code="E05_SOURCE_LISTED_OBJECT_UNREADABLE")
+            out.append((k, g[1], g[0]))
+        return out
+    def head():
+        l = _listing(); return (len(l), hashlib.sha256("|".join("%s:%d" % (k, e) for k, e, _ in l).encode()).hexdigest())
+    def rows():
+        for k, _, b in _listing():
+            d = json.loads(b); ident = D.decode(d["identity"]); out = D.decode(d["outcome"])
+            if D._ident_key(ident) != k: raise Refusal(k, code="E05_SOURCE_OBJECT_NOT_CONTENT_ADDRESSED")
+            if isinstance(out, GC.Binding): table, fn = "stagea_consumer_binding_index", binding_columns
+            elif isinstance(out, (GC.NonDeliveryResolution, V.NonDeliveryResolutionV038)): table, fn = "stagea_non_delivery_index", non_delivery_columns
+            else: raise Refusal(k, code="E05_SOURCE_OUTCOME_TYPE_UNMAPPED")
+            if fn is None: raise Refusal(table, code="E05_SOURCE_MAPPER_NOT_SUPPLIED")
+            r = dict(fn(ident, out)); r.update(ref="object:" + k, ref_hash=hashlib.sha256(b).hexdigest(), data_vintage_mode=vintage_mode); yield table, r
+    return head, rows
+
+def sequence_source(table, items, ident_of, hash_of, columns_of, *, ref_prefix, vintage_mode="HELD_UNMAPPED_VINTAGE_MODE"):
+    """A live in-memory OWNING collection (the accepted-fit-generations mapping, a PendingRow sequence, a HealthEvidenceSink.evidence() tuple): `items()` returns the owner's CURRENT objects. ident_of(o) -> unique str id, hash_of(o) -> the OWNER's content hash
+    (hex), columns_of(o) -> the row columns. ref = <ref_prefix><ident>; a duplicate ident refuses. head = (count, sha256 over the sorted (ident, hash)) so any added/removed/changed object moves it. No per-record epoch exists here and none is invented."""
+    if not (callable(items) and callable(ident_of) and callable(hash_of) and callable(columns_of) and isinstance(ref_prefix, str) and ref_prefix): raise Refusal("source", code="E05_SOURCE_INPUT_INVALID")
+    def _view():
+        seen = {}
+        for o in items():
+            i = ident_of(o)
+            if not (isinstance(i, str) and i): raise Refusal(table, code="E05_SOURCE_IDENT_INVALID")
+            if i in seen: raise Refusal(i, code="E05_SOURCE_DUPLICATE_IDENT")
+            seen[i] = (o, hash_of(o))
+        return seen
+    def head():
+        v = _view(); return (len(v), hashlib.sha256("|".join("%s:%s" % (i, v[i][1]) for i in sorted(v)).encode()).hexdigest())
+    def rows():
+        v = _view()
+        for i in sorted(v):
+            o, h = v[i]; r = dict(columns_of(o)); r.update(ref=ref_prefix + i, ref_hash=h, data_vintage_mode=vintage_mode); yield table, r
+    return head, rows
+
+def sequence_resolver(items, ident_of, hash_of, *, ref_prefix):
+    def res(ref):
+        if not (isinstance(ref, str) and ref.startswith(ref_prefix)): return None
+        want = ref[len(ref_prefix):]
+        for o in items():
+            if ident_of(o) == want: return hash_of(o)
+        return None
+    return res
+
+EVENT_CONTEXT_SOURCE_HELD = "HELD_NO_OWNING_EVENT_CONTEXT_STORE"   # stagea_event_context_index has no owning store class in stage_a/context (validators only); no source is fabricated
+def event_context_source(*_a, **_k):
+    raise Refusal("stagea_event_context_index", code="E05_SOURCE_EVENT_CONTEXT_HELD_NO_OWNING_STORE")

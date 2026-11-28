@@ -25,21 +25,21 @@ def code(f, *a, **k):
     try: f(*a, **k)
     except Refusal as e: return e.code
 POL = LP(("A", "B"), frozenset({(None, "A"), ("A", "B")}), frozenset({"B"}), "TEST-POLICY-NOT-A-SOURCE-GRAPH")
-def lf(): j = ObjectStoreJournal(InMemoryObjectStore(), "lc", "w"); j.acquire_epoch(); f = LF(j, POL, lambda s, a, b, e: e == "good"); f.apply("S1", "t1", None, "A", "good"); return f
+def lf(subj="S1"): j = ObjectStoreJournal(InMemoryObjectStore(), "lc", "w"); j.acquire_epoch(); f = LF(j, POL, lambda s, a, b, e: e == "good"); f.apply(subj, "t1", None, "A", "good"); return f
 def ev(ref="E1", **o):
     d = dict(ref=ref, subject="S1", version_or_hash="v1", instrument="XAUUSD", timeframe="H4", battery="B", vintage="V", dependencies=(), result="PASS", available_at=10, max_age=100, revoked=False, current=True, approval_state="APPROVED"); d.update(o); return EvidenceRecord(**d)
 def claim(**o):
     d = dict(subject="S1", version_or_hash="v1", instrument="XAUUSD", timeframe="H4", battery="B", vintage="V", dependencies=(), expected_result="PASS", required_approval="APPROVED", evidence_refs=("E1",)); d.update(o); return TransitionClaim(**d)
 class Fx:
-    def __init__(self, admitted=True, ptr=None, content=None):
-        self.lf = lf(); j = ObjectStoreJournal(InMemoryObjectStore(), "evid", "w"); j.acquire_epoch(); self.es = ER.JournalEvidenceStore(j, "candidate"); self.es.put(ev())
+    def __init__(self, admitted=True, ptr=None, content=None, subj="S1", req="REQ-1"):
+        self.subj, self.req, nxt = subj, req, ("S2" if subj == "S1" else subj + "~2"); self.lf = lf(subj); j = ObjectStoreJournal(InMemoryObjectStore(), "evid", "w"); j.acquire_epoch(); self.es = ER.JournalEvidenceStore(j, "candidate"); self.es.put(ev(subject=subj))
         if admitted: self.es.admission = "TEST-ADMISSION-NOT-A-GOVERNED-ONE"
         self.res = ER.EvidenceResolver(self.es); self.pins = {"E1": self.es.snapshot()[1]["E1"][1]}
-        self.ptr = ptr if ptr is not None else {"S1": "S2"}; self.C = content or {"S1": dict(BASE), "S2": dict(BASE, source_path="p2")}
-        rj = ObjectStoreJournal(InMemoryObjectStore(), "rel", "w"); rj.acquire_epoch(); self.rs = RS.RelationshipStore(rj, lambda x: x in self.C, schema=S, content_of=self.C.get); self.rs.append(VD.compute(S, "S1", self.C["S1"], "S2", self.C["S2"]))
-        self.entry = build_registry_entry("S1", "BUILDER", "REQ-1", self.lf, survivor_pointers=self.ptr, test_evidence_refs=("E1",))
+        self.ptr = ptr if ptr is not None else {subj: nxt}; self.C = content or {subj: dict(BASE), nxt: dict(BASE, source_path="p2")}
+        rj = ObjectStoreJournal(InMemoryObjectStore(), "rel", "w"); rj.acquire_epoch(); self.rs = RS.RelationshipStore(rj, lambda x: x in self.C, schema=S, content_of=self.C.get); self.rs.append(VD.compute(S, subj, self.C[subj], nxt, self.C[nxt]))
+        self.entry = build_registry_entry(subj, "BUILDER", req, self.lf, survivor_pointers=self.ptr, test_evidence_refs=("E1",))
     def run(self, **o):
-        kw = dict(lifecycle=self.lf, relationships=self.rs, schema_version="DS1", survivor_pointers=self.ptr, owner_check=lambda x: x in self.C, evidence_resolver=self.res, evidence_claim=claim(), evidence_pins=self.pins, now=20, watermark=15, creation_request_known=lambda r, s: r == "REQ-1" and s == "S1"); kw.update(o)
+        kw = dict(lifecycle=self.lf, relationships=self.rs, schema_version="DS1", survivor_pointers=self.ptr, owner_check=lambda x: x in self.C, evidence_resolver=self.res, evidence_claim=claim(subject=self.subj), evidence_pins=self.pins, now=20, watermark=15, creation_request_known=lambda r, s: r == self.req and s == self.subj); kw.update(o)
         return RI.check_registry_entry(kw.pop("entry", self.entry), **kw)
 st = lambda rep: {f.check: (f.state, f.code) for f in rep.findings}
 class Checker(unittest.TestCase):
@@ -81,17 +81,35 @@ class SameObjects(unittest.TestCase):
         except Refusal as x: return x.code
     def test_a_registry_held_feature_is_denied_while_an_unrelated_feature_on_the_same_rig_and_core_delivers(self):
         rig = Rig(); c = core(); pa, fka, coa = self._feature(rig, c, "mom3", 1); pb, fkb, cob = self._feature(rig, c, "mom4", 2)
-        bad = Fx(admitted=False); gate_bad = lambda key, fk: bad.run(); good = Fx(); gate_good = lambda key, fk: good.run()
+        bad = Fx(admitted=False, subj=fka.key(), req=pa.request_id); gate_bad = lambda key, fk: bad.run(now=10, watermark=10); good = Fx(subj=fkb.key(), req=pb.request_id); gate_good = lambda key, fk: good.run(now=10, watermark=10)
         ra = coa.accept_and_publish(pa, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, registry_gate=gate_bad); self.assertEqual(ra.status, "HELD_REGISTRY_INTEGRITY_UNKNOWN"); self.assertIsNone(coa.gateway); self.assertEqual(code(coa.deliver, "x", FI("FW", "M-A", "XAUUSD", "x"), _entry(), I, I, 3, 20, ra, binding=None, now=1, ref=R("h"), resolved_at=1, tables=T), "COMPOSITION_NOT_PUBLISHED")
         rb = cob.accept_and_publish(pb, supplied(feature_id=bytes(range(48, 64))), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, registry_gate=gate_good); self.assertEqual(rb.status, "PUBLISHED_SIMULATION")
         self.assertTrue(rig.journals.journal(fka.namespace()).head().seq >= 1)                                                       # A WAS accepted (acceptance is not undone); only publication is held
         self.assertIsInstance(self._deliver(cob, c, fkb, rb, "B1", FB), G.Binding)                                                   # the unrelated feature DELIVERS through the same Rig/Core/pipeline/Gateway code
     def test_required_unknown_ancestry_denies_one_feature_while_the_unrelated_baseline_delivers_on_the_same_objects_then_the_declared_ancestry_delivers_it(self):
         from .test_r25_scheduler import ver
-        rig = Rig(); c = core(); pa, fka, coa = self._feature(rig, c, "mom3", 1); pb, fkb, cob = self._feature(rig, c, "mom4", 2); coa._up = {fka.key(): ("UP",)}; ver(c, "UP", version="1", at=9, age=50); good = Fx(); gate = lambda key, fk: good.run()
+        rig = Rig(); c = core(); pa, fka, coa = self._feature(rig, c, "mom3", 1); pb, fkb, cob = self._feature(rig, c, "mom4", 2); coa._up = {fka.key(): ("UP",)}; ver(c, "UP", version="1", at=9, age=50); ga = Fx(subj=fka.key(), req=pa.request_id); gb = Fx(subj=fkb.key(), req=pb.request_id); gate = lambda key, fk: (ga if key == fka.key() else gb).run(now=10, watermark=10)
         ra = coa.accept_and_publish(pa, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, registry_gate=gate); rb = cob.accept_and_publish(pb, supplied(feature_id=bytes(range(48, 64))), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, registry_gate=gate)
         self.assertEqual((ra.status, rb.status), ("PUBLISHED_SIMULATION", "PUBLISHED_SIMULATION"))
         self.assertEqual(self._deliver(coa, c, fka, ra, "A1"), "NON_DELIVERY")                                                     # required upstream ancestry unknown: denied
         self.assertIsInstance(self._deliver(cob, c, fkb, rb, "B1", FB), G.Binding)                                                    # unrelated baseline, SAME objects, delivers
         c.declare_ancestry_complete("UP", "src"); self.assertIsInstance(self._deliver(coa, c, fka, ra, "A2"), G.Binding)          # after the declared ancestry the denied feature delivers
+    def test_r42_the_gate_binds_the_report_to_the_accepted_feature_version_request_and_currentness(self):
+        rig = Rig(); c = core(); pa, fka, coa = self._feature(rig, c, "mom3", 1); pb, fkb, cob = self._feature(rig, c, "mom4", 2)
+        own = lambda **k: Fx(subj=fka.key(), req=pa.request_id).run(now=10, watermark=10, **k)
+        foreign = Fx(subj="UNRELATED-OTHER", req="FOREIGNREQUEST").run(now=10, watermark=10); self.assertEqual(foreign.overall, "CHECKS_PASS_FACTS_ONLY")      # root's reproduction: a passing report about something else
+        cases = {"SUBJECT_DIFFERS_FROM_ACCEPTED_FEATURE": foreign, "CREATION_REQUEST_DIFFERS_FROM_PACKAGE": Fx(subj=fka.key(), req="OTHER-REQ").run(now=10, watermark=10),
+                 "NOT_CURRENT_OR_UNTIMED": dataclasses.replace(own(), checked_at=None), "MALFORMED": {"overall": "CHECKS_PASS_FACTS_ONLY", "subject": fka.key()}}
+        cases["SUBJECT_DIFFERS_FROM_ACCEPTED_FEATURE:version"] = dataclasses.replace(own(), subject=fka.key()[:-1] + "9")
+        cases["NOT_CURRENT_OR_UNTIMED:stale"] = dataclasses.replace(own(), checked_at=-100); cases["NOT_CURRENT_OR_UNTIMED:future"] = dataclasses.replace(own(), checked_at=11)
+        for want, rep in cases.items():
+            rig2 = Rig(); c2 = core(); p2, fk2, co2 = self._feature(rig2, c2, "mom3", 1)
+            rep = dataclasses.replace(rep, subject=fk2.key()[:-1] + "9") if want.endswith(":version") else rep
+            if want == "MALFORMED" or want.startswith("NOT_CURRENT") or want.endswith(":version"):
+                rep = dataclasses.replace(Fx(subj=fk2.key(), req=p2.request_id).run(now=10, watermark=10), **({"checked_at": None} if want == "NOT_CURRENT_OR_UNTIMED" else {"checked_at": -100} if want.endswith(":stale") else {"checked_at": 11} if want.endswith(":future") else {"subject": fk2.key()[:-1] + "9"} if want.endswith(":version") else {})) if want != "MALFORMED" else rep
+            r = co2.accept_and_publish(p2, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, registry_gate=lambda key, fk, rep=rep: rep)
+            self.assertEqual(r.status, "HELD_REGISTRY_REPORT_SCOPE_" + want.split(":")[0], want); self.assertIsNone(co2.gateway); self.assertEqual(r.published_rows if hasattr(r, "published_rows") else None, None if not hasattr(r, "published_rows") else r.published_rows)
+        ra = coa.accept_and_publish(pa, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, registry_gate=lambda key, fk: own()); self.assertEqual(ra.status, "PUBLISHED_SIMULATION")      # the owning report passes
+        rb = cob.accept_and_publish(pb, supplied(feature_id=FB), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, registry_gate=lambda key, fk: Fx(subj=fkb.key(), req=pb.request_id).run(now=10, watermark=10))
+        coa._up = {}; self.assertIsInstance(self._deliver(coa, c, fka, ra, "A1"), G.Binding); self.assertIsInstance(self._deliver(cob, c, fkb, rb, "B1", FB), G.Binding)
 if __name__ == "__main__": unittest.main()

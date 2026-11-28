@@ -1,0 +1,101 @@
+unit_id,qualifier_index,qualifier_wording_sha256,range_hash_reverified,class,current_native_paragraphs,in_controlling_1_459,note_identifiers_only,disposition_status
+NL-0030,1,179e1b643a69c2ae52c9fcac0adfedf36ce6de539a159ab1ff9457c70d28df43,YES,P,298;310;313;319,298;310;313;319,epoch/fence and watermark present; answer-specific resolved-through identity on a reconstruction answer not,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0030,2,195240e7b1b4e852e38188d1bad7d41e4db1e3df2a62cae4f0975cd92ea474bc,YES,H,,,answer-specific resolved-through identity available to caller: only p543 (lineage region),UR_REMAINS__CODER_READING_NO_AWARD
+NL-0034,1,76fc71728d09266d98b6265f8eaaa9c842daea24640d75b13c8df3debdb911ef,YES,C,361,361,mandatory test family named,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0034,2,dc9afae5e3b0dfeaffd8bbb4f5c8c28806e78128072b341ca017330aecc7f1ab,YES,O,313;319;361,313;319;361,duties present; oracle lacks stale-reconstruction-answer with otherwise complete slice and lagged replica/authority change,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0038,1,2defccabefc4d09fe92feb09893e7d7910a8c541387af411fdcde5e1f79a09d1,YES,C,326;327;330,326;327;330,terminal events and separate visibility,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0038,2,3c44c3c17c4d2c6b1ce4052dadbb3bbc77cffe9e7f09b1401553b8b9e10009b4,YES,P,330;333,330;333,distinctness in storage/analysis/dashboards/exports not enumerated; scorecard only,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0042,1,7249eb473c1e74a816ac0fc66fa7786f9da242dc33063f0edc898dc6923c84b8,YES,C,203,203,FORWARD_WALK_REOPEN_REQUIRED = NO bound; no executable portability PASS implied,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0056,1,52362c2326dafd98eac66cfc041193aba354448bfaa70442e30b92951a2e5937,YES,H,250;253,250;253,no clause on raw-observation retention versus selective model use,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0056,2,e8e37b027ca4b7f6c66989022c5912a04c0a3caeaacb0d128bd13db796e907f7,YES,P,250;398,250;398,REDUNDANCY_GROUP identity present; a redundancy TEST is not required as such,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0056,3,4c20a014156b7c9f378b5bd16f8bc2e413ae38f8d4decf431ebb1140873deadb,YES,P,47;51,47;51,ownership split stated at document level,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0063,1,f0c1b88f3ab63bcbe64ffbce9df2e4b7aef97bbdee87f2d2f82f347efcc7c60e,YES,P,424,424,no-weakening stated for payload semantics only; the general strengthen-not-weaken sentence is historical,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0065,1,eb3c590404ee5a9e80622d0f18b18ac9ec2250aa908e987af5eb500b72d3e4be,YES,O,272;280;383,272;280;383,"classification/retention clauses present; oracle is rename-only, lacks missing-class and removed-failure cases",UR_REMAINS__CODER_READING_NO_AWARD
+NL-0073,1,3bb391cd7ac484866d7de273eb7823a4a4c0eb4945135f2b1b9e907ff4dcd966,YES,C,391,391,agreement not independent confirmation,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0073,2,78bd8f5984cd7c19dc67eae10af3b7b5823598415980ce53b2085aec924a7166,YES,C,391,391,one correlation matrix not sufficient,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0073,3,ebcbb4e0a7c29b3dcb6b956e31966db574c1d36325a0032c8449f681ac48dc08,YES,H,,,diversity by target/model class: none in 1-459,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0076,1,66837b62a76e56f2bd0f7c3026779ef1e098c69a80e1c6300d2e3e81cba421d1,YES,P,250,250,metadata named; 379 grouping interpretive,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0076,2,814c3405fd303745e04245f5770ba8bdbeaf54decde475ce5b5363a0ebd67b5c,YES,C,379,379,"dependency grouping interpretive, not independent hypotheses",UR_REMAINS__CODER_READING_NO_AWARD
+NL-0076,3,33bdb890b55769a7e09cc9095a646b201dec1e7c9c340ac318b6b4aaab990298,YES,P,128;168,128;168,cross-program multiplicity accounting; 'search breadth fully recorded' not in these words,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0076,4,25c94dd1781aaf4b673528f9010a8231e10582e91073450b9b5eaebc08ae82e4,YES,H,,,no clause on shrinking the multiplicity denominator without a justified method; locator repair already made (not repeated),UR_REMAINS__CODER_READING_NO_AWARD
+NL-0078,1,07de4b2c21b40353cd01c7cf77d11296e78820109556fedc1deaea5de27e6e92,YES,C,247,247,exact definition,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0078,2,ee63cf560c05a9bd45a708fa3bb8c689406c0e7f331a54e2806351938365f719,YES,L,487;488;489,,reconstruction must be pre-registered and marked: stated only in lineage region,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0078,3,154d05afc77fc0d2044c6f83d992e9f3680b9a1d7a0c40e3a0bb697bded903d8,YES,L,489;490,,exclusion from causal CONFIRMATORY use only; D23 scope open,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0079,1,c03750e49ffe90884b3a10affe6d1ef2977eade12b685b09489631935e12035a,YES,P,236;237;239;250,236;237;239;250,provenance/dependency metadata present; a versioned contract for EVERY information-altering stage not stated,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0079,2,e3fa19a0fcbcc97741552d84e17190c179afd149eb3d2f874456b53c6f34af54,YES,H,250;256,250;256,dependency interval named; composed non-scalar interval not stated,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0080,1,88882ccf0fe669b8d2860595fc7f26439441eedd76342e1c14d29b031f42540c,YES,P,273;346,273;346,mutation tests named; generated-stress vs transparent vs final family split not instantiated,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0080,2,979bff6ea5c5aaae78a3cd8a6132c0ae248df6e2444c5823f0da67c0718db720,YES,C,174;175;176;276,174;175;176;276,held-back exposure governed/versioned; redesign consumes,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0080,3,a50182f36805ba55dd7740837330db3973b8f9abbe60ca7bf8934fc89a5a8705,YES,H,,,"'held-back pass necessary where required, never universal robustness': none",UR_REMAINS__CODER_READING_NO_AWARD
+NL-0087,1,63a9e237d2e2205ffcbe5566b8b5d31cec353517e77b68519048c4cdea17b322,YES,C,327;330;333,327;330;333,coverage/abstention reported,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0087,2,879aa813a3809518fb18f9f601eab4b917bce2a9b1be4306dac77b068c98cb43,YES,H,,,PERFORMANCE_WHEN_PREDICTING and suppressed-case profile: none in 1-459,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0087,3,311b1e9c854eea45d761f96a9b5e2d89ccea3238751f4bedf758db428f6a2b3a,YES,C,274,274,abstention policy inside governed selection chronology,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0096,1,81487ae83b2905dbbbadf18780b79bcb9068f5b71cc34c1ec9750687c4a1f998,YES,R,265,265,ML265 NO MODEL valid outcome: already repaired,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0096,2,607336f4186d4a1bb9a12f36f25afe64cf012e6bfba587fa70e19b196730fad2,YES,C,208;211;393,208;211;393,no forced profitable model / no engine control,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0098,1,60ee580f207271a3bce9b45fbcb062e11d38f487874189a666f4e6a413cf6189,YES,P,103;158;250,103;158;250,UPSTREAM_MODEL_ID present; UPSTREAM_MODEL_VERSION not,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0098,2,f7fde8aa768be15e5ac770d125827d082f6c154c8248adb9eacd398bcb310151,YES,P,250;296,250;296,fit-window/evidence identity present; binding to the exact upstream artifact not stated,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0098,3,9b031c7f47593132b8714b45c257e42fc231088d841eee1a5666529374cd22ef,YES,P,247;268;408;409,247;268;408;409,forecast/as-of fields present; no upstream causal-generation-method statement,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0099,1,7c22c2bff102927eebf5c1d194a57d6e4d4bc8382d4309dea5f8b53b10c13a02,YES,C,286,286,pocket claims need pocket support; no universal threshold,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0099,2,48e08903703d6835cbf9d6d0a665636a43f4b3118ad39eb4dbd6c78d265dd176,YES,P,286;400,286;400,POCKET_SUPPORT_STATE and its component list not named,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0099,3,34e820deeaa2018771540c0a7f97a30315c96e3cf982a143259223b04a51428d,YES,N,,,range/body difference noted by reviewer is not an obligation,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0113,1,d48a4065bc8725a57ab716002d160b3836842981ee13379045bf5c48e9af2f2a,YES,H,335;336;47,335;336;47,no 'self-contained and authoritative' portability clause,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0113,2,f8c8846aab71ff18acfdf9a66fc1a2f93d8799f03a2156c6fd8a6a9ea6c05a83,YES,H,,,no 'supporting analysis not required to implement' clause,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0122,1,216f2caef3d3cf2e5c2b44f69868c86da5ec0a94e26472817ad471e491f5139e,YES,C,208;209;210;211,208;209;210;211,purpose/market-intelligence-only/no engine control/future authority,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0126,1,6e3e8364cb81541e56fd9797941b6ab198b1a7c9a1ff676190edae7e70c75ec5,YES,C,2;203;346,2;203;346,frozen FW contract not reopened,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0126,2,0b2b3e70f554be33b964f1e5e8db18f4bb1a458f8b620ffa595da5ae70c31946,YES,C,225;227;228;339,225;227;228;339,instance by namespace/interface,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0126,3,86f684be65683a0d6e18aa3c260f0820b61ed881b37a5502d4cca9cebc95563b,YES,H,203,203,203 says no reopen required now; the conditional Owner-governed reopen path for a demonstrated XAUUSD-only defect is absent,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0143,1,b8433723ca65a885b2a80871f3292518ee3c9d7e371023698c0e47263681fcb4,YES,C,236;404,236;404,artifacts instrument-qualified,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0143,2,5178873d5c90e1c78396c5a6a7a81d9cedd65b7451c5cac688d3b4efa61d3e9f,YES,P,241;404,241;404,ARTIFACT_INSTRUMENT_SCOPE not named; missing scope metadata fails closed (p241),UR_REMAINS__CODER_READING_NO_AWARD
+NL-0162,1,f70c8d16bf7095a27976932927dc909a52ea1918c7c0f83f9c35cc63d3f30988,YES,C,297;298;299,297;298;299,load only certified/eligible,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0162,2,de223f6e6e241bff29d477557f71e0c85e2af1b535569491b0dca4b6f1180149,YES,C,309;310;361,309;310;361,no component mixing; same snapshot,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0162,3,a6c75befe5737349afa11a39a06603c7f00473a07f10b124645fde83aa6bc8b2,YES,L,1329,,governed compatibility-contract exception stated only in lineage; current is stricter or silent,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0167,1,207a1616583b364cb023e93703534b3d2bb73c1eb0291fc617631188d8d30105,YES,C,237;239,237;239,FIT_INSTRUMENT_SET,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0167,2,abeb6959c3dfb73b5e7490c053cee6df5626e205bde29b389821197326303ce5,YES,P,241;340,241;340,mismatch fails closed; 'before EACH use' during sequential batch not stated,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0174,1,cc1066d39a7b9f9d4eab62b91c0552ef3aaba294c9f80d2fde4261027c16af2f,YES,C,240;294,240;294,separate research class,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0174,2,12442872c033c5cbf8e49d9ba53eca23d9f424998a6506efb880c4e90323e80d,YES,P,260;333;334,260;333;334,class visible in scorecard; artifact field and value set (open Q03) not defined,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0174,3,f7d18d8fde5e0cf477c9b514ea6a5d5fd24dd13b79ede70ae307458afcb0dbd2,YES,C,294;340,294;340,not through ordinary path,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0180,1,b7368d8aff189138b241b5ffdc8b6ba80e046a11db59d91c2edef6d21d00f917,YES,C,297,297,manifest immutable; lifecycle separate,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0180,2,0ac5bef6a561ee7581c7dfb36b4924510150a688bed86ec8c86e13921388c877,YES,C,298;301,298;301,state set and REVOKED != SUPERSEDED,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0180,3,a1fe7ddbb7bd5c8bed352c47df0721ee01852e32c0cf07a5a42ec2c802db674f,YES,P,302;309,302;309,revoked never serving-eligible even if hash-valid; the seven named services / load-vs-serve split not enumerated,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0180,4,67bc68616178933c88a80fbbc9664655d286d11ba6934036a64b1f17b3fdc8e1,YES,P,302,302,fail closed/no backward walk present; 'alerts' not,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0180,5,5f41433a12c12ecbdc4411d7b686bc21256502e8db12c953c1e59b04638273a7,YES,C,303;318,303;318,forensic read-only mode,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0184,1,8710ee0a65f13e1634b91c8cb00c5164429df8f922e16db24eaccce669e51c43,YES,P,309;311,309;311,atomic promotion + compare-and-publish; 'pointer alone insufficient' not stated,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0184,2,f48416f8fce5b42d6a768c1583b6363dae28f095111f415523e6fc685db23832,YES,H,361,361,no clause requires every consumer to validate cached generation identity on each read/use; only the stale-caches test family is named,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0184,3,40ce30b0f66a6e45be7962a7a8bfe60fa0fc85af4389fcde2cdf91d48f89fe7b,YES,P,310;311;361,310;311;361,snapshot/fence present; stale-cache invalidation before serving and N/N+1 visibility not stated,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0184,4,8353b374e3b11cdf4c10bd07303fed9db7a1c7cd34daddaf1dc33ecd5ede8046,YES,C,316;318,316;318,original-event history and revoked forensic restriction,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0186,1,a24c51e77b5c1845c016dbf47c548b0d67acb6b30f3e7fe4c1323bdc8d506aa5,YES,P,323;361,323;361,immutable prospective record + partiality test family; record-level all-or-nothing not stated,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0186,2,1a346ea43388cbee00125d9ec15111be579208f3d1c0090e80560072895c4221,YES,P,310;323;324,310;323;324,identity fields exist; all-or-nothing field set unbound,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0186,3,d1d4168cf2a83ba9c62c1c2a9ac367132eadd2e36a5dad7dce083396f03ddcda,YES,H,361,361,no reader/reconciler/dashboard exclusion of partial records; oracle is narrower,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0187,1,2471ef89800f21e5ec6cdc052e798ca102d4e0085e627b634b24e65d1de2130a,YES,C,334,334,never visually indistinguishable,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0187,2,30adebf39532ac41b16904adfa80ac4e6473694785a5d76336f99bfc86da77a5,YES,P,333,333,"Owner-review minimum, not a field on EVERY displayed contribution",UR_REMAINS__CODER_READING_NO_AWARD
+NL-0199,1,9c37ed5f8b8ba53cc95820d1c5c6adb08fa57b1e9da041909d49a2e004f50a97,YES,C,316,316,original generation,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0199,2,211fbe560a1958aaa85a61132cc0c9d41e94a2ec726b1e0404add607bfb9b41e,YES,C,303;318,303;318,revoked read-only forensic,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0199,3,91b88e65f65fcbbcf7cfa7c9753b8cdec90fbb7fb6a7a15953000ef0a0f89d15,YES,P,315;316,315;316,forensic audit mode exists; binding to recorded historical identity stated for replay/reconciliation only,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0200,1,a989664f8a28e18a9165f161529089d068ba01be994400b9ca5986e8ab00871e,YES,C,324,324,deterministic key; identical retry idempotent,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0200,2,5b98edd6c9a8b293ecc730af8d07a997cd81a74d7910ff93ae0ffe92541dc955,YES,P,324,324,'governed identity' without the five-field minimum or global uniqueness,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0200,3,df37811381e64cd5e3ea77208c736a269b625f928a0bcfd6d88d0bc9fa36ac0a,YES,C,328,328,counters per logical event not per retry,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0220,1,49de04c5830932518cd3753031d2b04d6cf844541182bb6a562acb7a43448677,YES,C,304,304,ancestry survives fine-tune/reserialize/prune/distill,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0220,2,2ebe58daf2370cee332072268b9b144c7da4f8541d8e95e5ae48466a392ab41b,YES,H,304,304,DERIVED_FROM_REVOKED_GENERATION_ID metadata and derivation scope not named,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0220,3,2a0bb08a39c78ee5c84cf97ae84b4d4194c28f9bc3d3a937cad566ad3ffa8bdd,YES,P,303,303,read-only audit mode; no-laundering sentence absent,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0221,1,6098f1c253cd8a3fb60fbebcdee1ba33006549b4b0236fd25ff6681d2bc97749,YES,C,304,304,specific review gate,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0221,2,b80a14f6ea138a626c4b3b7f9a1e081f5dd0664e0de65a9c82993c63682ce506,YES,H,304,304,reason + documented determination not in current,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0221,3,3d4f976a7771434aaa3422d264e5768520d7caed788b43ea3d7e094a13326ba6,YES,C,304;305,304;305,new IDs/weights do not make a candidate clean,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0223,1,de4b4ba75ec823bc301a60d556fa918cb3a4b8a144a888f95ba067a40261dd0f,YES,C,298;323,298;323,immutable records; append-only lifecycle,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0223,2,a8e0904f254e74352cae00a7de9c8fdf50dee3f237f38d60ea52152aefafb133,YES,H,319,319,mandatory annotation on the affected object not found; current is dynamic trust resolution (distinct mechanism),UR_REMAINS__CODER_READING_NO_AWARD
+NL-0224,1,d05e1dc62cd299e6d233b3ffe5e8c844df1ad115b6ace56c4a7dc1883ef89751,YES,N,319;361,319;361,follows NL-0223: annotation-vs-dynamic-trust is the same open question,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0225,1,529f8149657c55ce53f9236b3849aa2709c7353f7b364800094dd33523f0341a,YES,N,343;361,343;361,V1.4 full-system-regression process note; superseded by proportionate review wording (p343/26.R); oracle does not test the 15-domain list,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0242,1,4892d0d8a3e03a6a30f9a97e96c81edb9e023b5725b428e32d9a2da0c6d025c2,YES,P,319;333,319;333,stale derived views cannot masquerade; per-artifact freshness carrier not required,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0242,2,bfcf6c0d32798da36562da2e7c38f7d64cb9a61c61d5ebf2c58735556002d73f,YES,C,298;319,298;319,epoch + machine-checkable watermark,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0242,3,8da2575fce1cb689658ca73f336a8670291f862ee6b75b9ba4e81fac8c0b1ce6,YES,P,316;319,316;319,dynamic read is an alternative mechanism,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0249,1,2c28c92d4f023b91fb79af6d881b49fc386e31c2687db861ef9972072924ba42,YES,R,405;408;409;424,405;408;409;424,ML405-424 already repaired,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0249,2,7e9521f24f1f2ee21a70af55296d5dff1d92d21a5b6a384c8c7965db70450bcf,YES,P,405;424,405;424,target/horizon in payload; source-event and governed knowledge-time boundary composition UR,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0249,3,20ea639cc18f84db2739235c1846487d8ea5753e4e2375ac471d018fa53dbf40,YES,C,313;316,313;316,"reconstruct from original identity, no current-pointer fallback",UR_REMAINS__CODER_READING_NO_AWARD
+NL-0250,1,798b5f13ad06e353589a4c2e91f8fe83ff04580fb13729ca735cb5dc346ec2ac,YES,P,310;313;316,310;313;316,covers crash-before-snapshot; redelivery/catch-up/backlog not named,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0250,2,8aa4fb097292232671d39b4a4b33e9cdec8e29184d9b42be645658893cfe3b1e,YES,C,299;310;313;316,299;310;313;316,original-time eligibility,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0250,3,a62b5b0c2e40a55744cf72bdd3d6242673c0627e059e1571e77f020c31fa362a,YES,C,298;313,298;313,append-only history,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0258,1,746c0bb9570193474b81f070401982f3f66f77138413c2f404e72859f9a04d91,YES,C,298;319,298;319,epoch + watermark,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0258,2,79aa7a093dda42edb2d280436b3498e5b3092c8758cfd4da844cb4b6414839ef,YES,H,319,319,'resolver resolved-through version' not stated,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0258,3,7e6786d68d2a63d264862d0cb5fd93918162d7db5b55d94f60d5ff76771ed187,YES,P,319,319,caller-determinable coverage unbound,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0262,1,4aef7127b7c6a96d1858bd53751e97d389eb8f2a5a401a6367c9bd1e1572ad12,YES,O,319;361,319;361,freshness family named; oracle does not inject resolver/index lag,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0262,2,d0bd4171e9f87b986ab17e14ae50364b9f91bbc7bc3469a5192fd181d508c6dd,YES,C,319;333,319;333,stale watermark/epoch detected,UR_REMAINS__CODER_READING_NO_AWARD
+NL-0263,1,f3bd2d70e6ee174f092190545e8bb37e961f14a9b77f7e05edc802d7550df34b,YES,N,343;361,343;361,"V1.6 process note, same as NL-0225",UR_REMAINS__CODER_READING_NO_AWARD
+NL-0266,1,06204de4d1a002b896ddf2d0adffd3bff9bd4d07a29a22e98bbc14f630e4bb67,YES,P,313,313,slice completeness gate present; how the ledger proves closure is unbound,UR_REMAINS__CODER_READING_NO_AWARD

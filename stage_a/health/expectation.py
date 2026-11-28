@@ -8,13 +8,19 @@ class ExpectationAssertion:
     subject: str; state: str; valid_from: int; valid_until: int; admitted_ref: str
     def __post_init__(self):
         if not (isinstance(self.subject, str) and self.subject and self.state in EXPECTATION and all(type(x) is int and x >= 0 for x in (self.valid_from, self.valid_until)) and self.valid_from < self.valid_until and isinstance(self.admitted_ref, str) and self.admitted_ref): raise Refusal("assertion", code="EXPECTATION_ASSERTION_INVALID")
+@dataclass(frozen=True)
+class ResolvedExpectation:
+    """What the admitted-instance owner's resolver returns for an `admitted_ref`: the instance's OWN payload plus its admission/currentness/revocation state. (R42) The supplied assertion is accepted only if it equals this payload field for field; a known ref is not authority."""
+    admitted_ref: str; subject: str; state: str; valid_from: int; valid_until: int; admitted: bool; current: bool; revoked: bool
+def _matches(a, r):
+    return (isinstance(r, ResolvedExpectation) and (r.admitted_ref, r.subject, r.state, r.valid_from, r.valid_until) == (a.admitted_ref, a.subject, a.state, a.valid_from, a.valid_until) and r.admitted is True and r.current is True and r.revoked is False)
 def expectation_for(assertions, subject, at, resolver):
-    """-> (state, reason). `resolver(admitted_ref) -> bool` (True only for an admitted, current, unrevoked instance)."""
+    """-> (state, reason). `resolver(admitted_ref) -> ResolvedExpectation | None` (R42: the instance itself; a bool or any other value is never usable)."""
     if type(at) is not int or not isinstance(subject, str) or not subject: raise Refusal("input", code="EXPECTATION_INPUT_INVALID")
     usable = []
     for a in assertions or ():
         if not isinstance(a, ExpectationAssertion) or a.subject != subject or not (a.valid_from <= at < a.valid_until): continue
-        try: ok = resolver is not None and resolver(a.admitted_ref) is True
+        try: ok = resolver is not None and _matches(a, resolver(a.admitted_ref))        # R42: payload/scope/window/currentness correlation, not ref existence
         except Refusal: ok = False
         if ok: usable.append(a)
     if not usable: return "EXPECTATION_UNKNOWN", "NO_ADMITTED_VALID_ASSERTION_FOR_SUBJECT_AT_TIME"

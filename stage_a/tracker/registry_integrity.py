@@ -15,7 +15,7 @@ OK, UNKNOWN, NOT_LIVE_SAFE = "OK", "UNKNOWN", "NOT_LIVE_SAFE"
 class Finding: check: str; state: str; code: str
 @dataclass(frozen=True)
 class IntegrityReport:
-    subject: str; findings: tuple; overall: str; authoritative: bool = False
+    subject: str; findings: tuple; overall: str; authoritative: bool = False; creation_request_id: str = ""; checked_at: object = None          # R42: the report names WHAT it covers (subject/version in `subject`, the entry's creation request) and WHEN it was computed; a consumer must bind these, never just read `overall`
 def _f(check, state, code=""): return Finding(check, state, code)
 def check_registry_entry(entry, *, lifecycle, relationships=None, schema_version=None, survivor_pointers=None, owner_check=None, evidence_resolver=None, evidence_claim=None, evidence_pins=None, now=None, watermark=None, creation_request_known=None):
     from .registry_entry import RegistryEntry
@@ -60,7 +60,7 @@ def check_registry_entry(entry, *, lifecycle, relationships=None, schema_version
         else: out.append(_f("load_bearing_evidence", NOT_LIVE_SAFE if rc.status == INVALID else UNKNOWN, ",".join(rc.reasons) or rc.status))
         out.append(_f("evidence_admission", OK if getattr(evidence_resolver._s, "admission", None) is not None else UNKNOWN, "" if getattr(evidence_resolver._s, "admission", None) is not None else "EVIDENCE_STORE_NOT_ADMITTED_HELD"))
     states = [f.state for f in out]; overall = NOT_LIVE_SAFE if NOT_LIVE_SAFE in states else UNKNOWN if UNKNOWN in states else "CHECKS_PASS_FACTS_ONLY"
-    return IntegrityReport(subj, tuple(out), overall)
+    return IntegrityReport(subj, tuple(out), overall, False, entry.creation_request_id, now)
 def quarantine_decision(report, context_metadata=None):
     """Safe quarantine does NOT wait for optional context metadata (DecisionContext 140-151); restoration is HELD without governed metadata and a passing integrity report. Facts only; the lifecycle journal remains the only authority for any transition."""
     if not isinstance(report, IntegrityReport): raise Refusal("report", code="REGISTRY_INTEGRITY_INPUT_INVALID")
