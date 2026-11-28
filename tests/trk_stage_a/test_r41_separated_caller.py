@@ -46,6 +46,30 @@ class Caller(unittest.TestCase):
         self.assertEqual(len([r for r in self.rig.journals.journal(fka.namespace()).read_from(1) if r.kind == "CANONICAL_ACCEPTED"]), 1)        # written by the CHILD acceptor into the same journal
         self.assertEqual(self._deliver(coa, fka, ra, "A1"), "NON_DELIVERY"); self.assertIsInstance(self._deliver(cob, fkb, rb, "B1", FB), G.Binding)
         self.c.declare_ancestry_complete("UP", "src"); self.assertIsInstance(self._deliver(coa, fka, ra, "A2"), G.Binding)
+    def test_r53_separated_child_acceptance_then_BOTH_FW_and_ML_deny_the_unknown_ancestry_feature_and_the_unrelated_BASE_delivers_to_both_before_between_after(self):
+        """R53 (Manager 23:37): the SAME separated child-process acceptance route, then committed SIM status, Core and Gateway, for BOTH consumers. A (declared upstream UP, UP ancestry never declared) is denied for FW and
+        ML; the unrelated BASE B delivers to FW and ML while A stays UNKNOWN; the affected ancestry is never cleared by B's delivery. Candidate SIMULATION; no qualification claim."""
+        from stage_a.errors import Refusal as Rf
+        from .test_r24_core import NONE_
+        pa, fka, coa = self._feature("mom3", 1); pb, fkb, cob = self._feature("mom4", 2); coa._up = {fka.key(): ("UP",)}; ver(self.c, "UP", version="1", at=9, age=50)
+        ra = coa.accept_and_publish(pa, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, accept_fn=self.acc)
+        rb = cob.accept_and_publish(pb, supplied(feature_id=FB), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, accept_fn=self.acc)
+        self.assertEqual((ra.outcome.stage, rb.outcome.stage), ("SEPARATED_ACCEPTED", "SEPARATED_ACCEPTED"))
+        def bind(fk, fid):
+            self.c.declare_ancestry_complete(fk.key(), "src"); b = G.HealthBinding(fid, fk.feature_version, I, I); self.c.associate_subject(fk.key(), b, "assoc"); return b, _entry(fid=fid, ver=fk.feature_version)
+        bA, eA = bind(fka, supplied().feature_id); bB, eB = bind(fkb, FB)
+        kw = lambda b: dict(binding=b, now=12, ref=R("hl"), resolved_at=11, tables=T)
+        def fw(co, e, r, b, tag):
+            try: return co.deliver("fw-" + tag, FI("FW", "M-A", "XAUUSD", tag), e, I, I, 3, 20, r, **kw(b))
+            except Rf as x: return x.code
+        ml = lambda co, e, r, b, tag, win: co.deliver_ml("ml-" + tag, FI("ML", "DS-" + tag, "XAUUSD", win), e, I, I, 3, 20, r, row_id="row-" + tag, generation_ref=R("gen"), vintage_mode="ORIGINAL_AS_OBSERVED", omissions=NONE_, exclusion_reason=lambda x: ("ENUM", "REASON", "REQUIRED_DEPENDENCY_ABSENT"), **kw(b))
+        self.assertEqual(fw(coa, eA, ra, bA, "A1"), "NON_DELIVERY")                                                           # BEFORE (FW)
+        self.assertFalse(ml(coa, eA, ra, bA, "A1", "W1").included)                                                          # BEFORE (ML): excluded with the explicit reason
+        gb = fw(cob, eB, rb, bB, "B1"); self.assertIsInstance(gb, G.Binding)                                                 # BASE -> FW
+        mb = ml(cob, eB, rb, bB, "B1", "W1"); self.assertTrue(mb.included); self.assertEqual(len(mb.bindings), 1)            # BASE -> ML
+        self.assertEqual(fw(coa, eA, ra, bA, "A2"), "NON_DELIVERY"); self.assertFalse(ml(coa, eA, ra, bA, "A2", "W2").included)   # AFTER: the affected feature is still denied
+        self.assertTrue(self.c._ancestry_blocks(self.c._replay(), fka.key())); self.assertFalse(self.c._ancestry_blocks(self.c._replay(), fkb.key()))
+        self.assertEqual(len([r for r in self.rig.journals.journal(fkb.namespace()).read_from(1) if r.kind == "CANONICAL_ACCEPTED"]), 1)       # B's acceptance was written by the CHILD acceptor
     def test_a_failed_child_job_never_yields_an_acceptance_or_publication(self):
         pa, fka, coa = self._feature("mom3", 1); self.sup._h.pop("tracker.verify"); self.sup._h["tracker.verify"] = ("tracker-verifier-worker", "stage_a.ops.separated_handlers:nonexistent")
         self.sup._replace("tracker-verifier-worker")
