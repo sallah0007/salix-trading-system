@@ -136,13 +136,19 @@ def verify_row_step(*, row, predecessor, schema, reference_step, decode, encode,
         for r in refs:
             try: got = None if invariant_resolver is None else invariant_resolver(r)
             except Exception as e: got = None; reasons.append("invariant_resolver:%s" % type(e).__name__)
-            if got is None: inv_ok = False; held.add("invariants_evaluated"); subject["invariants"] = "UNRESOLVED_HELD"; break
-            ph, prog = got
+            if got is not None and not (isinstance(got, tuple) and len(got) in (2, 3)): got = False                                          # malformed response: refuse (not held)
+            if got is None or (got is not False and got[0] is None): inv_ok = False; held.add("invariants_evaluated"); subject["invariants"] = "UNRESOLVED_HELD"; reasons.append("invariant_identity_absent" if got is not None else "invariant_unresolved"); break
+            if got is False: inv_ok = False; subject["invariants"] = "INVARIANT_RESOLVER_RESPONSE_MALFORMED"; reasons.append("invariant_response_malformed"); break
+            ph, prog = got[0], got[1]
+            if type(ph) is not bytes or len(ph) != 32 or not callable(prog): inv_ok = False; subject["invariants"] = "INVARIANT_IDENTITY_MALFORMED"; reasons.append("invariant_identity_malformed"); break      # a label that is not a 32-byte hash is never an identity
+            if len(got) == 3:                                                                                                                  # the resolver echoes WHAT it resolved: it must be the requested ref's type/id/version
+                e = got[2]
+                if (getattr(e, "ref_type", None), getattr(e, "target_id", None), getattr(e, "target_version", None)) != (r.ref_type, r.target_id, r.target_version): inv_ok = False; subject["invariants"] = "INVARIANT_RESOLVED_REF_MISMATCH"; reasons.append("invariant_resolved_ref_mismatch"); break
             if getattr(r, "target_hash", None) not in (None, ph): inv_ok = False; subject["invariants"] = "PROGRAM_HASH_MISMATCH"; reasons.append("invariant_program_hash_mismatch"); break
             try: v = prog(_snap(exp), None if prior is None else _snap(prior), _snap(vals))
             except Exception as e: v = None; reasons.append("invariant_program:%s" % type(e).__name__)
             if v is not True: inv_ok = False; subject["invariants"] = "RULE_FAILED" if v is False else "RULE_NOT_BOOLEAN"; break
-            hashes.append(ph.hex() if isinstance(ph, bytes) else str(ph))
+            hashes.append(ph.hex() + (":PINNED" if getattr(r, "target_hash", None) == ph else ":RESOLVER_REPORTED_UNPINNED"))
         else: subject["invariants"] = "EVALUATED_PASS"; subject["invariant_program_hashes"] = ",".join(hashes)
     chk("invariants_evaluated", inv_ok)
     if held: pad_fail = [n for n, v in checks if not v and n not in held]; return done(FAIL if pad_fail else INSUFFICIENT_EVIDENCE)

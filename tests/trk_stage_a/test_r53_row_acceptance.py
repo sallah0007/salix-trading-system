@@ -207,3 +207,13 @@ def test_acceptor_refuses_a_receipted_PASS_whose_subject_lacks_the_identity_and_
         res = VRES._issue_result("PASS", VR.SCOPE_ROW_STEP, dict(good.subject, **{key: bad_v}), good.checks, good.reasons)      # a genuine receipt, degraded subject
         with pytest.raises(Refusal) as e: a.accept(h0, verification_result=res, verification_evidence_ref=Ref("VERIFICATION_EVIDENCE_REF", b"row-step", b"v1", bytes.fromhex(res.result_hash)), currentness_state="CURRENT", status_event="PUBLISHABLE")
         assert e.value.code == code and js.journal(ns).read_from(1) == []
+
+
+def test_acceptor_refuses_a_missing_or_short_invariant_identity_and_the_SAME_row_is_accepted_after_a_genuine_identity():
+    s, js, rows, out, a = rig(); h0 = out[0][1].row_hash; sc = copy.deepcopy(SCHEMA); sc[0]["INVARIANT_REF"] = Ref("INVARIANT_REF", b"acc-nonneg", b"v1", None); ns = RA.row_namespace(out[0][0]); prog = lambda st, prior, inputs: True
+    def acc_(res, ev): return a.accept(h0, verification_result=res, verification_evidence_ref=ev, currentness_state="CURRENT", status_event="PUBLISHABLE")
+    for ident, status in ((None, "INSUFFICIENT_EVIDENCE"), (b"x", "FAIL")):
+        res, ev = evidence_inv(a, h0, sc, lambda r, ident=ident: (ident, prog)); assert res.status == status
+        with pytest.raises(Refusal) as e: acc_(res, ev)
+        assert e.value.code == "VERIFICATION_NOT_PASS" and js.journal(ns).read_from(1) == []
+    res, ev = evidence_inv(a, h0, sc, lambda r: (b"\x07" * 32, prog)); rec = acc_(res, ev); assert rec.seq == 1 and acc_(res, ev) == rec                    # same row, retry after refusals
