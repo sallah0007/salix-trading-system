@@ -8,7 +8,8 @@ UNBOUND = "UNBOUND"
 SUPPLIED_FIELDS = ("actor_service_identity", "idempotency_key", "epoch_fence", "decision_accepted_timestamp", "available_as_of", "evidence_refs")
 SUBJECT_KEY = {"ORDER_ISSUED": "order_id", "ORDER_REVOKED": "order_id", "ORDER_PROVENANCE": "order_id", "CLAIM_BOUND": "claim_id", "CLAIM_CONSUMED": "claim_id", "CLAIM_RELEASED": "claim_id",
                "CLAIM_ABANDONED": "claim_id", "GRANT_REVOKED": "grant_id", "ATTEMPT_ADMITTED": "build_id", "ATTEMPT_REJECTED": "build_id", "LINEAGE_REPLACED": "new_creation_id",
-               "REVIEW_DECIDED": "package_id", "REPORT_DISPOSITION": "package_id"}      # the subject of a transition is the object whose state it changes
+               "REVIEW_DECIDED": "package_id", "REPORT_DISPOSITION": "package_id",
+               "CANONICAL_ACCEPTED": "feature_key", "PUBLISHABLE": "feature_key", "WITHDRAWN": "feature_key", "LIFECYCLE_TRANSITION": "subject", "SIM_STATUS_FACT": "feature_key"}      # R50: feature/lifecycle/status journals      # the subject of a transition is the object whose state it changes
 
 
 def transition_evidence(rec, *, prev_hash=None, **supplied):
