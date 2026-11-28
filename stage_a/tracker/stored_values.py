@@ -107,15 +107,16 @@ class StoredBinding:
 def run_stored_value_pass(core, bindings: dict, subjects, events=(), *, now: int, max_age: int, max_items: int):
     """R38 due/trigger wiring (one bounded pass, NOT a daemon/cadence): work = Core-due subjects UNION supplied (subject, trigger) events, one item per subject (Core's own trigger wins), at most `max_items` (the rest reported SKIPPED_BOUND_EXCEEDED); a subject without a StoredBinding is UNBOUND. Each run records `request_reverification` then the all-segment maintenance outcome in the SAME Core. Unrelated healthy subjects are untouched."""
     if type(max_items) is not int or max_items < 1: raise Refusal("max_items", code="SCHEDULER_BOUND_INVALID")
-    vers = {k: b.feature_key.feature_version for k, b in bindings.items() if isinstance(b, StoredBinding)}; work = {}
+    from .row_maintenance import RowBinding, record_row_maintenance
+    vers = {k: b.feature_key.feature_version for k, b in bindings.items() if isinstance(b, (StoredBinding, RowBinding))}; work = {}
     for sub, trig in core.due_for_reverification(list(subjects), now, vers): work[sub] = trig
     for sub, trig in sorted(events): work.setdefault(sub, trig)
     out = []
     for n, sub in enumerate(sorted(work)):
         b = bindings.get(sub)
         if n >= max_items: out.append((sub, work[sub], "SKIPPED_BOUND_EXCEEDED", "")); continue
-        if not isinstance(b, StoredBinding) or b.feature_key.key() != sub: out.append((sub, work[sub], "UNBOUND", "")); continue
+        if not isinstance(b, (StoredBinding, RowBinding)) or b.feature_key.key() != sub: out.append((sub, work[sub], "UNBOUND", "")); continue
         try:
-            core.request_reverification(sub, work[sub]); r = record_stored_value_maintenance_all(core, journal=b.journal, store=b.store, feature_key=b.feature_key, fetch=b.fetch, series_hash=b.series_hash, now=now, max_age=max_age); out.append((sub, work[sub], "VERIFIED" if r["l2"] == "PASS" else "RECORDED_NOT_PASS", r["overall"]))
+            core.request_reverification(sub, work[sub]); r = (record_row_maintenance(core, b, now=now, max_age=max_age) if isinstance(b, RowBinding) else record_stored_value_maintenance_all(core, journal=b.journal, store=b.store, feature_key=b.feature_key, fetch=b.fetch, series_hash=b.series_hash, now=now, max_age=max_age)); out.append((sub, work[sub], "VERIFIED" if r["l2"] == "PASS" else "RECORDED_NOT_PASS", r["overall"]))
         except Refusal as e: out.append((sub, work[sub], "REFUSED", e.code))
     return out

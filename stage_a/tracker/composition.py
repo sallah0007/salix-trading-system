@@ -111,6 +111,17 @@ class Composition:
         if stored_inputs is not None and not (isinstance(stored_inputs, dict) and stored_inputs.get("fetch") is fetch and stored_inputs.get("series_hash") is sh): raise Refusal(fk.key(), code="COMPOSITION_MAINTENANCE_INPUT_NOT_THE_ACCEPTANCE_INPUT")
         j = self._js.journal(fk.namespace()); SV._require_same_class(self._core, j, self._st)
         b = SV.StoredBinding(j, self._st, fk, fetch, sh); self._sv[fk.key()] = b; return b
+    def register_row_maintenance(self, result, profile):
+        """R53 generic per-ROW L2 over THIS feature's stored rows (`row_maintenance`): a `RowBinding` is registered only for a result this Composition published; it reuses the committed row store, the ROW_ACCEPTED journals and a SUPPLIED independent-verifier profile (absent/incomplete => the maintenance result is UNAVAILABLE/NOT_HEALTHY, never PASS). When the feature also has a feature-version StoredBinding the two are combined WORST-OF in one Core record. No cadence/calendar; the profile instance is not appointed here."""
+        from . import row_maintenance as RM
+        from .materialization import row_store as RS
+        fk = getattr(result, "feature_key", None)
+        if fk is None or self._published.get(fk.key()) is not result: raise Refusal(getattr(fk, "key", lambda: None)(), code="COMPOSITION_RESULT_NOT_THIS_PUBLICATION")
+        tables = profile.get("tables") if isinstance(profile, dict) else None
+        j = self._js.journal(fk.namespace()); SV._require_same_class(self._core, j, self._st)
+        rows = RS.PendingRowStore(self._st, tables) if tables is not None else None
+        prev = self._sv.get(fk.key()); seg = prev.segments if isinstance(prev, RM.RowBinding) else prev
+        b = RM.RowBinding(self._js, rows, self._st, fk, profile if (rows is not None and RM._profile_ok(profile)) else None, seg); self._sv[fk.key()] = b; return b
     def run_maintenance(self, events=(), *, now, max_age, max_items, subjects=None):
         """One bounded all-segment L2 pass over the registered subjects through the existing `run_stored_value_pass` (Core due-ness UNION supplied (subject, trigger) events; no daemon/cadence here). Results are recorded in the SAME Core the Gateway reads health from, so a failing/unavailable segment makes later delivery NON_DELIVERY."""
         return SV.run_stored_value_pass(self._core, dict(self._sv), sorted(self._sv) if subjects is None else list(subjects), events, now=now, max_age=max_age, max_items=max_items)
