@@ -20,6 +20,7 @@ from ..errors import Refusal, StaleFence, UnknownCommit, IntegrityFailure
 from ..coordination import transition_record as T
 from ..coordination.recovery import resolve_unknown_commit, COMMITTED
 from ..replay import replay
+from ..coordination import attempt_time as AT
 from ..authority import AuthorityRef
 from .terminal_identity import subject_terminal_resolution, UNRESOLVED
 from .quant_intake_adapter import (admit, reserve_authority, build_safe_intake_report, build_candidate,
@@ -69,12 +70,14 @@ class Outcome:
         return self.accepted is not None
 
 class TrackerPipeline:
-    def __init__(self, *, store, claims, journals, clock, events, accepted_fit_generations=None, baseline=None, conformance_source=None, duty_source=None, simulation=False, producer_authority=None, ancestry_resolver=None):
+    def __init__(self, *, store, claims, journals, clock, events, accepted_fit_generations=None, baseline=None, conformance_source=None, duty_source=None, simulation=False, producer_authority=None, ancestry_resolver=None, attempt_time_port=None):
         self._store, self._claims, self._journals = store, claims, journals
         self._clock, self._events = clock, events; self.sink_failures = 0          # R37: telemetry is NON-authoritative; a failing sink is counted and never changes, masks or aborts a pipeline outcome
         self._fits = dict(accepted_fit_generations or {})
         self._baseline = baseline
         self._conformance_source = conformance_source
+        if attempt_time_port is not None: AT.port_ok(attempt_time_port)          # R52 E03-F1: SUPPLIED candidate acceptance-time port (None => no time field is written; historical/untimed records stay UNKNOWN). A plain supplied port is NOT an admitted clock: nothing here qualifies.
+        self._attempt_time_port = attempt_time_port
         self._ancestry_resolver = ancestry_resolver          # R54: EXPLICIT owner-supplied ancestry resolver (None => learned-derived builds are held as ancestry UNKNOWN)
         self._producer_authority = producer_authority        # SUPPLIED source-owned seven-field authority (None => the duty is labelled unverified, not invented)
         # AUTHORITY-CLASS BOUNDARY: the caller's simulation flag cannot choose where records land. Simulation needs a SIMULATION store/journals/claims; a qualified run needs QUALIFIED ones,
@@ -226,6 +229,7 @@ class TrackerPipeline:
         ns, version = fk.namespace(), fk.feature_version
         j = self._journals.journal(ns)
         claim_id = "CLAIM:" + pkg.request_id
+        seen_times = set()
         for _ in range(3):
             if not j.epoch_is_current():          # check the fence BEFORE exercising one-shot authority
                 raise StaleFence("fence lost before acceptance")
@@ -252,6 +256,7 @@ class TrackerPipeline:
             if not self._store.put_if_absent(mk, mb):
                 g = self._store.get(mk)
                 if g is None or g[0] != mb: raise IntegrityFailure("accepted materialization key %s holds different bytes" % mk)
+            if self._attempt_time_port is not None: body[AT.TIME_KEY] = AT.mint_fresh(self._attempt_time_port, seen_times)        # a FRESH time for THIS CAS attempt; a failed CAS rebuilds body/hash/key (loop) and re-mints
             T.validate_body(T.CANONICAL_ACCEPTED, body)
             T.check_transition(None, T.CANONICAL_ACCEPTED)
             head = j.head()
@@ -262,10 +267,8 @@ class TrackerPipeline:
             except HeadMismatch:
                 continue
             except UnknownCommit:
-                if resolve_unknown_commit(j, kind=T.CANONICAL_ACCEPTED, body_json=canonical_json(body)) == COMMITTED:
-                    for r in j.read_from(1):
-                        if r.kind == T.CANONICAL_ACCEPTED and r.body_json == canonical_json(body):
-                            return r
+                r = AT.find_attempt(j, head, T.CANONICAL_ACCEPTED, canonical_json(body))          # R52: resolve THIS attempt (position + body), not any chain-wide match; landed => the SAME winning record/time, else the loop re-evaluates and re-mints
+                if r is not None: return r
                 continue
         raise Refusal("head race exhausted", code="FENCE_RACE_EXHAUSTED")
 
