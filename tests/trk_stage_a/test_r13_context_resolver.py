@@ -85,3 +85,16 @@ class R52DailyRequiredItems(unittest.TestCase):
         from stage_a.context.news_hub_v2 import check_daily_record
         self.assertIsNone(check_daily_record(daily())); self.assertIsNone(check_daily_record(daily(APPLICABILITY_MAP_ID="m", APPLICABILITY_MAP_VERSION="1")))
         for k in ("APPLICABILITY_MAP_ID", "APPLICABILITY_MAP_VERSION"): self.assertEqual(code(check_daily_record, daily(**{k: "x"})), "DAILY_RECORD_CONDITIONAL_GROUP_INCOMPLETE", k)
+
+
+class R52InterpretiveLabels(unittest.TestCase):
+    """R52 (Registry p293): the four named interpretive labels are refused in a factual event record; a clean record passes; unenumerated 'equivalents' are NOT guessed."""
+    def test_named_labels_refused_as_value_or_field_and_clean_record_passes(self):
+        from stage_a.context.news_hub_v2 import check_event_record, INTERPRETIVE_LABELS
+        from stage_a.errors import Refusal
+        check_event_record(ev())                                                                    # positive control
+        for lab in INTERPRETIVE_LABELS:
+            for rec in (ev(EVENT_TYPE=lab), ev(**{lab: "x"}), ev(NOTE=" " + lab.lower() + " ")):
+                with self.assertRaises(Refusal) as e: check_event_record(rec)
+                self.assertEqual(e.exception.code, "EVENT_RECORD_INTERPRETIVE_LABEL", lab)
+        check_event_record(ev(NOTE="BULLISH_FOR_SILVER"))                                           # an unenumerated equivalent is NOT guessed (held)
