@@ -41,6 +41,15 @@ class FinalResolutionSource(unittest.TestCase):
         g = _gw(); g.final_store = D.DurableFinalResolutionStore(self.raw); g.final_store.recover(); g.set_watermark(100)
         g.resolve_window("r3", FI("FW", "B1", "XAUUSD", "WINDOW-3"), _entry(), I, I, 3, 10, _health()); self.assertNotEqual(head(), h0)
         ix2 = E05Index(); ix2.rebuild(self.src()); self.assertIsNotNone(ix2.lookup("stagea_consumer_binding_index", {"consumer_binding_id": "WINDOW-3"}, self.res))
+    def test_an_absence_outcome_is_refused_not_skipped_and_an_unreadable_listed_object_refuses(self):
+        import json
+        from stage_a.schema.encoding import Ref
+        raw = InMemoryObjectStore(); ident = FI("FW", "B1", "XAUUSD", "WINDOW-9"); out = G.AbsenceApplied("r9", b"f" * 16, "1", Ref("R", b"x", b"v", None))
+        raw.put_if_absent(D._ident_key(ident), json.dumps({"identity": D.encode(ident), "outcome": D.encode(out)}, sort_keys=True, separators=(",", ":")).encode())
+        src = S.final_resolution_source(raw, binding_columns=bind_cols, non_delivery_columns=nd_cols); self.assertEqual(code(lambda: list(src[1]())), "E05_SOURCE_OUTCOME_TYPE_UNMAPPED")
+        class Flaky(InMemoryObjectStore):
+            def get(self, k): return None
+        f = Flaky(); f._d = dict(raw._d); self.assertEqual(code(lambda: S.final_resolution_source(f)[0]()), "E05_SOURCE_LISTED_OBJECT_UNREADABLE")
 class SequenceSources(unittest.TestCase):
     def test_fit_generation_mapping_projects_and_a_changed_generation_hash_is_drift(self):
         fits = {1: "a" * 64, 2: "b" * 64}
@@ -56,6 +65,9 @@ class SequenceSources(unittest.TestCase):
         ix = E05Index(); src = S.sequence_source("stagea_health_index", sink.evidence, ident, hsh, cols, ref_prefix="health:"); ix.rebuild({"h": src})
         res = S.sequence_resolver(sink.evidence, ident, hsh, ref_prefix="health:"); self.assertIsNotNone(ix.lookup("stagea_health_index", {"health_evidence_id": "1/m"}, res))
         sink.emit(FeatureHealthEvidence("1", b"i" * 16, b"t" * 16, materialization_version="m")); self.assertEqual(code(src[0]), "E05_SOURCE_DUPLICATE_IDENT")
+    def test_an_empty_ident_refuses_and_a_changed_owner_hash_moves_the_head_under_the_same_ident(self):
+        h = ["a" * 64]; mk = lambda i: S.sequence_source("stagea_fit_generation_index", lambda: [1], lambda o: i, lambda o: h[0], lambda o: dict(fit_generation_ref="f", feature_id="F", feature_version="1", available_asof=0), ref_prefix="fit:")
+        self.assertEqual(code(lambda: mk("")[0]()), "E05_SOURCE_IDENT_INVALID"); src = mk("1"); h0 = src[0](); h[0] = "b" * 64; self.assertNotEqual(src[0](), h0)
     def test_event_context_has_no_owning_store_and_is_held_not_fabricated(self):
         self.assertEqual(code(S.event_context_source), "E05_SOURCE_EVENT_CONTEXT_HELD_NO_OWNING_STORE")
     def test_invalid_inputs_refuse(self):
