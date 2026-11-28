@@ -32,9 +32,12 @@ class Composition:
             if o is None: raise Refusal(n, code="COMPOSITION_PART_MISSING")
         if not callable(gateway_factory): raise Refusal("gateway_factory", code="COMPOSITION_PART_MISSING")
         self._p, self._js, self._st, self._core, self._path, self._gf = pipeline, journals, store, core, path, gateway_factory; self._up = dict(upstream or {}); self.gateway = None
-    def accept_and_publish(self, pkg, supplied, status_token, *, sequence, now, max_age, stored_inputs=None, l2_applicability=None):
+    def accept_and_publish(self, pkg, supplied, status_token, *, sequence, now, max_age, stored_inputs=None, l2_applicability=None, research_lineage=None, attempt_id=None, lifecycle=None, lifecycle_transition=None):
         if l2_applicability is not None and not isinstance(l2_applicability, L2Applicability): raise Refusal("l2_applicability", code="COMPOSITION_L2_APPLICABILITY_INVALID")
-        r = CompositionResult("STARTED"); out = self._p.run(pkg); r.outcome = out
+        r = CompositionResult("STARTED")
+        if (research_lineage is None) != (attempt_id is None): r.status = "HELD_ATTEMPT_LINEAGE_INPUT_INCOMPLETE"; return r.log("attempt_lineage", "HELD", "research_lineage and attempt_id are supplied together")
+        if research_lineage is not None and not research_lineage.resolves(attempt_id): r.status = "ATTEMPT_UNRESOLVED"; return r.log("attempt_lineage", "REFUSED", "the supplied attempt id is not held by the research ledger")      # R39: ResearchLineage.resolves is now on the caller path (when supplied); nothing is published for an unresolved attempt
+        out = self._p.run(pkg); r.outcome = out
         if getattr(out, "accepted", None) is None or out.accepted.kind != "CANONICAL_ACCEPTED": r.status = "NOT_ACCEPTED"; return r.log("accept", "REFUSED", str(getattr(out, "stage", "")))
         fk = out.admission.feature_key; r.feature_key = fk; key = fk.key(); r.log("accept", "OK", out.accepted.kind)
         j = self._js.journal(fk.namespace())
@@ -57,6 +60,11 @@ class Composition:
             r.l2_scope = {"scope_ref": l2_applicability.scope_ref, "contract_ref": l2_applicability.contract_ref, "required": False}; r.log("stored_values_l2", "NOT_REQUIRED_PER_SUPPLIED_SCOPE", l2_applicability.scope_ref)
         else: absent("STORED_VALUES_REQUIRED_BUT_NOT_SUPPLIED" if l2_applicability is not None else "L2_APPLICABILITY_UNBOUND_HELD")
         self._path.commit(fk, supplied, status_token, sequence=sequence); r.projection = self._path.status_projection(); self.gateway = self._gf(r.projection); r.published_rows = self._path.feed(self.gateway); r.log("committed_status_and_rows", "OK", "rows=%d" % r.published_rows)
+        if lifecycle_transition is not None or lifecycle is not None:        # R39: the ACTUAL LifecycleFramework.apply call, only when BOTH a framework and an explicit transition are supplied; an unbound policy is HELD, never a guessed state
+            if lifecycle is None or lifecycle_transition is None: r.log("lifecycle", "HELD", "COMPOSITION_LIFECYCLE_INPUT_INCOMPLETE")
+            else:
+                try: rec = lifecycle.apply(key, *lifecycle_transition); r.log("lifecycle", "APPLIED" if rec is not None else "IDEMPOTENT_NOOP", lifecycle_transition[0])
+                except Refusal as e: r.log("lifecycle", "HELD" if e.code in ("LIFECYCLE_POLICY_HELD", "LIFECYCLE_EVIDENCE_CHECK_HELD") else "REFUSED", e.code)
         r.status = "PUBLISHED_SIMULATION" if l2_ok[0] else "PUBLISHED_SIMULATION_L2_NOT_PASS"; return r
     def deliver(self, request_id, identity, entry, instrument_id, timeframe_id, step_index, event_time, result: CompositionResult, *, binding, now, ref, resolved_at, tables):
         """Gateway resolution for ONE FW window under the composed Core Health. Returns the Binding after the FW verified receive; a non-delivery raises `NON_DELIVERY`."""

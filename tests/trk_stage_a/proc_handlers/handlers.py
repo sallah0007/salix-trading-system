@@ -23,3 +23,6 @@ def oversized_frame(job):
 def malformed_complete_line(job):
     import sys
     sys.stdout.write("this is not json\n"); sys.stdout.flush()
+def two_frames_one_flush(job):
+    import sys
+    sys.stdout.write('{"a":1}\n{"b":2}\n'); sys.stdout.flush()

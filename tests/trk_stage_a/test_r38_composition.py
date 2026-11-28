@@ -80,4 +80,31 @@ class L2(unittest.TestCase):
         from stage_a.tracker import stored_values as SV
         for k in [k for k in rig.store._i._d if SV.STORED_PREFIX in k]: rig.store._i._d.pop(k)                                                      # the stored segment goes missing
         v = SV.verify_all_stored_segments(journal=rig.journals.journal(fk.namespace()), store=rig.store, feature_key=fk, fetch=lambda ref: SER, series_hash=H); self.assertEqual((v["l2"], v["reason"]), ("UNAVAILABLE", "STORED_VALUES_ABSENT"))
+from stage_a.coordination.lifecycle_framework import LifecycleFramework as LF, LifecyclePolicy as LP
+from stage_a.tracker.research_lineage import ResearchLineage
+from stage_a.tracker.registry_entry import build_registry_entry
+POL = LP(("A", "B"), frozenset({(None, "A"), ("A", "B")}), frozenset({"B"}), "TEST-POLICY-NOT-A-SOURCE-GRAPH")
+def LFW(policy, ev=lambda s, f, t, e: e == "good"):
+    j = ObjectStoreJournal(InMemoryObjectStore(), "lc", "w"); j.acquire_epoch(); return LF(j, policy, ev)
+class Hooks(unittest.TestCase):
+    def _pub(self, **kw):
+        rig, pkg, fk, c, co, path = comp(); return fk, co.accept_and_publish(pkg, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, **kw)
+    def test_lifecycle_apply_is_called_by_the_composition_only_with_a_framework_and_an_explicit_transition_and_unbound_policy_is_HELD(self):
+        fk, r = self._pub(); self.assertNotIn("lifecycle", [x[0] for x in r.steps])                                              # default: not invoked
+        lf = LFW(POL); fk, r = self._pub(lifecycle=lf, lifecycle_transition=("t1", None, "A", "good")); self.assertIn(("lifecycle", "APPLIED", "t1"), r.steps); self.assertEqual(lf.state_of(fk.key()), "A"); self.assertEqual(r.status, "PUBLISHED_SIMULATION")
+        fk, r = self._pub(lifecycle=LFW(None), lifecycle_transition=("t1", None, "A", "good")); self.assertIn(("lifecycle", "HELD", "LIFECYCLE_POLICY_HELD"), r.steps)                 # unbound: HELD, no state guessed
+        fk, r = self._pub(lifecycle=LFW(POL), lifecycle_transition=("t1", None, "B", "good")); self.assertEqual([x for x in r.steps if x[0] == "lifecycle"][0][1:], ("REFUSED", "LIFECYCLE_TRANSITION_NOT_ALLOWED_BY_POLICY"))
+        fk, r = self._pub(lifecycle=LFW(POL), lifecycle_transition=("t1", None, "A", "bad")); self.assertEqual([x for x in r.steps if x[0] == "lifecycle"][0][1:], ("REFUSED", "LIFECYCLE_EVIDENCE_NOT_ACCEPTED"))
+        fk, r = self._pub(lifecycle=LFW(POL)); self.assertEqual([x for x in r.steps if x[0] == "lifecycle"][0][1:], ("HELD", "COMPOSITION_LIFECYCLE_INPUT_INCOMPLETE"))
+    def test_an_attempt_id_the_research_ledger_does_not_hold_stops_before_any_publication_and_a_held_one_publishes(self):
+        j = ObjectStoreJournal(InMemoryObjectStore(), "lin", "w"); j.acquire_epoch(); l = ResearchLineage(j); l.register_battery("F", "B1"); l.record_attempt("a1", "F", "B1", "in", "h", "p", "COMPLETED", "o")
+        rig, pkg, fk, c, co, path = comp(); r = co.accept_and_publish(pkg, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, research_lineage=l, attempt_id="ghost"); self.assertEqual((r.status, path._sj.head().seq, co.gateway), ("ATTEMPT_UNRESOLVED", 0, None))
+        r = co.accept_and_publish(pkg, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, research_lineage=l); self.assertEqual(r.status, "HELD_ATTEMPT_LINEAGE_INPUT_INCOMPLETE")
+        rig, pkg, fk, c, co, path = comp(); r = co.accept_and_publish(pkg, supplied(), "SIM_CUR", sequence=1, now=10, max_age=50, l2_applicability=AP, research_lineage=l, attempt_id="a1"); self.assertEqual(r.status, "PUBLISHED_SIMULATION")
+    def test_registry_entry_derives_disposition_history_from_the_single_lifecycle_journal_and_validates_origin_and_survivors(self):
+        lf = LFW(POL); lf.apply("S1", "t1", None, "A", "good"); lf.apply("S1", "t2", "A", "B", "good"); e = build_registry_entry("S1", "BUILDER", "REQ-1", lf, survivor_pointers={"S1": "S2"}, test_evidence_refs=("EV1",))
+        self.assertEqual((e.canonical_survivor_id, e.survivor_chain, [h[0] for h in e.disposition_history], [h[2] for h in e.disposition_history]), ("S2", ("S1", "S2"), ["t1", "t2"], ["A", "B"])); self.assertEqual(build_registry_entry("S9", "NATIVE", "R", lf).disposition_history, ())
+        self.assertEqual(build_registry_entry("S1", "BUILDER", "R", LFW(None)).disposition_history, ())                       # unbound policy: history is READABLE, no status mapped
+        for bad in (dict(origin="SPECULATIVE"), dict(creation_request_id=""), dict(test_evidence_refs=("EV", "EV")), dict(test_evidence_refs=["EV"])): self.assertEqual(code(lambda b=bad: build_registry_entry("S1", **dict(dict(origin="BUILDER", creation_request_id="R", lifecycle=lf), **b))), "REGISTRY_ENTRY_INPUT_INVALID")
+        self.assertEqual(code(build_registry_entry, "S1", "BUILDER", "R", None), "REGISTRY_ENTRY_LIFECYCLE_SOURCE_REQUIRED"); self.assertEqual(code(build_registry_entry, "S1", "BUILDER", "R", lf, survivor_pointers={"S1": "S2", "S2": "S1"}), "SURVIVOR_CYCLE")
 if __name__ == "__main__": unittest.main()

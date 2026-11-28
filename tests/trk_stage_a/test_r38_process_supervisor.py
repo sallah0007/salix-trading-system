@@ -11,7 +11,7 @@ PATHS = (os.path.dirname(HP),)
 M = "proc_handlers.handlers:"
 def job(d, name, kind="mat", h="h1"): return W.Job("j-" + name, kind, "idem-" + name, ((os.path.join(d, name), h),))
 def sup(q, **kw):
-    hs = {"mat": ("tracker-materializer-worker", M + "ok"), "ver": ("tracker-verifier-worker", M + "ok"), "die": ("tracker-materializer-worker", M + "die_once"), "fail": ("tracker-acceptance-worker", M + "always_fail"), "hang": ("tracker-verifier-worker", M + "hang_once"), "part": ("tracker-verifier-worker", M + "partial_frame_hang"), "big": ("tracker-verifier-worker", M + "oversized_frame"), "bad": ("tracker-verifier-worker", M + "malformed_complete_line")}
+    hs = {"mat": ("tracker-materializer-worker", M + "ok"), "ver": ("tracker-verifier-worker", M + "ok"), "die": ("tracker-materializer-worker", M + "die_once"), "fail": ("tracker-acceptance-worker", M + "always_fail"), "hang": ("tracker-verifier-worker", M + "hang_once"), "part": ("tracker-verifier-worker", M + "partial_frame_hang"), "big": ("tracker-verifier-worker", M + "oversized_frame"), "bad": ("tracker-verifier-worker", M + "malformed_complete_line"), "two": ("tracker-verifier-worker", M + "two_frames_one_flush")}
     return ProcessSupervisor(q, hs, extra_paths=PATHS, **kw)
 def rd(path):
     with open(path) as f: return f.read().split()
@@ -79,6 +79,10 @@ class Frame(unittest.TestCase):
             for k, c in (("part", "CHILD_REPLY_TIMEOUT"), ("big", "CHILD_REPLY_OVERSIZED"), ("bad", "CHILD_REPLY_MALFORMED")):
                 self.assertEqual(s._ask("tracker-verifier-worker", job(d, "r" + k, k)), ("LOST", c)); s._replace("tracker-verifier-worker")
             s._q.submit(job(d, "g", "ver")); self.assertEqual(s.run_one(), ("idem-g", "DONE"))
+    def test_trailing_bytes_after_the_frame_are_malformed_and_close_closes_every_stream(self):
+        with tempfile.TemporaryDirectory() as d, sup(W.JobQueue(), reply_timeout=2) as s:
+            self.assertEqual(s._ask("tracker-verifier-worker", job(d, "t", "two")), ("LOST", "CHILD_REPLY_MALFORMED"))
+        for p in s._procs.values(): self.assertTrue(p.stdin.closed and p.stdout.closed and p.poll() is not None)                  # close() reaps AND closes the pipes (root's ResourceWarning)
     def test_timeout_must_be_a_finite_non_bool_positive_number_and_replaced_streams_are_closed(self):
         for bad in (True, float("inf"), float("nan"), 0, -1, "1"): self.assertEqual(code(sup, W.JobQueue(), reply_timeout=bad), "SUPERVISOR_CONFIG_INVALID")
         with tempfile.TemporaryDirectory() as d, sup(W.JobQueue()) as s:

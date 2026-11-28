@@ -48,5 +48,9 @@ class Redirect(Scope):
         b = SV.StoredBinding(self.kw["journal"], self.kw["store"], self.kw["feature_key"], fetch, H); c2 = core(); o = SV.run_stored_value_pass(c2, {key: b}, [key], now=10, max_age=50, max_items=2); self.assertEqual(o[0][2], "RECORDED_NOT_PASS")
         d[kb] = good; self.assertEqual(SV.verify_all_stored_segments(fetch=fetch, **a)["l2"], "PASS")                                              # restored: genuine two-segment positive again
         other = dict(bad, bindings=self.b2, segment_id="x" * 64); d[kb] = (canonical_bytes(other), 1); self.assertEqual(SV.verify_all_stored_segments(fetch=fetch, **a)["overall"], "FAIL"); d[kb] = good
+        for mut in (lambda r: dict(r, segment_id="x" * 64), lambda r: dict(r, materialization_hash="y" * 64), lambda r: dict(r, feature_key="OTHER/KEY/v/1")):
+            d[kb] = (canonical_bytes(mut(json.loads(good[0]))), 1); self.assertEqual(SV.verify_all_stored_segments(fetch=fetch, **a)["l2"], "FAIL"); d[kb] = good            # each identity field is checked on its own
+        d[kb] = self_a = d[_PREFIX + SV.stored_values_key(mh, SV.segment_id(self.kw["bindings"]))]; self.assertEqual(SV.verify_all_stored_segments(fetch=fetch, **a)["l2"], "FAIL"); d[kb] = good          # a CONSISTENT copy of A's whole record under B's key is also a FAIL (key != calculated key)
+        self.assertEqual(SV.verify_all_stored_segments(fetch=fetch, **a)["l2"], "PASS")
 del Scope
 if __name__ == "__main__": unittest.main()

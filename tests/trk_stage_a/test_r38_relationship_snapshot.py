@@ -52,6 +52,9 @@ class Rel(unittest.TestCase):
         j3 = ObjectStoreJournal(InMemoryObjectStore(), "r3", "w"); j3.acquire_epoch(); un = RS.RelationshipStore(j3, lambda x: True); self.assertEqual(code(un.append, cor), "RELATIONSHIP_SCHEMA_NOT_THE_CURRENT_BOUND_SCHEMA")
         nc = RS.RelationshipStore(j3, lambda x: True, schema=S); self.assertEqual(code(nc.append, cor), "RELATIONSHIP_RECOMPUTATION_INPUTS_NOT_BOUND_HELD"); self.assertEqual(j3.head().seq, 0)
         r = RS.RelationshipStore(self.j, lambda x: True, schema=S).successor_reference(a, "X/Y/z/4", "DS1"); self.assertEqual((r.claim_allowed, r.reason), (False, "RELATIONSHIP_RECOMPUTATION_INPUTS_NOT_BOUND_HELD"))      # a stored record without recompute inputs never allows the claim
+    def test_a_historical_pinned_record_under_another_schema_is_kept_but_never_a_current_claim(self):
+        st, C = self._st(); a = self.a; self.j.append(self.j.head(), "VERSION_RELATIONSHIP", {"predecessor": a, "successor": "X/Y/z/2", "schema_version": "DS0", "state": VD.COMPUTED, "changed_fields": ["source_path"], "class": VD.PROVENANCE_CHANGE, "reason": "", "evidence_refs": [], "record_id": "hist"})
+        self.assertEqual(st.pinned("hist").schema_version, "DS0"); r = st.successor_reference(a, "X/Y/z/2", "DS0"); self.assertEqual((r.claim_allowed, r.reason), (False, "CURRENT_SCHEMA_NOT_BOUND_HELD"))           # exact historical pin preserved; current eligibility is separate
     def test_a_stored_record_that_the_compute_path_no_longer_reproduces_fails_the_claim_closed(self):
         st, C = self._st(); a = self.a; st.append(VD.compute(S, a, C[a], "X/Y/z/2", C["X/Y/z/2"])); C["X/Y/z/2"]["source_path"] = "p9"; C["X/Y/z/2"]["formula"] = "fz"
         r = st.successor_reference(a, "X/Y/z/2", "DS1"); self.assertEqual((r.claim_allowed, r.reason), (False, "RECORD_DOES_NOT_MATCH_RECOMPUTATION"))
@@ -76,6 +79,13 @@ class Bind(unittest.TestCase):
         self.assertEqual(code(SB.bind_snapshot_manifest, c, self._mv(timeframe_or_event_class="D1"), mh), "SNAPSHOT_FIELD_DISAGREES_WITH_OWNING_OBSERVATIONS")
         for f in ("source_provider_identity", "raw_source_version", "broker_utc_rule_version"): self.assertEqual(code(SB.bind_snapshot_manifest, c, self._mv(**{f: "OTHER"}), mh), "SNAPSHOT_FIELD_DISAGREES_WITH_RECORDED_OBSERVATION_FACTS", f)
         b = SB.bind_snapshot_manifest(c, self._mv(), mh); self.assertNotIn("source_provider_identity", b.unbound_fields); self.assertIn("utc_identity", b.unbound_fields)
+    def test_each_entry_must_be_RESOLVED_SELECTED_and_parented(self):
+        c, out = self._resolved("ORIGINAL_AS_OBSERVED"); mh = out["resolved_manifest_hash"]; base = c.resolved_manifest(mh)
+        for k, v in (("selection_state", "AMBIGUOUS"), ("state", "UNRESOLVED"), ("parent_id", None)):
+            class Stub:
+                def resolved_manifest(self, h, k=k, v=v): b = dict(base); b["entries"] = [dict(base["entries"][0], **{k: v})] + [dict(e) for e in base["entries"][1:]]; return b
+                def observation_facts(self, key): return c.observation_facts(key)
+            self.assertEqual(code(SB.bind_snapshot_manifest, Stub(), self._mv(), mh), "SNAPSHOT_ENTRY_NOT_RESOLVED", k)
     def test_each_owned_field_disagreement_refuses(self):
         c0, o0 = self._resolved(); self.assertEqual(code(SB.bind_snapshot_manifest, c0, self._mv(), o0["resolved_manifest_hash"]), "SNAPSHOT_VINTAGE_LABEL_NOT_COMPARABLE_HELD")
         c, out = self._resolved("ORIGINAL_AS_OBSERVED"); mh = out["resolved_manifest_hash"]; self.assertEqual(code(SB.bind_snapshot_manifest, c, self._mv(data_vintage_mode="CURRENT_RECOMPUTED"), mh), "SNAPSHOT_VINTAGE_LABEL_NOT_COMPARABLE_HELD")                       # core vintage label 'v1' is not the manifest mode vocabulary: never guessed
