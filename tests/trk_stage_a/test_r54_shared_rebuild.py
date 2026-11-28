@@ -59,4 +59,14 @@ class SharedH1Desk(unittest.TestCase):
         bad = TypedH1(h1(REQUEST_ID="f0", MANIFEST_OR_DATASET_BINDING_ID="M-OTHER", CONSUMER_BINDING_ID="B1")); self.assertIsNotNone(code(d2.register_h1, bad, identity=ident))                    # manifest binding id != the issued identity's
     def test_unpublished_composition_has_no_desk(self):
         cr, (a, c, fkB, coB, rB, bB, eB, fw, ml) = rig(self); c2, co2 = cr._restart(a, c, fkB, rB); co2.gateway = None; self.assertEqual(code(co2.outcome_desk), "COMPOSITION_NOT_PUBLISHED")
+class SharedFwAssociation(unittest.TestCase):
+    def test_association_uses_the_composition_final_store_refuses_unissued_and_is_per_composition_after_restart(self):
+        cr, (a, c, fkB, coB, rB, bB, eB, fw, ml) = rig(self); b0 = fw(coB, rB, "f0", "W0"); ident = FI("FW", "M-f0", "XAUUSD", "W0"); fa = coB.fw_association(); self.assertIs(coB.fw_association(), fa)
+        self.assertEqual(fa.associate_request("f0", ident), b0); self.assertEqual(code(fa.associate_request, "f0", FI("FW", "M-f0", "XAUUSD", "W1")), "FW_REQUEST_NOT_BOUND_TO_IDENTITY_BY_STORE"); self.assertEqual(code(fa.associate_request, "ml", FI("ML", "D-m", "XAUUSD", "W0")), "FW_ASSOCIATION_NOT_AN_FW_REQUEST")
+        r = fa.record_return("E1", "f0", "EVIDENCE"); self.assertEqual((r.request_id, r.payload_binding), ("f0", "FW_RETURN_PAYLOAD_FIELDS_UNBOUND")); self.assertEqual(code(fa.record_return, "E1", "f0", "REQUEST"), "FW_RETURN_IMMUTABLE"); self.assertEqual(code(fa.record_return, "E2", "f0", "EVIDENCE", None, {"x": 1}), "FW_RETURN_PAYLOAD_NOT_ACCEPTED_UNBOUND")
+        self.assertEqual(code(fa.record_return, "E3", "never", "EVIDENCE"), "FW_RETURN_FOR_UNASSOCIATED_REQUEST")
+        c2, co2 = cr._restart(a, c, fkB, rB); r2 = co2.recover_publication(fkB); fa2 = co2.fw_association(); self.assertIsNot(fa2, fa); self.assertEqual(fa2.all_returns(), ())                       # in-memory returns are NOT durable (stated limit)
+        fw(co2, r2, "f0", "W0"); self.assertEqual(fa2.associate_request("f0", ident), b0)                                                                                     # the retained identity + stored outcome re-associate after the window retry
+    def test_unpublished_composition_has_no_association(self):
+        cr, (a, c, fkB, coB, rB, bB, eB, fw, ml) = rig(self); c2, co2 = cr._restart(a, c, fkB, rB); co2.gateway = None; self.assertEqual(code(co2.fw_association), "COMPOSITION_NOT_PUBLISHED")
 if __name__ == "__main__": unittest.main()

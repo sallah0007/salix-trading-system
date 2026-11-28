@@ -7,6 +7,7 @@ M = [(E, "ref_hash=hashlib.sha256(b).hexdigest(), data_vintage_mode=vintage_mode
      (C, 'if plane is not None and plane not in self.PLANES: raise Refusal(str(plane), code="UNKNOWN_PLANE")', "pass"),
      (E, "l = _listing(); return (len(l), hashlib.sha256(\"|\".join(\"%s:%d\" % (k, e) for k, e, _ in l).encode()).hexdigest())\n    def rows():\n        for k, _, b in _listing():\n            d = json.loads(b)", "l = _listing(); return (0, \"x\")\n    def rows():\n        for k, _, b in _listing():\n            d = json.loads(b)")]
 M += [(CO, 'if self.gateway is None: raise Refusal("not published", code="COMPOSITION_NOT_PUBLISHED")\n        d = getattr(self, "_desk", None)', 'd = getattr(self, "_desk", None)'), (CO, 'd = getattr(self, "_desk", None)', "d = None")]
+M += [(CO, 'a = getattr(self, "_fwa", None)', "a = None"), (CO, 'if self.gateway is None: raise Refusal("not published", code="COMPOSITION_NOT_PUBLISHED")\n        a = getattr(self, "_fwa", None)', 'a = getattr(self, "_fwa", None)')]
 bad = 0
 for i, (f, a, b) in enumerate(M):
     p = ROOT / f; o = p.read_text()

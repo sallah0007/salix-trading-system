@@ -143,6 +143,14 @@ class Composition:
             from ..fw.outcome_desk import OutcomeSeriesDesk
             d = self._desk = OutcomeSeriesDesk(self.gateway)
         return d
+    def fw_association(self):
+        """R54: the generic Tracker-owned FW request/return ASSOCIATION ledger (`fw/association.FwAssociation`) over THIS composition's own Gateway final store (identities only; return payload fields stay UNBOUND/held; returns are in-memory per Composition, so a rebuilt Composition starts with none - a durable return ledger is an ownership decision, not built)."""
+        if self.gateway is None: raise Refusal("not published", code="COMPOSITION_NOT_PUBLISHED")
+        a = getattr(self, "_fwa", None)
+        if a is None or getattr(a, "_store", None) is not self.gateway.final_store:
+            from ..fw.association import FwAssociation
+            a = self._fwa = FwAssociation(self.gateway.final_store)
+        return a
     def deliver(self, request_id, identity, entry, instrument_id, timeframe_id, step_index, event_time, result: CompositionResult, *, binding, now, ref, resolved_at, tables, health=None, consumer_manifest_id=None):
         """Gateway resolution for ONE FW window under the composed Core Health. Returns the Binding after the FW verified receive; a non-delivery raises `NON_DELIVERY`. Optional `health` (health.impact_supplier) adds the consumer-closure carried-upstream check BEFORE resolution; omitted => only the Core ancestry check applies (named in closeout 27)."""
         if self.gateway is None or result.feature_key is None: raise Refusal("not published", code="COMPOSITION_NOT_PUBLISHED")
