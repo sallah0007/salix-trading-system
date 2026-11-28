@@ -43,3 +43,31 @@ def require_real_binding(field: str, bindings: dict = None) -> object:
 
 def require_all(bindings: dict = None) -> None:
     for f in FIELDS: require_real_binding(f, bindings)
+
+
+# R52: REVIEWABLE statement of exactly what is missing per field. Documentary only: it produces no value, selects no binding, and is not an admission or an authorization.
+SOURCE_RELATION = {   # own-word reading of the A04 FW_crosswalk row (Manager-decoded raw payload, R52); NOT governing text
+    "OBSERVATION_REF": "H3 series identity plus observation-time origin: only a PARTIAL carrier; it does not identify one observation uniquely",
+    "DEPENDENCY_INTERVAL_START": "direct H3 field; exact boundary units/profile are required before any value is read",
+    "DEPENDENCY_INTERVAL_END": "direct H3 field; exact boundary units/profile are required before any value is read",
+    "HORIZON_ID": "direct H3 field", "HORIZON_VERSION": "direct H3 field",
+    "SEGMENT_REF": "no direct mapping is demonstrated: the authorized segment set is not per-observation membership",
+    "AUTHORIZED_SEGMENT_SET": "carried by the H3 authorized-segment-set/stage pair plus the consumer stage",
+    "KNOWABLE_AT": "no demonstrated direct field: AVAILABLE_ASOF is a decision cutoff, not per-observation knowability",
+    "ADMISSIBILITY_STATE": "FW-owned derived state: no external enum or default exists to bind",
+    "VINTAGE_REF": "constrained only by policy/mode: not an exact per-observation vintage identity"}
+def binding_declaration_review(bindings: dict = None) -> list:
+    """One row per field: the A04 status, the source relation, whether a real payload binding is declared, and the exact missing slots. A row is `CLOSABLE_BY_BINDING_DECLARATION` only for DIRECT/PARTIAL fields; MISSING/INTERNAL fields are
+    `NOT_CLOSABLE_BY_BINDING` (they need a source mapping or an FW-owned derivation, which no binding can supply)."""
+    b = ACTUAL_BINDINGS if bindings is None else bindings; rows = []
+    for f in FIELDS:
+        st = SOURCE_STATUS[f]; declared = b.get(f) is not None; closable = st not in (MISSING_EXACT_SOURCE_MAPPING, INTERNAL_DERIVATION_UNBOUND)
+        missing = []
+        if closable:
+            if not declared: missing.append("real payload binding: a seven-field producer binding (" + ", ".join(__import__("stage_a.binding.producer_binding", fromlist=["x"]).SEVEN_FIELDS) + ")")
+            missing.append("exact payload key naming where the value lives in the delivered payload")
+        else:
+            missing.append("exact source mapping" if st == MISSING_EXACT_SOURCE_MAPPING else "FW-owned derivation definition (owner, enum, defaults)")
+        rows.append({"field": f, "a04_status": st, "source_relation": SOURCE_RELATION[f], "actual_payload_binding": "DECLARED_SHAPE_ONLY" if declared and closable else "NULL",
+                     "classification": "CLOSABLE_BY_BINDING_DECLARATION" if closable else "NOT_CLOSABLE_BY_BINDING", "missing": missing})
+    return rows
