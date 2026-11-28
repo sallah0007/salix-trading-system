@@ -71,7 +71,7 @@ class Outcome:
 class TrackerPipeline:
     def __init__(self, *, store, claims, journals, clock, events, accepted_fit_generations=None, baseline=None, conformance_source=None, duty_source=None, simulation=False, producer_authority=None):
         self._store, self._claims, self._journals = store, claims, journals
-        self._clock, self._events = clock, events
+        self._clock, self._events = clock, events; self.sink_failures = 0          # R37: telemetry is NON-authoritative; a failing sink is counted and never changes, masks or aborts a pipeline outcome
         self._fits = dict(accepted_fit_generations or {})
         self._baseline = baseline
         self._conformance_source = conformance_source
@@ -104,7 +104,7 @@ class TrackerPipeline:
             verdict, decision = "REJECT_FAIL_CLOSED", "REJECTED_INVALID"
         report = build_safe_intake_report(pkg, adm, clock=self._clock, verdict=verdict, identity_decision=decision,
                                           registry_ref=None)
-        self._events.emit("INTAKE_REJECTED", stage=stage, attempt=pkg.attempt_id, failed=list(adm.failed))
+        self._emit("INTAKE_REJECTED", stage=stage, attempt=pkg.attempt_id, failed=list(adm.failed))
         return Outcome(stage, FAILED_REQUESTED_BUILD, report=report, admission=adm, failures=list(adm.failed))
 
     def _release(self, claim_id, why):
@@ -115,7 +115,7 @@ class TrackerPipeline:
 
     # -------------------------------------------------------------------- run
     def run(self, pkg: BuildPackage) -> Outcome:
-        self._events.emit("INTAKE_STARTED", attempt=pkg.attempt_id, request=pkg.request_id)
+        self._emit("INTAKE_STARTED", attempt=pkg.attempt_id, request=pkg.request_id)
         adm = admit(pkg, accepted_fit_generations=self._fits, conformance=None if self._conformance_source is None else self._conformance_source(pkg), producer_authority=self._producer_authority)
         if adm.classification == NO_QUANT_FEATURE:
             lineage = self._claims.lineage(pkg.order_id, pkg.request_id)
@@ -127,10 +127,10 @@ class TrackerPipeline:
                 # request to a classification is NOT bound here. An empty ClaimService.lineage() is absence in THIS journal, not proof that the governed request asked for no feature (unknown or
                 # unbound order/request ids give the same empty answer). Unknown source identity is therefore HELD/UNRESOLVED, never interpreted as NO_QUANT_FEATURE. A genuine no-quant positive
                 # exists only in explicit simulation until a verified Tracker classification source is supplied by its owner.
-                self._events.emit("CLASSIFICATION_UNRESOLVED_HELD", attempt=pkg.attempt_id)
+                self._emit("CLASSIFICATION_UNRESOLVED_HELD", attempt=pkg.attempt_id)
                 return Outcome("CLASSIFICATION", CLASSIFICATION_UNRESOLVED, admission=adm,
                                failures=[("CLASSIFICATION", "NO_QUANT_NOT_VERIFIED_NO_SOURCE_OWNED_REQUEST_CLASSIFICATION_MAPPING")])
-            self._events.emit("NO_QUANT_FEATURE", attempt=pkg.attempt_id)
+            self._emit("NO_QUANT_FEATURE", attempt=pkg.attempt_id)
             return Outcome("CLASSIFICATION", NO_QUANT_FEATURE, admission=adm, simulation=self._simulation)
         if not adm.admissible:
             return self._reject(pkg, adm, "ADMISSIBILITY")
@@ -183,19 +183,23 @@ class TrackerPipeline:
             accepted = self._accept(pkg, adm, cert, rec, ver, report)
         except ClaimRefusal as e:
             # authority was withdrawn/expired before it could be exercised: nothing was accepted
-            self._events.emit("ACCEPTANCE_REFUSED", code=e.code, attempt=pkg.attempt_id)
+            self._emit("ACCEPTANCE_REFUSED", code=e.code, attempt=pkg.attempt_id)
             self._release(claim_id, "AUTHORITY_REFUSED:" + e.code)
             raise Refusal(str(e), code=e.code)
         except (Refusal, StaleFence) as e:
             code = getattr(e, "code", "ACCEPTANCE_REFUSED")
-            self._events.emit("ACCEPTANCE_REFUSED", code=code, attempt=pkg.attempt_id)
+            self._emit("ACCEPTANCE_REFUSED", code=code, attempt=pkg.attempt_id)
             if code in ("VERSION_CONFLICT", "ILLEGAL_TRANSITION"):
                 self._release(claim_id, "ACCEPTANCE_REFUSED:" + code)
             raise
         ref = AuthorityRef(fk.namespace(), accepted.seq, accepted.record_hash).to_str()
-        self._events.emit("CANONICAL_ACCEPTED", attempt=pkg.attempt_id, authority=ref)
+        self._emit("CANONICAL_ACCEPTED", attempt=pkg.attempt_id, authority=ref)
         return Outcome("CANONICAL_ACCEPTANCE", QUANT_FEATURE, report=report, admission=adm, certification=cert,
                        materialization=rec, verification=ver, accepted=accepted, authority_ref=ref, duty_evidence=duty_ev, simulation=self._simulation)
+
+    def _emit(self, kind, **fields):
+        try: self._events.emit(kind, **fields)
+        except Exception: self.sink_failures += 1
 
     # ------------------------------------------------------------ baseline step
     def _register_baseline(self, pkg, adm, ver):
