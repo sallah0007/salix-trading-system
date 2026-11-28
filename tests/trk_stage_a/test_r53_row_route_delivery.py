@@ -83,3 +83,14 @@ class RowRoute(unittest.TestCase):
         b0b = self.both("B", r2, 0, 0, "0")[0](); self.assertEqual((b0b.request_id, b0b.delivered_feature_hash), (b0.request_id, b0.delivered_feature_hash))   # the exact stored outcome
         self.publish("B", 1); r3 = co2.recover_publication(fk); fw1, ml1 = self.both("B", r3, 1, 0, "1"); self.assertIsInstance(fw1(), G.Binding); self.assertTrue(ml1.included)  # a row accepted+published AFTER the restart
         self.assertEqual(code(self.both("B", r3, 2, 0, "2")[0]), "NON_DELIVERY")
+
+    def test_composition_publishes_an_accepted_row_first_class_and_refuses_foreign_result_foreign_path_and_unaccepted_rows(self):
+        fk, co = self.o["B"][0], self.o["B"][1]; res = co.recover_publication(fk); rp = RP.RowPublication(co._path, self.a.rig.journals, self.rows, T, self.a.rig.store)
+        kws = dict(sequence=1, visible_at=50, published_projection_hash=RH, data_vintage_mode="ORIGINAL_AS_OBSERVED", source_or_causal_policy_ref=R("pol")); h0 = self.chain["B"][0][1].row_hash
+        self.assertEqual(code(co.publish_accepted_row, res, rp, h0, "SIM_CUR", **kws), "ROW_NOT_ACCEPTED")                                                  # unaccepted: nothing published
+        self.assertEqual(code(self.both("B", res, 0, 0, "p")[0]), "NON_DELIVERY"); acc(self.acc, h0)
+        self.assertEqual(code(co.publish_accepted_row, self.o["B"][2], rp, h0, "SIM_CUR", **kws), "COMPOSITION_RESULT_NOT_THIS_PUBLICATION")                 # the build-time result is not the recovered one
+        other = RP.RowPublication(self.o["A"][1]._path, self.a.rig.journals, self.rows, T, self.a.rig.store); self.assertEqual(code(co.publish_accepted_row, res, other, h0, "SIM_CUR", **kws), "COMPOSITION_ROW_PUBLICATION_FOREIGN_PATH")
+        rec = co.publish_accepted_row(res, rp, h0, "SIM_CUR", **kws); self.assertEqual(res.published_rows >= 1, True)
+        fw, ml = self.both("B", res, 0, 0, "q"); self.assertIsInstance(fw(), G.Binding); self.assertTrue(ml.included)                                         # delivered with NO second recover_publication
+        self.assertEqual(co.publish_accepted_row(res, rp, h0, "SIM_CUR", **kws), rec)                                                                           # replay: same record
