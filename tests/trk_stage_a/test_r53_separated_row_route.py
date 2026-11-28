@@ -1,5 +1,5 @@
 """R53: the separated per-ROW route (real OS child processes over a shared FileObjectStore): row_verify (independent verifier) and row_accept (epoch-fenced RowAcceptor, cross-process re-derivation) -> RowPublication -> Composition -> Core -> Gateway -> BOTH FW and ML.
-#149 is the feature-VERSION separated route; this is the per-ROW route. SIM profile/clock/commit-point/tables UNADMITTED (tests/trk_stage_a/row_profile_sim.py). Clears no gate/hold."""
+#149 is the feature-VERSION separated route; this is the per-ROW route. NOTE: rows live in the shared FileObjectStore (child processes); the test Gateway factory uses a fresh IN-MEMORY consumer final store - durable/cold consumer recovery is covered separately (test_r53_row_route_delivery cold restart, #157). SIM profile/clock/commit-point/tables UNADMITTED (tests/trk_stage_a/row_profile_sim.py). Clears no gate/hold."""
 import dataclasses, json, os, tempfile, unittest
 from stage_a.errors import Refusal
 from stage_a.gateway import contracts as G
@@ -38,9 +38,13 @@ class SepRows(unittest.TestCase):
         return done, rh
     def accepted(self, i): return [json.loads(r.body_json) for r in self.base.rig.journals.journal(RA.row_namespace(self.out[i][0])).read_from(1)] if self.base.rig.journals.journal(RA.row_namespace(self.out[i][0])).head().seq else []
     def test_children_verify_and_accept_rows_then_rows_publish_and_deliver_to_FW_and_ML(self):
+        rhs = []
         for i in (0, 1):
-            done, rh = self.run_jobs(i); self.assertEqual([d[1] for d in done], ["DONE", "DONE"]); self.assertIsNotNone(rh)
-        recs = self.accepted(0); self.assertEqual([r["row_content_hash"] for r in recs], [self.out[0][1].row_hash, self.out[1][1].row_hash]); self.assertEqual(recs[0]["verification_evidence_ref"][3], rh if False else recs[0]["verification_evidence_ref"][3])
+            done, rh = self.run_jobs(i); self.assertEqual([d[1] for d in done], ["DONE", "DONE"]); self.assertIsNotNone(rh); rhs.append(rh)
+        self.assertNotEqual(rhs[0], rhs[1])                                                                                      # per-row verification identities differ
+        recs = self.accepted(0); self.assertEqual([r["row_content_hash"] for r in recs], [self.out[0][1].row_hash, self.out[1][1].row_hash])
+        for rec, rh, i in zip(recs, rhs, (0, 1)):                                                                                # each ROW_ACCEPTED names ITS OWN child-produced verification result
+            self.assertEqual(rec["verification_evidence_ref"][3], rh); self.assertEqual(self.base.rig.store.get("sep/row-ver-by-row/" + self.out[i][1].row_hash)[0].decode(), rh)
         b = self.base; self.co._gf = lambda proj, c=b.c: _gw(proj, c, __import__("stage_a.storage.object_store", fromlist=["x"]).InMemoryObjectStore())
         rp = RP.RowPublication(self.co._path, b.rig.journals, self.rows, T, b.rig.store); res = self.co.recover_publication(self.fk)
         for i in (0, 1): self.co.publish_accepted_row(res, rp, self.out[i][1].row_hash, "SIM_CUR", sequence=i + 1, visible_at=50, published_projection_hash=RH, data_vintage_mode="ORIGINAL_AS_OBSERVED", source_or_causal_policy_ref=R("pol"))
@@ -62,3 +66,8 @@ class SepRows(unittest.TestCase):
     def test_without_the_supplied_profile_port_the_jobs_refuse_and_nothing_is_written(self):
         self.base.sup.close(); os.environ.pop("SALIX_ROW_PROFILE"); self.base.sup = ProcessSupervisor(self.base.q, dict(HS, **ROWHS), reply_timeout=90, max_attempts=1)
         done, rh = self.run_jobs(0); self.assertEqual([d[1] for d in done], ["DEAD"]); self.assertIsNone(rh); self.assertEqual(self.accepted(0), [])
+
+    def test_a_mismatched_per_row_verification_reference_is_refused_and_writes_no_acceptance(self):
+        d0, rh0 = self.run_jobs(0); d1, rh1 = self.run_jobs(1, accept=False); self.assertEqual(len(self.accepted(0)), 1)
+        b = self.base; b.q.submit(W.Job("ra-x", "row.accept", "idem-ra-x", (("row", self.out[1][1].row_hash), ("verification", rh0)))); done = b.sup.run_until_idle(20)       # row 1 offered row 0's child result
+        self.assertEqual([d[1] for d in done][-1], "DEAD"); self.assertNotIn("DONE", [d[1] for d in done]); self.assertEqual([r["row_content_hash"] for r in self.accepted(0)], [self.out[0][1].row_hash])
