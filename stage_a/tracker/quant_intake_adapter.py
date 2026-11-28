@@ -119,6 +119,7 @@ class Admission:
     failed: List[Tuple[str, str]] = field(default_factory=list)
     lookup_gate: Optional[str] = None
     notes: List[str] = field(default_factory=list)
+    ancestry: Tuple[str, str] = ("NOT_REQUIRED", "")                 # R54: whole-ancestry state, separate from the narrow fit-reference currency: NOT_REQUIRED | UNKNOWN:<why> | FAIL:<code> | PASS_CANDIDATE
     unverified: List[Tuple[str, str]] = field(default_factory=list)   # duties the Tracker could NOT determine: labelled, never certified
 
     @property
@@ -173,7 +174,45 @@ def _check_producer_binding(pkg, producer_authority, a):
     except Refusal as e: a.failed.append(("PRODUCER_BINDING", e.code)); return
     if d.status != PA.ADMITTED_AGAINST_SUPPLIED_AUTHORITY: a.failed.append(("PRODUCER_BINDING", d.reason))
 
-def admit(pkg: BuildPackage, *, accepted_fit_generations: dict, conformance=None, producer_authority=None) -> Admission:
+_LEARNED_EDGES = ("LEARNED_DERIVED_MODEL_EDGE", "MODEL_GENERATION_INPUT_EDGE")
+
+@dataclass(frozen=True)
+class AncestryBinding:
+    """What an EXPLICIT owner-supplied ancestry resolver returns (R54). The resolver, not intake, owns the mapping from the package's two strings and its fit references to nodes of a closure record; intake assumes NO string/number equality between the package fields and node ids or hashes (the sources do not give one). The binding names: the closure `record` (ml/closure ClosureRecord), the node id the resolver says is this FEATURE (`subject_node`), the nodes it says correspond to UPSTREAM_MODEL_ID / UPSTREAM_GENERATION_ID, and one node per fit-reference generation. Intake then CHECKS those claims against the DERIVED closure. Candidate only: the completeness witness stays unadmitted."""
+    record: object
+    subject_node: str
+    upstream_model_node: str
+    upstream_generation_node: str
+    fit_ref_nodes: dict          # fit-reference generation (int) -> closure node id
+
+def _check_ancestry(pkg, m, a, resolver):
+    """R54 (Composer V9 s27/s28): UPSTREAM_MODEL_ID/UPSTREAM_GENERATION_ID are ancestry EDGES whose closure is governed by Contract DEPENDENCY_CLOSURE_RECORD / ANCESTRY_CLOSURE_REPORT. Two strings in the package correlate to nothing by themselves, and the narrow fit-reference currency (`check_fit_refs`) is not whole-ancestry completeness. A learned-derived build (fit_refs non-empty) is therefore ancestry UNKNOWN (held: intake does not proceed) unless an EXPLICIT `ancestry_resolver(feature_key, upstream_model_id, upstream_generation_id, fit_refs)` returns an AncestryBinding whose closure (1) is well-formed, (2) DERIVES to PASS, (3) has the claimed subject node as its own subject, (4) reaches the upstream-model and upstream-generation nodes AND every fit-reference node, (5) with at least one content-carrying learned/model-generation edge among the edges into reached model/generation nodes. Any contradiction FAILS; a missing resolver/binding stays UNKNOWN."""
+    if not m.data["fit_refs"]: a.ancestry = ("NOT_REQUIRED", ""); return
+    bo = pkg.build_output if isinstance(pkg.build_output, dict) else {}
+    mid, gid = bo.get("UPSTREAM_MODEL_ID"), bo.get("UPSTREAM_GENERATION_ID")
+    def fail(code): a.ancestry = ("FAIL", code); a.failed.append(("ANCESTRY_CLOSURE", code))
+    def held(why): a.ancestry = ("UNKNOWN", why); a.failed.append(("ANCESTRY_CLOSURE", "ANCESTRY_CLOSURE_UNRESOLVED_HELD"))
+    if not (isinstance(mid, str) and mid.strip() and isinstance(gid, str) and gid.strip()): a.ancestry = ("FAIL", "LEARNED_DERIVED_WITHOUT_UPSTREAM_GENERATION_IDENTITY"); return      # already a failed dimension via the build-output contract check: not re-added
+    if a.feature_key is None: return held("SUBJECT_IDENTITY_NOT_DERIVED")
+    if resolver is None: return held("NO_RESOLVER_SUPPLIED")
+    from ..ml import closure as CL
+    b = resolver(a.feature_key, mid, gid, list(m.data["fit_refs"]))
+    if b is None: return held("RESOLVER_RETURNED_NO_BINDING")
+    if not isinstance(b, AncestryBinding) or not isinstance(b.fit_ref_nodes, dict): return fail("ANCESTRY_BINDING_MALFORMED")
+    try: v = CL.derive(b.record)
+    except Refusal as e: return fail("ANCESTRY_CLOSURE_MALFORMED:" + e.code)
+    rec = b.record
+    if v.verdict != "PASS": return fail("ANCESTRY_CLOSURE_NOT_PASS:" + ",".join(v.reasons))
+    if rec.subject_id != b.subject_node: return fail("ANCESTRY_CLOSURE_FOR_ANOTHER_SUBJECT")
+    reached = set(v.reached)
+    if b.upstream_model_node not in reached or b.upstream_generation_node not in reached: return fail("UPSTREAM_ID_NOT_IN_CLOSURE")
+    gens = [r.get("generation") for r in m.data["fit_refs"]]
+    if any(g not in b.fit_ref_nodes or b.fit_ref_nodes[g] not in reached for g in gens): return fail("FIT_REFERENCE_NOT_IN_CLOSURE")
+    if not any(e.edge_class in _LEARNED_EDGES and e.content_carrying and e.child in ({rec.subject_id} | reached) and e.parent in (b.upstream_model_node, b.upstream_generation_node) for e in rec.edges):
+        return fail("NO_LEARNED_EDGE_TO_UPSTREAM_IDS")
+    a.ancestry = ("PASS_CANDIDATE", "")
+
+def admit(pkg: BuildPackage, *, accepted_fit_generations: dict, conformance=None, producer_authority=None, ancestry_resolver=None) -> Admission:
     """Pure admissibility + identification (no journal effects)."""
     if not pkg.quant_feature_requested:
         # Explicit NO_QUANT_FEATURE only when no quant build was requested AND none was supplied.
@@ -256,6 +295,7 @@ def admit(pkg: BuildPackage, *, accepted_fit_generations: dict, conformance=None
             fail("IDENTITY_CONTENT_KEY", "CONTENT_KEY_NOT_DERIVABLE:" + ",".join(errs))
         else:
             a.definition, a.subject_key = d, key.composite
+    _check_ancestry(pkg, m, a, ancestry_resolver)
     gate = construction_gate(pkg.lookup_outcome)
     a.lookup_gate = gate
     if gate == DUPLICATE_OR_NEAR:
@@ -282,9 +322,11 @@ def build_safe_intake_report(pkg: BuildPackage, adm: Admission, *, clock, verdic
     failed = list(adm.failed)
     fit_refs = adm.manifest.data["fit_refs"] if adm.manifest else []
     # R54: ancestry completeness is NOT PASS when s27's learned-derived construction-side ancestry is missing/inconsistent (reason codes from check_build_output), nor when the manifest/hash/fit ancestry failed.
+    # R54: whole-ancestry state comes from the closure check (separate from the narrow fit-reference currency verdict below). FAIL on any ancestry failure; UNKNOWN when required ancestry was not resolved; PASS only for NOT_REQUIRED (no fit_refs) or a derived candidate closure.
     _ANC_CODES = ("LEARNED_DERIVED_WITHOUT_UPSTREAM_GENERATION_IDENTITY", "UPSTREAM_ANCESTRY_WITHOUT_LEARNED_DERIVATION")
-    ancestry = "PASS" if (adm.manifest is not None and not any(d in ("SCHEMA", "FIT_ANCESTRY", "HASH_BINDING") or c in _ANC_CODES for d, c in failed)) \
-        else ("FAIL" if failed else "UNKNOWN")
+    st = getattr(adm, "ancestry", ("NOT_REQUIRED", ""))[0]
+    hard = adm.manifest is None or any(d in ("SCHEMA", "FIT_ANCESTRY", "HASH_BINDING") or c in _ANC_CODES or (d == "ANCESTRY_CLOSURE" and not c.endswith("UNRESOLVED_HELD")) for d, c in failed)
+    ancestry = "FAIL" if (hard and failed) else ("UNKNOWN" if (st == "UNKNOWN" or adm.manifest is None) else ("PASS" if st in ("NOT_REQUIRED", "PASS_CANDIDATE") else "FAIL"))
     oia_fail = [c for d, c in failed if d == "BUILD_CONFORMANCE"]
     oia = ("FAIL:" + oia_fail[0]) if oia_fail else ("PASS_ON_SUPPLIED_CONFORMANCE_EVIDENCE" if pkg.build_output is not None and adm.manifest is not None and not any(d == "BUILD_OUTPUT_CONTRACT" for d, _ in failed) else "NOT_ASSESSED")
     from .build_output_check import section27_status
@@ -311,7 +353,7 @@ def build_safe_intake_report(pkg: BuildPackage, adm: Admission, *, clock, verdic
                                                else ("FAIL" if any(d == "FIT_ANCESTRY" for d, _ in failed) else "NONE_DECLARED")),
         "COMPLETION_SEMANTICS_VERDICT": "DECLARED:" + str(pkg.identity_fields.get("completion_semantics")),
         "CURRENTNESS_HEALTH_ELIGIBILITY_INITIAL_STATE": "CANDIDATE_NOT_CURRENT",
-        "OMISSIONS_EXCLUSIONS_REASONS": omissions,
+        "OMISSIONS_EXCLUSIONS_REASONS": omissions + (["ANCESTRY_CLOSURE_" + adm.ancestry[0] + (":" + adm.ancestry[1] if adm.ancestry[1] else "")] if adm.ancestry[0] != "NOT_REQUIRED" else []),
         "SAFE_INTAKE_TS": clock.now_iso(), "TRACKER_VERIFIER_ID": VERIFIER_ID,
         "POLICY": {"ID": POLICY["ID"], "VERSION": POLICY["VERSION"], "HASH": POLICY["HASH"]},
     }

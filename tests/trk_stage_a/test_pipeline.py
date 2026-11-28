@@ -108,9 +108,10 @@ class Rejections(unittest.TestCase):
         rig = Rig(fits={1: "a" * 64, 2: "b" * 64})
         self.reject(package(momentum_manifest(fit_refs=fr)), order=False, expect_dim="FIT_ANCESTRY", expect_code="STALE", rig=rig)
         self.reject(package(momentum_manifest(fit_refs=[{"generation": 9, "ref_hash": "a" * 64}])), order=False, expect_dim="FIT_ANCESTRY", expect_code="UNKNOWN")
-    def test_fit_ref_current_generation_accepted(self):
+    def test_fit_ref_current_generation_alone_is_not_ancestry(self):
+        # R54: narrow fit-reference currency passes, but whole ancestry is UNBOUND => held (UNKNOWN), never accepted. The accepting control (genuine closure) is tests/trk_stage_a/test_r54_ancestry.py.
         rig = Rig(fits={1: "a" * 64, 2: "b" * 64}); p = package(momentum_manifest(fit_refs=[{"generation": 2, "ref_hash": "b" * 64}]))
-        rig.issue(p); self.assertTrue(rig.pipe.run(p).accepted_ok)
+        rig.issue(p); self.assertFalse(rig.pipe.run(p).accepted_ok)
     def test_missing_identity_fields(self):
         idf = copy.deepcopy(IDENTITY_FIELDS); del idf["price_basis"]
         self.reject(package(identity_fields=idf), order=False, expect_dim="IDENTITY_CONTENT_KEY")

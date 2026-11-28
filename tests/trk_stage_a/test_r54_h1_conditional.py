@@ -16,6 +16,10 @@ class Conditional(unittest.TestCase):
             d = {x: v for x, v in CTX.items() if x != k}; self.assertEqual(code(check_h1, h1(**d)), "H1_CONDITIONAL_GROUP_INCOMPLETE", k)
         for a in ("APPLICABILITY_MAP_ID", "APPLICABILITY_MAP_VERSION"): self.assertEqual(code(check_h1, h1(**{a: "x"})), "H1_CONDITIONAL_GROUP_INCOMPLETE", a)
         for a in ("REVOCATION_WATERMARK_REF", "REVOCATION_WATERMARK_OBSERVED_AT"): self.assertEqual(code(check_h1, h1(**{a: "x"})), "H1_CONDITIONAL_GROUP_INCOMPLETE", a)
-    def test_coverage_state_needs_the_coverage_basis(self):
-        d = dict(CTX); del d["COVERAGE_BASIS"]; self.assertEqual(code(check_h1, h1(**d)), "H1_CONDITIONAL_GROUP_INCOMPLETE"); self.assertEqual(code(TypedH1, h1(**d)), "H1_CONDITIONAL_GROUP_INCOMPLETE")
+    def test_coverage_basis_is_required_only_when_coverage_was_evaluated(self):
+        for st in ("COMPLETE", "PARTIAL", "DELAYED"):
+            d = dict(CTX, COVERAGE_STATE=st); del d["COVERAGE_BASIS"]; self.assertEqual(code(check_h1, h1(**d)), "H1_CONDITIONAL_GROUP_INCOMPLETE", st); self.assertEqual(code(TypedH1, h1(**d)), "H1_CONDITIONAL_GROUP_INCOMPLETE", st)
+        for st in ("NOT_EVALUATED", "UNKNOWN"):
+            d = dict(CTX, COVERAGE_STATE=st); del d["COVERAGE_BASIS"]; self.assertIsNone(check_h1(h1(**d)), st)                       # source vocabulary: NOT_EVALUATED needs no basis; UNKNOWN is unconstrained (open question)
+        d = dict(CTX, COVERAGE_STATE="NOT_EVALUATED"); self.assertIsNone(check_h1(h1(**d)))                                               # with a basis present it is also legal
 if __name__ == "__main__": unittest.main()

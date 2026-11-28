@@ -192,7 +192,8 @@ def check_h1(fields: dict, decision_window: bool = True) -> None:
     for grp in (H1_CONTEXT_GROUP, ("APPLICABILITY_MAP_ID", "APPLICABILITY_MAP_VERSION"), ("REVOCATION_WATERMARK_REF", "REVOCATION_WATERMARK_OBSERVED_AT")):
         have = [k for k in grp if fields.get(k) is not None]
         if have and len(have) != len(grp): raise Refusal(",".join(k for k in grp if k not in have), code="H1_CONDITIONAL_GROUP_INCOMPLETE")
-    if fields.get("COVERAGE_STATE") is not None and fields.get("COVERAGE_BASIS") is None: raise Refusal("COVERAGE_BASIS", code="H1_CONDITIONAL_GROUP_INCOMPLETE")
+    # COVERAGE_BASIS is "when coverage is EVALUATED" - a different condition from the Event/Context group. Source vocabulary COVERAGE_STATE = COMPLETE | PARTIAL | DELAYED | UNKNOWN | NOT_EVALUATED: NOT_EVALUATED means coverage was not evaluated, so no basis is required; a COMPLETE/PARTIAL/DELAYED result is only meaningful under its exact basis (NO_EVENT_RECORDED needs COMPLETE under the exact COVERAGE_BASIS). UNKNOWN is left unconstrained (source does not say whether an unknown result was evaluated; open question, no default invented).
+    if fields.get("COVERAGE_STATE") in ("COMPLETE", "PARTIAL", "DELAYED") and fields.get("COVERAGE_BASIS") is None: raise Refusal("COVERAGE_BASIS", code="H1_CONDITIONAL_GROUP_INCOMPLETE")
     if ml:
         if fields["ML_MANIFEST_CLASS"] not in ML_MANIFEST_CLASSES: raise Refusal(str(fields["ML_MANIFEST_CLASS"]), code="H1_ML_MANIFEST_CLASS_UNKNOWN")
         if fields["GENERATION_AUTHORITY_CLASS"] not in GENERATION_AUTHORITY_CLASSES: raise Refusal(str(fields["GENERATION_AUTHORITY_CLASS"]), code="H1_GENERATION_AUTHORITY_CLASS_UNKNOWN")
