@@ -47,9 +47,9 @@ class Path(unittest.TestCase):
         self.assertEqual(path._sj.head(), GENESIS_HEAD)                                                                                                    # nothing committed by any refusal
     def test_a_row_whose_accepted_binding_is_altered_in_the_committed_journal_fails_closed(self):
         rig, fk, fj, path, body = build(); path.commit(fk, supplied(), "SIM_CUR", sequence=1); self.assertEqual(len(path.rows()), 1)
-        bad = json.loads(path._sj.read_from(1)[0].body_json); bad["accepted_hash"] = "0" * 64; path._sj.append(path._sj.head(), SP.ROW_KIND, bad)
+        bad = json.loads(path._sj.read_from(1)[0].body_json); bad["accepted_hash"] = "0" * 64; path._sj.append(path._sj.head(), SP.STATUS_KIND, bad)
         self.assertEqual(code(path.rows), "SIM_PUBLICATION_ACCEPTED_BINDING_MISMATCH")
-        rig2, fk2, fj2, path2, body2 = build(); path2.commit(fk2, supplied(), "SIM_CUR", sequence=1); b2 = json.loads(path2._sj.read_from(1)[0].body_json); b2["row"]["quant_manifest_hash"] = "1" * 64; path2._sj.append(path2._sj.head(), SP.ROW_KIND, b2)
+        rig2, fk2, fj2, path2, body2 = build(); path2.commit(fk2, supplied(), "SIM_CUR", sequence=1); b2 = json.loads(path2._sj.read_from(1)[0].body_json); b2["row"]["quant_manifest_hash"] = "1" * 64; path2._sj.append(path2._sj.head(), SP.STATUS_KIND, b2)
         self.assertEqual(code(path2.rows), "SIM_PUBLICATION_ACCEPTED_BINDING_MISMATCH")
     def test_a_later_committed_non_current_status_stops_delivery_and_the_projection_goes_stale_until_refreshed(self):
         rig, fk, fj, path, body = build(); path.commit(fk, supplied(), "SIM_CUR", sequence=1); proj = path.status_projection(); g = gw(proj); path.feed(g); e = _entry(fid=F, ver=fk.feature_version)

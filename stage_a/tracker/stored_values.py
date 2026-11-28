@@ -9,6 +9,7 @@ from ..storage.byte_primitives import canonical_bytes, domain_hash
 from .materialization.stateful_materializer import IncrementalEvaluator, _bits
 from .reverification import accepted_as_found
 from . import source_inputs as SI
+from ..storage.authority_class import authority_class_of, SIMULATION, QUALIFIED
 VERIFIER_ID = "tracker.stored_values.verify_stored_values"
 def stored_values_key(materialization_hash): return "candidate/stored-values/%s.json" % materialization_hash
 def _check_bindings(b):
@@ -16,6 +17,7 @@ def _check_bindings(b):
 def persist_stored_values(*, journal, store, feature_key, bindings, fetch, series_hash) -> dict:
     """Write-once producer record for the ACCEPTED materialization: values evaluated by the producer path over the fetched series whose hashes equal the supplied bindings. Identical retry idempotent; different bytes under the same accepted materialization refuse (STORED_VALUES_IMMUTABLE)."""
     if not (_check_bindings(bindings) and callable(fetch) and callable(series_hash)): raise Refusal("inputs", code="STORED_VALUES_INPUTS_INVALID")
+    if authority_class_of(journal) != authority_class_of(store): raise Refusal("journal/store class", code="STORED_VALUES_CLASS_MISMATCH")      # R38: before any write
     names, raw, p, why = SI._as_found(journal, store, feature_key)
     if names is None: raise Refusal(why, code="STORED_VALUES_ACCEPTED_RECORD_NOT_AS_FOUND")
     body = accepted_as_found(journal, store, feature_key)[0]
@@ -56,8 +58,14 @@ def verify_stored_values(*, journal, store, feature_key, bindings, fetch, series
     same = rec["values"] == v["recomputed"]
     return dict(base, stored_values_compared=True, overall="VERIFIED_STORED_EQUALS_RECOMPUTED" if same else "FAIL", reason="" if same else "STORED_VALUES_DIFFER_FROM_INDEPENDENT_RECOMPUTATION",
                 l1="PASS", l2="PASS" if same else "FAIL", health_effect="NONE_ASSERTED" if same else "NOT_HEALTHY", inputs=v["inputs"], recomputed=v["recomputed"])
+def _require_same_class(core, journal, store):
+    """R38: Core plane, accepted journal and store must be ONE class before any read-for-recording or write (same rule as reverification._require_class, extended to the journal). A cross-plane combination would file a SIMULATION-derived L2 outcome into an ordinary Core HEAD."""
+    want = SIMULATION if core.simulation else QUALIFIED
+    got = (authority_class_of(journal), authority_class_of(store))
+    if got != (want, want): raise Refusal("core plane %s, journal %s, store %s" % ((want,) + got), code="STORED_VALUES_CLASS_MISMATCH")
 def record_stored_value_maintenance(core, *, journal, store, feature_key, bindings, fetch, series_hash, now, max_age) -> dict:
     """One bounded maintenance call: verify, then record the typed L2 outcome in the Core (CALLER_ASSERTED, see module doc). The result digest is the domain hash of the typed outcome. UNAVAILABLE/FAIL make the subject NOT HEALTHY in the Core's own calculation."""
+    _require_same_class(core, journal, store)       # before ANY verification read or Core write
     r = verify_stored_values(journal=journal, store=store, feature_key=feature_key, bindings=bindings, fetch=fetch, series_hash=series_hash)
     digest = domain_hash("SALIX_STORED_VALUE_L2_V1", canonical_bytes({k: r[k] for k in ("overall", "reason", "l1", "l2", "stored_values_compared")}))
     core.record_verification(feature_key.key(), feature_key.feature_version, "REQUIRED", r["l2"], r["l1"], now, max_age, VERIFIER_ID, digest)

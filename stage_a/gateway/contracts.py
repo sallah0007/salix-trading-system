@@ -137,10 +137,13 @@ class SimulatedGateway:
         if data_vintage_mode is not None and row.data_vintage_mode != data_vintage_mode:
             return nd("DATA_VINTAGE_MODE_MISMATCH")
         mv = (row.feature_id, row.feature_version, row.instrument_id, row.timeframe_id, row.materialization_version)
-        if getattr(self.status, "simulation", False) and not self.allow_simulation_status:
-            return nd("STATUS_SOURCE_SIMULATION_NOT_ALLOWED")            # fail closed: a simulated committed status is not consumer authority for a Gateway that did not opt in
+        cls = getattr(self.status, "carrier_class", None)                # R38: class is derived from the actual carrier by the projection (read-only); a missing/foreign class is NEVER defaulted to qualified
+        if cls == "SIMULATION" or getattr(self.status, "simulation", False) is True:
+            if not self.allow_simulation_status: return nd("STATUS_SOURCE_SIMULATION_NOT_ALLOWED")   # fail closed: a simulated committed status is not consumer authority for a Gateway that did not opt in
         if not getattr(self.status, "authoritative", False) and not self.allow_uncommitted_status:
             return nd("STATUS_SOURCE_NOT_COMMITTED_PROJECTION")      # fail closed: a direct append is not consumer authority
+        if cls not in ("QUALIFIED", "SIMULATION") and not self.allow_uncommitted_status:
+            return nd("STATUS_SOURCE_CLASS_UNKNOWN")                  # R38: an authoritative-looking object with no derived carrier class is never defaulted to qualified
         try:
             st = self.status.status_at(mv, fence)
         except Refusal:
