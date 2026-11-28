@@ -49,6 +49,9 @@ class RowAcceptor:
         res.require_pass(SCOPE_ROW_STEP)
         if res.status != PASS or dict(res.subject).get("row_content_hash") != row_hash: raise Refusal(row_hash, code="ROW_VERIFICATION_NOT_FOR_THIS_ROW")
         if ref is None or ref.target_hash != bytes.fromhex(res.result_hash): raise Refusal("evidence ref", code="EVIDENCE_REF_DOES_NOT_NAME_THE_VERIFICATION")
+        sub = dict(res.subject)                                                  # belt-and-braces over the verifier's own PASS: the stages that bind the schema/program identity must be on the result
+        if sub.get("schema_identity") != "REGISTRY_BOUND": raise Refusal(row_hash, code="ROW_SCHEMA_IDENTITY_NOT_REGISTRY_BOUND")
+        if sub.get("invariants") not in ("EVALUATED_PASS", "NONE_DECLARED"): raise Refusal(row_hash, code="ROW_INVARIANTS_NOT_EVALUATED")
 
     def accept(self, row_hash, *, verification_result, verification_evidence_ref, currentness_state, status_event, gate_dependency_transition_ref=None):
         row = self._rows.load(row_hash)                                         # committed, re-verified row only
