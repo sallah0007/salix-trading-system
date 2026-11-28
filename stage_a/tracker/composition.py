@@ -12,6 +12,7 @@ from typing import Optional
 from ..errors import Refusal
 from ..gateway import contracts as G
 from ..fw import receiver as FWR
+from ..ml import receiver as MLR
 from . import reverification as RV
 from . import stored_values as SV
 from . import l2_scope as L2S
@@ -121,3 +122,12 @@ class Composition:
         fk = result.feature_key; health = self._core.gateway_health(fk.key(), fk.feature_version, now, ref, resolved_at, binding=binding, require_ancestry=True)
         d = self.gateway.resolve_window(request_id, identity, entry, instrument_id, timeframe_id, step_index, event_time, health)
         return FWR.receive_verified(d, entry, instrument_id, timeframe_id, tables, self.gateway)
+    def deliver_ml(self, request_id, identity, entry, instrument_id, timeframe_id, step_index, event_time, result: CompositionResult, *, binding, now, ref, resolved_at, tables, row_id, generation_ref, vintage_mode, omissions, exclusion_reason, health=None, consumer_manifest_id=None):
+        """R53: the ML twin of `deliver`: the SAME composed Core Health (require_ancestry=True), the SAME Gateway window path (ML's OWN consumer-local outcome under the durable final store) and then `ml.receiver.build_row`. A required non-delivery needs the caller's explicit tagged exclusion reason (build_row refuses without); the returned row is `included` only for a delivered Binding. The ML closure check (optional `health`) uses the ML consumer kind. Nothing here fabricates a generation, dataset or manifest: `generation_ref`/`vintage_mode`/`omissions` are supplied."""
+        if self.gateway is None or result.feature_key is None: raise Refusal("not published", code="COMPOSITION_NOT_PUBLISHED")
+        if health is not None:
+            use, _imp = health.decide(consumer_manifest_id, "ML", entry)
+            if use == "BLOCK_PROVEN_DEPENDENCY" or use.startswith("REFUSE_"): raise Refusal(use, code="HEALTH_IMPACT_" + use)
+        fk = result.feature_key; h = self._core.gateway_health(fk.key(), fk.feature_version, now, ref, resolved_at, binding=binding, require_ancestry=True)
+        d = self.gateway.resolve_window(request_id, identity, entry, instrument_id, timeframe_id, step_index, event_time, h)
+        return MLR.build_row(row_id, generation_ref, [entry], [d], self.gateway, vintage_mode, omissions, exclusion_reason, tables=tables)
