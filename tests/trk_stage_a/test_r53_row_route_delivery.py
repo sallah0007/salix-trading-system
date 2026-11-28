@@ -55,3 +55,17 @@ class RowRoute(unittest.TestCase):
     def test_control_the_affected_feature_with_undeclared_ancestry_is_denied_for_both_consumers_even_with_an_accepted_published_row(self):
         self.publish("A", 0); res = self.o["A"][1].recover_publication(self.o["A"][0]); fw, ml = self.both("A", res, 0, 30, "a")
         self.assertEqual(code(fw), "NON_DELIVERY"); self.assertFalse(ml.included)
+
+    def test_e05_rebuild_over_the_per_row_route_projects_rows_transitions_and_the_durable_FW_ML_final_resolutions_and_a_replaced_record_is_drift(self):
+        from stage_a.storage import e05_sources as S, e05_row_sources as RW
+        from stage_a.storage.e05_index import E05Index
+        from .test_r44_e05_rebuild_separated import bind_cols, nd_cols
+        self.publish("B", 0); self.publish("B", 1); fk, co = self.o["B"][0], self.o["B"][1]; res = co.recover_publication(fk)
+        for step, n in ((0, "0"), (1, "1")): fw, ml = self.both("B", res, step, 0, n); fw(); self.assertTrue(ml.included)
+        rig = self.a.rig; raw = self.a.raws["B"]; row0 = self.chain["B"][0][0]; ns = RA.row_namespace(row0); j = rig.journals.journal(ns)
+        src = {"rows": RW.pending_row_source(rig.store, self.rows, lambda h: "HELD_STATE"), "tx": RW.row_transition_source(j, ns, self.rows), "fr": S.final_resolution_source(raw, binding_columns=bind_cols, non_delivery_columns=nd_cols)}
+        ix = E05Index(); heads = ix.rebuild(src); resolver = S.combined_resolver(S.object_resolver(rig.store), S.journal_resolver({ns: j}), S.object_resolver(raw))
+        self.assertGreaterEqual(ix.verify_all(resolver), 8)                                                                                # 6 pending rows (A+B) + 2 transitions + 4 final resolutions (FW+ML x 2 windows) all re-resolve
+        st = ix.current_status(row0.feature_id.hex(), row0.materialization_version, "tx", heads["tx"], resolver); self.assertEqual(json.loads(st["payload"])["head_seq"], 2)
+        k = sorted(raw.list_prefix("final-resolution/id/"))[0]; g = raw.get(k); raw._d[k] = (g[0][:-1] + bytes([g[0][-1] ^ 1]), g[1])
+        with self.assertRaises(Exception): ix.verify_all(resolver)                                                                          # a replaced durable record is DRIFT, never silently re-read
