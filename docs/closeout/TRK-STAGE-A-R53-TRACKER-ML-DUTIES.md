@@ -1,0 +1,12 @@
+# R53 — Tracker REGISTRY §14 p337-349: the thirteen Tracker→ML duties (candidate, SIM)
+
+SOURCE (read in full this stretch): native Registry doc 1eZThdektQNUc5uCNOM96K_rquZYOBoPMonjI3kX4CHo, my capture of paragraphs 335-352 (DERIVATION_CLASS INDEPENDENTLY_DERIVED; capture `/tmp/registry_paras.txt`, 552 numbered paragraphs vs the Manager's 551 NONEMPTY count - the difference is a blank/numbering convention, REPRODUCIBLE_BY_MANAGER = YES from the doc). §14 = p335 heading; p337-349 the thirteen duties; p350 no unrestricted Feature Library access; p351 ML training not authorized by this architecture; p352 dedicated contract freeze pending (NOT an authoring-permission withdrawal). These are Registry coordinates, not MLCore 335-352.
+
+Code: `stage_a/ml/tracker_ml_contract.py` (`FeatureViewManifest`, write-once `FeatureViewStore`, `evaluate`, `FeatureViewReader`). One checker per duty (table in the module docstring) over ACTUAL objects through supplied resolvers (accepted-manifest readback, ROW_ACCEPTED available_asof, row scope, row fit ref, eligibility policy, identity function). Per duty PASS / FAIL / HELD; `satisfied` only if all 13 PASS; authorizes nothing.
+Tests (3, `test_r53_tracker_ml_contract.py`): all 13 PASS on a real accepted feature manifest and real accepted rows; every duty has a defect case that FAILS and a no-resolver case that is HELD (unaccepted row => p345 HELD); write-once/grant/reader controls. 17 mutants run; all killed except `len(r)==13` in `satisfied` (shadowed: the dict always has 13 entries).
+
+Source present / instance held / authorable:
+- SOURCE PRESENT and wired: p337-349 as above; p350 reader guard.
+- INSTANCES HELD (never invented): the manifest byte codec / hash rule (p349 needs a supplied `identity_fn`; the test uses a SIM sha256-of-JSON that is NOT a source rule), the writer principal (grant slot), the split vocabulary/ordering (only disjointness is checked: no ordering is source-defined), the eligibility policy (p347), the vintage-mode vocabulary, how a holdout exposure is categorised beyond "recorded or not".
+- Existing `ml/dataset_manifest.py` (ML Core V1.16 provenance manifest) is a DIFFERENT, ML-side object; the two are not merged. consumer_path/writer_finalizer/receiver still carry the orchestration (the next item).
+Limits: no integration yet between this view manifest and the DatasetRegistry/six-joins/consumer path; candidate/SIM; clears no gate/hold; no training authorization (p351).
