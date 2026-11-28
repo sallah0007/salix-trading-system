@@ -53,7 +53,7 @@ ROWS = [
 ("D16", "S6", "OP", "SETTLEMENT_DELAY defined, no value", "-", "measured value | Manager/Owner | none | measure"),
 ("D17", "S9", "SD", "-", "-", "News profile home | Manager | proposed only | decide"),
 ("D18", "S9", "SD", "-", "-", "Health thresholds/registry | Health function | unsupplied | supply"),
-("A07-1", "A07 ZIP 6e599c5d / extract fd594244 (recomputed match)", "MR", "tools/a07_r43_oracle_association.py; docs/a07 R42/R43 readings; V230/V232/V235 oracles withhold acceptance", "-", "ML source owner adjudication of the 21 qualifiers + 12 loss-listed units | Manager | hash parity is not semantics | adjudicate"),
+("A07-1", "A07 ZIP 6e599c5d / extract fd594244 (recomputed match)", "MR", "tools/a07_r43_oracle_association.py; docs/a07 R42/R43 readings; V230/V232/V235 oracles withhold acceptance", "-", "ML source owner adjudication of the 21 disagreement qualifiers + 12 loss-listed QUALIFIERS (3 units: NL0087, NL0180, NL0184; NL0178 at wider scope) | Manager | hash parity is not semantics | adjudicate"),
 ("A07-2", "R06 candidate 1V5bv2Qr (fetch empty, not absence)", "MR", "docs/a07 R04/R06", "-", "R06 V03 reconciliation | Manager | open | reconcile"),
 ("A07-3", "-", "OP", "-", "-", "Drive Activity export not obtained | Drive admin | external | supply"),
 ("A07-4", "-", "MR", "-", "-", "QC34 ALERT(HOLD) | Manager | open | decide"),
