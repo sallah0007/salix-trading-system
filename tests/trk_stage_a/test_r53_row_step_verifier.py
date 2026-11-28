@@ -1,5 +1,5 @@
 """R53 independent row-step verification. Profile, reference step, codec, inputs are SIM / UNADMITTED test instances: no profile math or byte layout is claimed."""
-import struct
+import copy, struct
 import pytest
 from stage_a.schema import objects as O, independent as X
 from stage_a.tracker.materialization import row_store as RS
@@ -19,7 +19,7 @@ def resolver(declared):
     return {"declared": [(r, h, XS[r.target_id.decode()]) for r, h in declared]}
 def rh(row): return X.row_hash(RS.independent_dict(T, row), T.enums).hex()
 def verify(row, pred, **kw):
-    a = dict(row=row, predecessor=pred, schema=SCHEMA, reference_step=ref_step, decode=i_dec, encode=i_enc, resolve_inputs=resolver, input_symbols={"x": 0}, recompute_row_hash=rh, expect_row_hash=O.row_content_hash(T, row).hex())
+    a = dict(row=row, predecessor=pred, schema=SCHEMA, reference_step=ref_step, decode=i_dec, encode=i_enc, resolve_inputs=resolver, input_symbols={"x": 0}, recompute_row_hash=rh, expect_row_hash=O.row_content_hash(T, row).hex(), schema_registry=lambda v: copy.deepcopy(SCHEMA))
     a.update(kw); return V.verify_row_step(**a)
 def chain(): return [r for r, _ in rig()[3]]
 
@@ -125,7 +125,7 @@ def test_schema_cannot_be_changed_by_a_supplied_callback_after_validation():
     declared2 = copy.deepcopy(SCHEMA)                                                    # control: untouched length-2 declaration verifies a genuine length-2 row
     r2 = _built(SCHEMA, 1.0, 2); assert verify(r2, None, schema=declared2, reference_step=_ref_d(2), decode=_dec_d, encode=_enc_d, resolve_inputs=lambda d: {"declared": [(rf, h, 1.0) for rf, h in d]}).status == PASS
     # explicit NEW schema (length 3, new version) is a separate declaration and verifies the length-3 row on its own terms
-    assert verify(r3, None, schema=s3, reference_step=_ref_d(3), decode=_dec_d, encode=_enc_d, resolve_inputs=lambda d: {"declared": [(rf, h, 1.0) for rf, h in d]}).status == PASS
+    assert verify(r3, None, schema=s3, schema_registry=lambda v: copy.deepcopy(s3), reference_step=_ref_d(3), decode=_dec_d, encode=_enc_d, resolve_inputs=lambda d: {"declared": [(rf, h, 1.0) for rf, h in d]}).status == PASS
 
 def test_independent_schema_check_requires_shape_rank_and_coherence_like_the_producer():
     from stage_a.composer.expression.typed_shapes import validate_state_schema
@@ -142,3 +142,38 @@ def test_independent_schema_check_requires_shape_rank_and_coherence_like_the_pro
     mat = [dict(COMPONENT_NAME="m", COMPONENT_TYPE="FIXED_MATRIX_BINARY64", SHAPE_RANK=2, SHAPE_DIMENSIONS=[2, 3], PUBLISHED=False), dict(SCHEMA[0], INVARIANT_REF="inv")]
     assert V._schema_ok(mat) and V._schema_ok(SCHEMA)                                                           # genuine scalar / vector / matrix (+ optional INVARIANT_REF) controls
     assert not V._schema_ok([dict(mat[0], SHAPE_DIMENSIONS=[2])])                                               # matrix rank 2 with one dimension
+
+
+# ---- R53 invariant stage + registry-bound schema identity ------------------------------------------------------------------------------------------
+from stage_a.schema.encoding import Ref
+INV = Ref("INVARIANT_REF", b"acc-nonneg", b"v1", None)
+def with_inv(ref=INV):
+    sc = copy.deepcopy(SCHEMA); sc[0]["INVARIANT_REF"] = ref; return sc
+PH = b"\x07" * 32
+def resolver_ok(ref): return (PH, lambda st, prior, inputs: st["acc"] >= 0.0) if ref.target_id == b"acc-nonneg" else None      # SIM rule (UNADMITTED)
+def vi(row, pred, sc, **kw): return verify(row, pred, schema=sc, schema_registry=lambda v: copy.deepcopy(sc), **kw)
+
+def test_declared_invariant_pass_fail_unresolved_wrong_identity():
+    rows = chain(); sc = with_inv()
+    ok = vi(rows[0], None, sc, invariant_resolver=resolver_ok)
+    assert ok.status == PASS and dict(ok.subject)["invariants"] == "EVALUATED_PASS" and dict(ok.subject)["invariant_program_hashes"] == PH.hex()      # genuine rule-pass
+    neg = lambda ref: (PH, lambda st, prior, inputs: st["acc"] < 0.0)
+    f = vi(rows[0], None, sc, invariant_resolver=neg); assert f.status == FAIL and dict(f.subject)["invariants"] == "RULE_FAILED"                       # known rule-fail
+    assert vi(rows[0], None, sc).status == INSUFFICIENT_EVIDENCE and dict(vi(rows[0], None, sc).subject)["invariants"] == "UNRESOLVED_HELD"            # no resolver bound
+    assert vi(rows[0], None, sc, invariant_resolver=lambda r: None).status == INSUFFICIENT_EVIDENCE                                                       # declared but unresolved
+    assert vi(rows[0], None, sc, invariant_resolver=lambda r: (_ for _ in ()).throw(RuntimeError("x"))).status == INSUFFICIENT_EVIDENCE                 # resolver failure is unavailability
+    pinned = with_inv(Ref("INVARIANT_REF", b"acc-nonneg", b"v1", b"\x09" * 32))
+    assert vi(rows[0], None, pinned, invariant_resolver=resolver_ok).status == FAIL                                                                        # ref names another program hash
+    assert vi(rows[0], None, with_inv(Ref("INVARIANT_REF", b"acc-nonneg", b"v1", PH)), invariant_resolver=resolver_ok).status == PASS                    # ref pinned to the resolved hash
+    nb = lambda ref: (PH, lambda st, prior, inputs: 1); assert vi(rows[0], None, sc, invariant_resolver=nb).status == FAIL                              # non-boolean verdict
+    boom = lambda ref: (PH, lambda st, prior, inputs: 1 / 0); assert vi(rows[0], None, sc, invariant_resolver=boom).status == FAIL
+    assert verify(rows[0], None).status == PASS and dict(verify(rows[0], None).subject)["invariants"] == "NONE_DECLARED"                                  # nothing declared => nothing to evaluate
+
+def test_schema_identity_must_be_registry_bound_not_a_caller_string():
+    rows = chain()
+    unbound = verify(rows[0], None, schema_registry=None); assert unbound.status == INSUFFICIENT_EVIDENCE and dict(unbound.subject)["schema_identity"] == "UNBOUND_HELD"
+    assert verify(rows[0], None, schema_registry=lambda v: None).status == INSUFFICIENT_EVIDENCE                                                           # version not registered
+    other = copy.deepcopy(SCHEMA); other[1]["SHAPE_DIMENSIONS"] = [3]
+    mm = verify(rows[0], None, schema_registry=lambda v: other); assert mm.status == FAIL and dict(mm.subject)["schema_identity"] == "REGISTRY_MISMATCH"   # same version string, different registered schema
+    assert verify(rows[0], None, schema_registry=lambda v: (_ for _ in ()).throw(RuntimeError("x"))).status == FAIL
+    seen = []; verify(rows[0], None, schema_registry=lambda v: seen.append(v) or copy.deepcopy(SCHEMA)); assert seen == [rows[0].state_schema_version]       # asked for THIS row's version

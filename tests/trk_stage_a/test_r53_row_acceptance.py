@@ -41,7 +41,7 @@ def evidence_for(a, h):
     row = a._rows.load(h); pred = None if row.predecessor_row_hash is None else a._rows.load(row.predecessor_row_hash.hex()); xs = {"in0": 1.0, "in1": 2.0, "in2": 4.0}
     res = VR.verify_row_step(row=row, predecessor=pred, schema=SCHEMA, reference_step=_ref_step, decode=_i_dec, encode=_i_enc,
         resolve_inputs=lambda d: {"declared": [(r, hh, xs[r.target_id.decode()]) for r, hh in d]}, input_symbols={"x": 0},
-        recompute_row_hash=lambda r: X.row_hash(RS.independent_dict(T, r), T.enums).hex(), expect_row_hash=h)
+        recompute_row_hash=lambda r: X.row_hash(RS.independent_dict(T, r), T.enums).hex(), expect_row_hash=h, schema_registry=lambda v: __import__('copy').deepcopy(SCHEMA))
     return res, Ref("VERIFICATION_EVIDENCE_REF", b"row-step", b"v1", bytes.fromhex(res.result_hash))
 def acc(a, h, **kw):
     res, ev = evidence_for(a, h)
@@ -165,3 +165,45 @@ def test_acceptor_pins_tables_against_caller_mutation():
     bj = json.loads(r1.body_json); ev = bj["verification_evidence_ref"]
     c = O.CanonicalTransition(bytes.fromhex(out[1][1].row_hash), Ref(ev[0], bytes.fromhex(ev[1]), bytes.fromhex(ev[2]), bytes.fromhex(ev[3])), js.journal(RA.row_namespace(out[1][0])).epoch, bytes.fromhex(json.loads(r1.body_json)["canonical_commit_point_id"]), json.loads(r1.body_json)["canonical_accepted_at"], json.loads(r1.body_json)["available_asof"], None, "CURRENT", "PUBLISHABLE")
     assert json.loads(r1.body_json)["transition_hash"] == O.transition_hash(T, c).hex()      # still hashed under the ORIGINAL tables
+
+# ---- R53 invariant stage before acceptance --------------------------------------------------------------------------------------------------------
+import copy
+def evidence_inv(a, h, sc, resolver):
+    row = a._rows.load(h); pred = None if row.predecessor_row_hash is None else a._rows.load(row.predecessor_row_hash.hex()); xs = {"in0": 1.0, "in1": 2.0, "in2": 4.0}
+    res = VR.verify_row_step(row=row, predecessor=pred, schema=sc, reference_step=_ref_step, decode=_i_dec, encode=_i_enc,
+        resolve_inputs=lambda d: {"declared": [(r, hh, xs[r.target_id.decode()]) for r, hh in d]}, input_symbols={"x": 0},
+        recompute_row_hash=lambda r: X.row_hash(RS.independent_dict(T, r), T.enums).hex(), expect_row_hash=h, schema_registry=lambda v: copy.deepcopy(sc), invariant_resolver=resolver)
+    return res, Ref("VERIFICATION_EVIDENCE_REF", b"row-step", b"v1", bytes.fromhex(res.result_hash))
+
+def test_declared_invariant_gates_acceptance_unresolved_failed_then_resolved_retry():
+    s, js, rows, out, a = rig(); h0 = out[0][1].row_hash; sc = copy.deepcopy(SCHEMA); sc[0]["INVARIANT_REF"] = Ref("INVARIANT_REF", b"acc-nonneg", b"v1", None)
+    def accept(res, ev): return a.accept(h0, verification_result=res, verification_evidence_ref=ev, currentness_state="CURRENT", status_event="PUBLISHABLE")
+    ns = RA.row_namespace(out[0][0]); none_accepted = lambda: js.journal(ns).read_from(1) == []
+    res, ev = evidence_inv(a, h0, sc, None)                                              # declared, applicable, UNRESOLVED
+    assert res.status == "INSUFFICIENT_EVIDENCE"
+    with pytest.raises(Refusal) as e: accept(res, ev)
+    assert e.value.code == "VERIFICATION_NOT_PASS" and none_accepted()
+    res, ev = evidence_inv(a, h0, sc, lambda r: (b"\x07" * 32, lambda st, prior, inputs: False))        # known rule FAIL
+    assert res.status == "FAIL"
+    with pytest.raises(Refusal): accept(res, ev)
+    assert none_accepted()
+    res, ev = evidence_inv(a, h0, sc, lambda r: (b"\x07" * 32, lambda st, prior, inputs: st["acc"] >= 0.0))   # resolved rule PASS: the SAME row is now acceptable (no state was burned by the refusals)
+    rec = accept(res, ev); assert rec.seq == 1 and dict(res.subject)["invariants"] == "EVALUATED_PASS"
+    assert accept(res, ev) == rec                                                        # retry/restart: idempotent, same record
+
+def test_acceptance_refuses_a_result_whose_schema_identity_is_not_registry_bound():
+    s, js, rows, out, a = rig(); h0 = out[0][1].row_hash; row = rows.load(h0)
+    res = VR.verify_row_step(row=row, predecessor=None, schema=SCHEMA, reference_step=_ref_step, decode=_i_dec, encode=_i_enc,
+        resolve_inputs=lambda d: {"declared": [(r, hh, 1.0) for r, hh in d]}, input_symbols={"x": 0}, recompute_row_hash=lambda r: X.row_hash(RS.independent_dict(T, r), T.enums).hex(), expect_row_hash=h0)
+    assert res.status == "INSUFFICIENT_EVIDENCE" and dict(res.subject)["schema_identity"] == "UNBOUND_HELD"
+    with pytest.raises(Refusal) as e: a.accept(h0, verification_result=res, verification_evidence_ref=Ref("VERIFICATION_EVIDENCE_REF", b"x", b"v1", bytes.fromhex(res.result_hash)), currentness_state="CURRENT", status_event="PUBLISHABLE")
+    assert e.value.code == "VERIFICATION_NOT_PASS"
+
+def test_acceptor_refuses_a_receipted_PASS_whose_subject_lacks_the_identity_and_invariant_stages():
+    from stage_a.tracker.verification import verification_result as VRES
+    s, js, rows, out, a = rig(); h0 = out[0][1].row_hash; ns = RA.row_namespace(out[0][0])
+    good, _ = evidence_inv(a, h0, copy.deepcopy(SCHEMA), None); assert good.status == "PASS" and dict(good.subject)["schema_identity"] == "REGISTRY_BOUND"
+    for key, bad_v, code in [("schema_identity", "UNBOUND_HELD", "ROW_SCHEMA_IDENTITY_NOT_REGISTRY_BOUND"), ("invariants", "UNRESOLVED_HELD", "ROW_INVARIANTS_NOT_EVALUATED")]:
+        res = VRES._issue_result("PASS", VR.SCOPE_ROW_STEP, dict(good.subject, **{key: bad_v}), good.checks, good.reasons)      # a genuine receipt, degraded subject
+        with pytest.raises(Refusal) as e: a.accept(h0, verification_result=res, verification_evidence_ref=Ref("VERIFICATION_EVIDENCE_REF", b"row-step", b"v1", bytes.fromhex(res.result_hash)), currentness_state="CURRENT", status_event="PUBLISHABLE")
+        assert e.value.code == code and js.journal(ns).read_from(1) == []
